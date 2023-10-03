@@ -4,11 +4,19 @@ import json
 import requests
 import urllib3
 import re
+import click
 
+
+from pathlib import Path
 from urllib.parse import urlparse
 from rich import print
 from rich.progress import track
 from itertools import product
+from typing import Optional
+from typing_extensions import Annotated
+
+
+__version__ = "0.1.1"
 
 app = typer.Typer()
 
@@ -17,20 +25,28 @@ checks_app = typer.Typer(name="checks", help="Commands for handling checks")
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BASE_PATH = "./qualytics"
+# Get the home directory
+home = Path.home()
+
+# Define the new directory
+folder_name = ".qualytics"
+BASE_PATH = f"{home}/{folder_name}"
 
 CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
+
 
 def save_config(data):
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     with open(CONFIG_PATH, 'w') as f:
         json.dump(data, f, indent=4)
 
+
 def load_config():
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, 'r') as f:
             return json.load(f)
     return None
+
 
 def _get_default_headers(token):
     return {
@@ -46,6 +62,7 @@ def distinct_file_content(file_path):
     with open(file_path, 'w') as file:
         for line in distinct_lines:
             file.write(line)
+
 
 def log_error(message, file_path):
     with open(file_path, 'a') as file:
@@ -72,7 +89,6 @@ def get_quality_checks(base_url: str, token: str, datastore_id: int, output: str
 
     # Loop through the pages based on total number and size
     for current_page in track(range(total_pages), description="Exporting quality checks..."):
-    # while total > 0:
         # Append the current page's data to the concatenated array
         all_quality_checks.extend(data["items"])
 
@@ -98,6 +114,14 @@ def get_table_ids(base_url: str, token: str, datastore_id: int):
         table_ids[item["name"]] = item["id"]
     
     return table_ids
+
+
+@app.callback(invoke_without_command=True)
+def version_callback(version: Annotated[Optional[bool], typer.Option("--version", is_eager=True)] = None):
+    if version:
+        print(f"Qualytics CLI Version: {__version__}")
+        raise typer.Exit()
+
 
 @app.command()
 def show_config():
@@ -225,6 +249,7 @@ def checks_import(datastore: str = typer.Option(..., "--datastore", help="Comma-
 
 # Add the checks_app as a subcommand to the main app
 app.add_typer(checks_app, name="checks")
+
 
 if __name__ == "__main__":
     app()
