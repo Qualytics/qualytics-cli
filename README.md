@@ -1,0 +1,2 @@
+# qualytics-cli
+Qualytics CLI
