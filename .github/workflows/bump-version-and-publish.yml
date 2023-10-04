@@ -1,0 +1,43 @@
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  bump_version_and_publish:
+    runs-on: ubuntu-latest
+    steps:
+    # Checkout code
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    # Setup Python
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    # Bump version
+    - name: Install bump2version
+      run: pip install bump2version
+
+    - name: Bump version and push tag
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        bump2version patch
+        git push
+        git push --tags
+
+    # Publish to PyPI
+    - name: Install twine
+      run: pip install twine
+
+    - name: Build distribution
+      run: python setup.py sdist bdist_wheel
+
+    - name: Publish to PyPI
+      env:
+        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      run: twine upload dist/*
