@@ -15,7 +15,7 @@ from itertools import product
 from typing import Optional
 from typing_extensions import Annotated
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 app = typer.Typer()
 

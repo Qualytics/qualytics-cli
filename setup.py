@@ -6,11 +6,10 @@ with open(os.path.join(this_directory, "README.md")) as f:
     long_description = f.read()
 
 project_urls = {
-  'Home Page': 'https://www.qualytics.co/',
   'GitHub': 'https://github.com/Qualytics/qualytics-cli',
   'Userguide': 'https://qualytics.github.io/userguide/'
 }
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 setup(
     name="qualytics-cli",
     packages=find_packages(),

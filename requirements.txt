@@ -1,2 +1,3 @@
 typer-cli
 typer[all]
+bump2version
