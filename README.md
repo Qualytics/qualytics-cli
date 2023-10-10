@@ -17,7 +17,7 @@ This is a CLI tool for working with Qualytics API. With this tool, you can manag
 ## Installation
 
 ```bash
-    pip install qualytics
+    pip install qualytics-cli
 ```
 
 ## Usage
