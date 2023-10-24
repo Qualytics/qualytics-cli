@@ -1,3 +1,7 @@
 typer-cli
 typer[all]
 bump2version
+requests
+typing_extensions
+flask
+

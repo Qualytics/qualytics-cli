@@ -8,7 +8,6 @@ import urllib3
 import re
 
 from pathlib import Path
-from urllib.parse import urlparse
 from rich import print
 from rich.progress import track
 from itertools import product
@@ -163,9 +162,34 @@ def show_config():
     if config:
         print(f"Config file located in: {CONFIG_PATH}")
         print(f"URL: {config['url']}")
-        print(f"Token: {config['token']}")
+        if 'token' in config:
+            print(f"Token: {config['token']}")
+        if 'client_id' in config:
+            print(f"Client ID: {config['client_id']}")
     else:
         print("Configuration not found!")
+
+
+@app.command()
+def auth0_init(url: str = typer.Option(..., help="The URL to be set. Example: https://your-qualytics.qualytics.io/"),
+         client_id: str = typer.Option(..., help="The Auth0 Client ID for your Qualytics API deployment.")):
+    """
+    Initialize the configuration using a client id
+    """
+    # Check if the URL starts with 'https://'
+    if not url.startswith('https://'):
+        url = 'https://' + url
+
+    # Check if the URL ends with '/'
+    if not url.endswith('/') or not url.endswith('/api'):
+        url += '/api/'
+
+    config = {
+        "url": url,
+        "client_id": client_id
+    }
+    save_config(config)
+    print("Configuration saved!")
 
 
 @app.command()
@@ -182,19 +206,49 @@ def init(url: str = typer.Option(..., help="The URL to be set. Example: https://
     if not url.endswith('/') or not url.endswith('/api'):
         url += '/api/'
 
-    # Check if the URL contains 'your-qualytics.qualytics.io'
-    parsed_url = urlparse(url)
-
-    if not parsed_url.netloc.endswith('qualytics.io'):
-        print("Invalid domain provided. The URL should be in the format: 'https://your-subdomain.qualytics.io/'")
-        raise typer.Exit(code=1)
-
     config = {
         "url": url,
         "token": token
     }
     save_config(config)
     print("Configuration saved!")
+
+
+def retrieve_token(config):
+    if 'token' in config:
+        return config['token']
+    elif 'client_id' in config:
+        import webbrowser
+
+        redirect_uri = "http://localhost:5000/callback"
+        auth_endpoint = "https://auth.qualytics.io/authorize"
+        if 'https://develop.' in config['url'] or 'https://demo.' or 'https://staging.':
+            auth_endpoint = "https://qualytics-dev.us.auth0.com/authorize"
+
+        auth_url = f"{auth_endpoint}?response_type=token&response_mode=form_post&client_id={config['client_id']}&redirect_uri={redirect_uri}"
+        webbrowser.open(auth_url, new=2)  # new=2 opens in a new tab, if possible
+        from flask import Flask, request
+        import threading
+
+        app = Flask(__name__)
+        token_payload = {}
+        @app.route("/callback", methods=['POST'])
+        def callback():
+            token_payload.update(request.form)  # Extract the token from the query parameters
+            return "You can close this window.<script>window.onload = window.close();</script>"  # Message to user
+
+        def run_server():
+            app.run(port=5000)  # Ensure the port matches the redirect_uri
+
+        # Run the server in a separate thread, so it doesn't block the CLI tool
+        server_thread = threading.Thread(target=run_server)
+        server_thread.start()
+
+        while not token_payload:
+            pass  # Wait until we receive a token
+        return token_payload['access_token']
+    else:
+        raise Exception("Invalid config - please run init")
 
 
 @checks_app.command("export")
@@ -205,7 +259,7 @@ def checks_export(datastore: int = typer.Option(..., "--datastore", help="Datast
     """
     config = load_config()
     base_url = config['url']
-    token = config['token']
+    token = retrieve_token(config)
     all_quality_checks = get_quality_checks(base_url=base_url, token=token, datastore_id=datastore, output=output)
 
     with open(output, 'w') as f:
@@ -224,7 +278,7 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
     datastores = [int(x.strip()) for x in datastore.strip("[]").split(",")]
     config = load_config()
     base_url = config['url']
-    token = config['token']
+    token = retrieve_token(config)
 
     with open(input_file, 'r') as f:
         all_quality_checks = json.load(f)
