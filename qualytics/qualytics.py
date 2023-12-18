@@ -342,7 +342,7 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
                         # If a quality check does not contain the description:
                         # 1. We try to create quality check and verify for conflict
                         #    a. If we notify a conflict, it will  update the check
-                        #    b. If there's no conflic, it will create a new one
+                        #    b. If there's no conflict, it will create a new one
                         else:
                             response = requests.post(base_url + f"quality-checks", headers=_get_default_headers(token),
                                                     json=payload, verify=False)
