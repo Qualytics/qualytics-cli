@@ -26,7 +26,8 @@ setup(
     include_package_data=True,
     install_requires=[
         "typer[all]",
-        "requests"
+        "requests",
+        "pyjwt"
     ],
     entry_points={
         'console_scripts': ['qualytics=qualytics.qualytics:app']
