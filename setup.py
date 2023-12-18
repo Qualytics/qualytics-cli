@@ -9,7 +9,7 @@ project_urls = {
   'GitHub': 'https://github.com/Qualytics/qualytics-cli',
   'Userguide': 'https://qualytics.github.io/userguide/'
 }
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 setup(
     name="qualytics-cli",
     packages=find_packages(),
@@ -26,7 +26,8 @@ setup(
     include_package_data=True,
     install_requires=[
         "typer[all]",
-        "requests"
+        "requests",
+        "pyjwt"
     ],
     entry_points={
         'console_scripts': ['qualytics=qualytics.qualytics:app']
