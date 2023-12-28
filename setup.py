@@ -27,7 +27,8 @@ setup(
     install_requires=[
         "typer[all]",
         "requests",
-        "pyjwt"
+        "pyjwt",
+        "croniter",
     ],
     entry_points={
         'console_scripts': ['qualytics=qualytics.qualytics:app']
