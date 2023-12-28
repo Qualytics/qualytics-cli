@@ -2,3 +2,4 @@ typer-cli
 typer[all]
 bump2version
 pyjwt
+croniter
