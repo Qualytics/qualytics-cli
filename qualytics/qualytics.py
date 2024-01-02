@@ -98,9 +98,14 @@ def log_error(message, file_path):
         file.flush()
 
 
-def get_quality_checks(base_url: str, token: str, datastore_id: int, output: str):
+def get_quality_checks(base_url: str, token: str, datastore_id: int, containers: list[int] | None):
     endpoint = "quality-checks"
     url = f"{base_url}{endpoint}?datastore={datastore_id}"
+
+    if containers:
+        containers_string = ''.join(f'&container={container}' for container in containers)
+        url += containers_string
+
     page = 1
     size = 100
     params = {"sort_created": "asc", "size": size, "page": page}
@@ -253,6 +258,7 @@ def init(url: str = typer.Option(..., help="The URL to be set. Example: https://
 
 @checks_app.command("export")
 def checks_export(datastore: int = typer.Option(..., "--datastore", help="Datastore ID"),
+                  containers: Optional[str] = typer.Option(None, "--containers", help="Comma-separated list of containers IDs or array-like format. Example: \"1, 2, 3\" or \"[1,2,3]\""),
                   output: str = typer.Option(BASE_PATH + "/data_checks.json", "--output", help="Output file path")):
     """
     Export checks to a file.
@@ -262,7 +268,13 @@ def checks_export(datastore: int = typer.Option(..., "--datastore", help="Datast
     token = is_token_valid(config['token'])
     
     if token:
-        all_quality_checks = get_quality_checks(base_url=base_url, token=token, datastore_id=datastore, output=output)
+        if containers:
+            containers = [int(x.strip()) for x in containers.strip("[]").split(",")]
+
+        all_quality_checks = get_quality_checks(base_url=base_url,
+                                                token=token,
+                                                datastore_id=datastore,
+                                                containers=containers)
 
         with open(output, 'w') as f:
             json.dump(all_quality_checks, f, indent=4)
@@ -310,7 +322,11 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
                     
                     if container_id:
                         description = f"[from quality check id: {quality_check['id']} - main datastore id: {datastore_id}]"
-
+                        additional_metadata = {
+                                "from quality check id": f"{quality_check['id']}",
+                                "main datastore id": f"{datastore_id}"
+                        }
+                        quality_check['additional_metadata'].update(additional_metadata)
                         payload = {
                             "fields": [field['name'] for field in quality_check['fields']],
                             "description": f"{quality_check['description']} {description}",
@@ -321,10 +337,7 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
                             "properties": quality_check['properties'],
                             "tags": [global_tag['name'] for global_tag in quality_check['global_tags']],
                             "container_id": container_id,
-                            "additional_metadata": {
-                                "from quality check id": f"{quality_check['id']}",
-                                "main datastore id": f"{datastore_id}"
-                            }
+                            "additional_metadata": quality_check['additional_metadata']
                         }
                         # gets the quality_check by the description
                         quality_check_id = get_quality_check_by_description(base_url=base_url, token=token,
