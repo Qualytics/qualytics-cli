@@ -83,6 +83,10 @@ def _get_default_headers(token):
 
 
 def distinct_file_content(file_path):
+    # Check if the file exists before opening it
+    if not os.path.exists(file_path):
+        return  # Return early if the file doesn't exist
+
     with open(file_path, 'r') as file:
         # Using a set to automatically get distinct lines
         distinct_lines = set(file.readlines())
@@ -93,6 +97,11 @@ def distinct_file_content(file_path):
 
 
 def log_error(message, file_path):
+    # Check if the file exists before opening it
+    if not os.path.exists(file_path):
+        with open(file_path, 'w'):
+            pass  # Create an empty file if it doesn't exist
+
     with open(file_path, 'a') as file:
         file.write(message + '\n')
         file.flush()
@@ -293,7 +302,7 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
     config = load_config()
     base_url = validate_and_format_url(config['url'])
     token = is_token_valid(config['token'])
-
+    error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"
     if token:
         with open(input_file, 'r') as f:
             all_quality_checks = json.load(f)
@@ -318,7 +327,7 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
                             f"[bold red] Profile `{quality_check['container']['name']}` was not found in datastore id: {datastore_id}[/bold red]")
                         log_error(
                             f"Profile `{quality_check['container']['name']}` of quality check {quality_check['id']} was not found in datastore id: {datastore_id}",
-                            BASE_PATH + "/errors.log")
+                            BASE_PATH + error_log_path)
                     
                     if container_id:
                         description = f"[from quality check id: {quality_check['id']} - main datastore id: {datastore_id}]"
@@ -357,7 +366,7 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
                                 print(f"[bold red]Error updating quality check id: {quality_check_id} [/bold red]")
                                 log_error(
                                     f"Error updating quality check id: {quality_check_id} on datastore id: {datastore_id}. Details: {response.text}",
-                                    BASE_PATH + "/errors.log")
+                                    BASE_PATH + error_log_path)
                         # If a quality check does not contain the description:
                         # 1. We try to create quality check and verify for conflict
                         #    a. If we notify a conflict, it will  update the check
@@ -379,7 +388,7 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
                                     print(f"[bold red]Error updating quality check id: {match.group(1)} [/bold red]")
                                     log_error(
                                         f"Error updating quality check id: {match.group(1)} on datastore id: {datastore_id}. Details: {response.text}",
-                                        BASE_PATH + "/errors.log")
+                                        BASE_PATH + error_log_path)
                             elif response.status_code == 200:
                                 print(
                                     f"[bold green]Quality check id: {response.json()['id']} for container: {quality_check['container']['name']} created successfully[/bold green]")
@@ -387,11 +396,11 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
                             else:
                                 log_error(
                                     f"Error creating quality check for datastore id: {datastore_id}. Details: {response.text}",
-                                    BASE_PATH + "/errors.log")
+                                    BASE_PATH + error_log_path)
 
             print(f"Updated a total of {total_updated_checks} quality checks.")
             print(f"Created a tottal of {total_created_checks} quality checks.")
-            distinct_file_content(BASE_PATH + "/errors.log")
+            distinct_file_content(BASE_PATH + error_log_path)
 
 
 @schedule_app.command("export-metadata")
