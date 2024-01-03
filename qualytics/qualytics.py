@@ -19,7 +19,7 @@ from typing import Optional
 from typing_extensions import Annotated
 from croniter import croniter
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 app = typer.Typer()
 
@@ -41,6 +41,7 @@ BASE_PATH = f"{home}/{folder_name}"
 CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
 CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.txt")
 CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
+
 
 def validate_and_format_url(url: str) -> str:
     """Validates and formats the URL to the desired structure."""
@@ -335,7 +336,12 @@ def checks_import(datastore: str = typer.Option(..., "--datastore",
                                 "from quality check id": f"{quality_check['id']}",
                                 "main datastore id": f"{datastore_id}"
                         }
-                        quality_check['additional_metadata'].update(additional_metadata)
+
+                        if quality_check['additional_metadata'] is None:
+                            quality_check['additional_metadata'] = additional_metadata
+                        else:
+                            quality_check['additional_metadata'].update(additional_metadata)
+
                         payload = {
                             "fields": [field['name'] for field in quality_check['fields']],
                             "description": f"{quality_check['description']} {description}",
