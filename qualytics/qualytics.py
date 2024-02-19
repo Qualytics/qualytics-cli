@@ -291,7 +291,7 @@ def checks_export(datastore: int = typer.Option(..., "--datastore", help="Datast
         print(f"[bold green]Data exported to {output}[/bold green]")
 
 
-@checks_app.command("export-metadata")
+@checks_app.command("export-check-templates")
 def check_templates_export(enrich_datastore_id: int = typer.Option(..., "--enrichment_datastore_id", help="Enrichment Datastore ID"),
                   check_templates: Optional[str] = typer.Option(None, "--check_templates",
                                                            help="Comma-separated list of check templates IDs or array-like format. Example: \"1, 2, 3\" or \"[1,2,3]\"")):
