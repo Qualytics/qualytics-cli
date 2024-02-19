@@ -79,7 +79,7 @@ By default, it saves the exported checks to `./qualytics/data_checks.json`. Howe
 Enables exporting check templates to the `_export_check_templates` table to an enrichment datastore.
 
 ```bash
-qualytics checks export-metadata --enrichment_datastore_id ENRICHMENT_DATASTORE_ID [--check_templates CHECK_TEMPLATE_IDS]
+qualytics checks export-templates --enrichment_datastore_id ENRICHMENT_DATASTORE_ID [--check_templates CHECK_TEMPLATE_IDS]
 ```
 
 | Option        | Type     | Description                                                                | Default                            | Required |
