@@ -288,7 +288,41 @@ def checks_export(datastore: int = typer.Option(..., "--datastore", help="Datast
 
         with open(output, 'w') as f:
             json.dump(all_quality_checks, f, indent=4)
-        print(f"Data exported to {output}")
+        print(f"[bold green]Data exported to {output}[/bold green]")
+
+
+@checks_app.command("export-metadata")
+def check_templates_export(enrich_datastore_id: int = typer.Option(..., "--enrichment_datastore_id", help="Enrichment Datastore ID"),
+                  check_templates: Optional[str] = typer.Option(None, "--check_templates",
+                                                           help="Comma-separated list of check templates IDs or array-like format. Example: \"1, 2, 3\" or \"[1,2,3]\"")):
+    """
+    Export checks to a file.
+    """
+    config = load_config()
+    base_url = validate_and_format_url(config['url'])
+    token = is_token_valid(config['token'])
+
+    if token:
+        if check_templates:
+            check_templates = [int(x.strip()) for x in check_templates.strip("[]").split(",")]
+
+        endpoint = "export/check-templates"
+        url = f"{base_url}{endpoint}?enrich_datastore_id={enrich_datastore_id}"
+
+        if check_templates:
+            containers_string = ''.join(f'&template_ids={check_template}' for check_template in check_templates)
+            url += containers_string
+
+        response = requests.post(url, headers=_get_default_headers(token), verify=False)
+
+        # Check for non-success status codes
+        if response.status_code != 204:
+            typer.secho(
+                f"Failed to export check templates. Server responded with: {response.status_code} - {response.text}.",
+                fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+
+        print(f"[bold green]The check templates were exported to the table `_export_check_templates` to enrichment id: {enrich_datastore_id}.[/bold green]")
 
 
 @checks_app.command("import")
