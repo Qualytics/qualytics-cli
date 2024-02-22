@@ -254,7 +254,7 @@ def run_catalog(datastore_ids: [int], include: [str], prune: bool, recreate: boo
                 with open(OPERATION_ERROR_PATH, "a") as error_file:
                     message = response.json()["detail"]
                     current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n")
+                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
                     break
             if attempt == max_retries-1:
                 print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
@@ -262,7 +262,7 @@ def run_catalog(datastore_ids: [int], include: [str], prune: bool, recreate: boo
                 with open(OPERATION_ERROR_PATH, "a") as error_file:
                     message = response.json()["detail"]
                     current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n")
+                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
                     break
 
 
