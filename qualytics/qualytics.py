@@ -29,6 +29,9 @@ checks_app = typer.Typer(name="checks", help="Commands for handling checks")
 # Create a new Typer instance for operation
 schedule_app = typer.Typer(name="schedule", help="Commands for handling schedules")
 
+# Creates a new Typer instance for triggering operations for datastores (catalog, profile, scan)
+run_operation_app = typer.Typer(name="run", help="Command to trigger a datastores operation. (catalog, profile, scan)")
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Get the home directory
@@ -41,6 +44,7 @@ BASE_PATH = f"{home}/{folder_name}"
 CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
 CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.txt")
 CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
+OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
 
 
 def validate_and_format_url(url: str) -> str:
@@ -222,6 +226,36 @@ def is_token_valid(token: str):
                 return token
     except Exception as e:
         print("[bold red] WARNING: Your token is not valid [/bold red]")
+
+
+def run_catalog(datastore_ids: [int], include: [str], prune: bool, recreate: bool, token: str):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config['url'])
+    endpoint = "operations/run"
+    url = f"{base_url}{endpoint}"
+    max_retries = 10
+    wait_time = 50
+    for datastore_id in datastore_ids:
+        for attempt in range(max_retries):
+            response = requests.post(f'{url}',headers=_get_default_headers(token), json={
+                "datastore_id": datastore_id,
+                "type": "catalog",
+                "include": include,
+                "prune": prune,
+                "recreate": recreate
+            })
+            if 200 <= response.status_code <= 299:
+                print(f"[bold green] Successful Catalog for datastore: {datastore_id} [/bold green]")
+                break
+            if attempt == max_retries-1:
+                print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
+                      f"{OPERATION_ERROR_PATH}[/bold red]")
+                with open(OPERATION_ERROR_PATH, "a") as error_file:
+                    message = response.json()["detail"]
+                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n")
+                    return
+
 
 
 @app.callback(invoke_without_command=True)
@@ -538,11 +572,41 @@ def schedule(
                 return 
 
 
+@run_operation_app.command("catalog", help="Triggers a catalog operation for the specified datastores")
+def catalog_operation(datastore: str = typer.Option(..., "--datastore",
+                                                help="Comma-separated list of Datastore IDs or array-like format"),
+                      include: Optional[str] = typer.Option(None,"--include",
+                                                            help="Comma-separated list of include types or array-like format. Example: \"table, view\" or \"[table, view]\""),
+                      prune: Optional[bool] = typer.Option(None, "--prune",
+                                                           help="Prune the operation. Do not include if you want prune == false"),
+                      recreate: Optional[bool] = typer.Option(None, "--recreate",
+                                                              help="Recreate the operation. Do not include if you want recreate == false")
+                      ):
+    # Remove brackets if present and split by comma
+    datastores = [int(x.strip()) for x in datastore.strip("[]").split(",")]
+    config = load_config()
+    base_url = validate_and_format_url(config['url'])
+    token = is_token_valid(config['token'])
+    error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"
+    if token:
+        if include:
+            include = [(x.strip()) for x in include.strip("[]").split(",")]
+        if prune is None:
+            prune = False
+        if recreate is None:
+            recreate = False
+        run_catalog(datastores, include, prune, recreate, token)
+
+
+
 # Add the checks_app as a subcommand to the main app
 app.add_typer(checks_app, name="checks")
 
 # Add the schedule_app as a subcommand to the main app
 app.add_typer(schedule_app, name="schedule")
+
+# Add the trigger operation as a subcommand to the main app
+app.add_typer(run_operation_app, name="run")
 
 if __name__ == "__main__":
     app()
