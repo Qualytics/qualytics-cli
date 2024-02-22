@@ -3,3 +3,5 @@ typer[all]
 bump2version
 pyjwt
 croniter
+requests
+typing_extensions
