@@ -235,18 +235,27 @@ def run_catalog(datastore_ids: [int], include: [str], prune: bool, recreate: boo
     url = f"{base_url}{endpoint}"
     max_retries = 10
     wait_time = 50
-    for datastore_id in datastore_ids:
+    for datastore_id in track(datastore_ids, description="Processing..."):
         for attempt in range(max_retries):
-            response = requests.post(f'{url}',headers=_get_default_headers(token), json={
-                "datastore_id": datastore_id,
-                "type": "catalog",
-                "include": include,
-                "prune": prune,
-                "recreate": recreate
-            })
-            if 200 <= response.status_code <= 299:
-                print(f"[bold green] Successful Catalog for datastore: {datastore_id} [/bold green]")
-                break
+            try:
+                response = requests.post(f'{url}',headers=_get_default_headers(token), json={
+                    "datastore_id": datastore_id,
+                    "type": "catalog",
+                    "include": include,
+                    "prune": prune,
+                    "recreate": recreate
+                })
+                if 200 <= response.status_code <= 299:
+                    print(f"[bold green] Successful Catalog for datastore: {datastore_id} [/bold green]")
+                    break
+            except Exception:
+                print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
+                      f"{OPERATION_ERROR_PATH}[/bold red]")
+                with open(OPERATION_ERROR_PATH, "a") as error_file:
+                    message = response.json()["detail"]
+                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n")
+                    break
             if attempt == max_retries-1:
                 print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
                       f"{OPERATION_ERROR_PATH}[/bold red]")
@@ -254,7 +263,7 @@ def run_catalog(datastore_ids: [int], include: [str], prune: bool, recreate: boo
                     message = response.json()["detail"]
                     current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
                     error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n")
-                    return
+                    break
 
 
 
@@ -576,7 +585,7 @@ def schedule(
 def catalog_operation(datastore: str = typer.Option(..., "--datastore",
                                                 help="Comma-separated list of Datastore IDs or array-like format"),
                       include: Optional[str] = typer.Option(None,"--include",
-                                                            help="Comma-separated list of include types or array-like format. Example: \"table, view\" or \"[table, view]\""),
+                                                            help="Comma-separated list of include types or array-like format. Example: \"table,view\" or \"[table,view]\""),
                       prune: Optional[bool] = typer.Option(None, "--prune",
                                                            help="Prune the operation. Do not include if you want prune == false"),
                       recreate: Optional[bool] = typer.Option(None, "--recreate",
