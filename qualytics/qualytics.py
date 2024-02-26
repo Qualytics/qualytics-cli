@@ -233,37 +233,101 @@ def run_catalog(datastore_ids: [int], include: [str], prune: bool, recreate: boo
     base_url = base_url = validate_and_format_url(config['url'])
     endpoint = "operations/run"
     url = f"{base_url}{endpoint}"
+    for datastore_id in track(datastore_ids, description="Processing..."):
+        try:
+            response = requests.post(f'{url}', headers=_get_default_headers(token), json={
+                "datastore_id": datastore_id,
+                "type": "catalog",
+                "include": include,
+                "prune": prune,
+                "recreate": recreate
+            })
+            if 200 <= response.status_code <= 299:
+                print(f"[bold green] Successfully started Catalog operation "
+                      f"for datastore: {datastore_id} [/bold green]")
+                wait_for_operation_finishes(response.json()["id"], token)
+                print(f"[bold green] Successfully finished Catalog operation "
+                      f"for datastore: {datastore_id} [/bold green]")
+        except Exception:
+            print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
+                  f"{OPERATION_ERROR_PATH}[/bold red]")
+            with open(OPERATION_ERROR_PATH, "a") as error_file:
+                message = response.json()["detail"]
+                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
+
+
+def run_profile(datastore_ids: [int], container_names: list[str] | None, container_tags: list[str] | None,
+                infer_constraints: bool | None, max_records_analyzed_per_partition: int | None, max_count_testing_sample: int | None,
+                percent_testing_threshold: float | None, high_correlation_threshold: float | None, greater_than_time: datetime | None,
+                greater_than_batch: float | None, histogram_max_distinct_values: int | None, token: str):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config['url'])
+    endpoint = "operations/run"
+    url = f"{base_url}{endpoint}"
+
+    for datastore_id in track(datastore_ids, description="Processing..."):
+        try:
+            response = requests.post(f'{url}',headers=_get_default_headers(token), json={
+                "datastore_id": datastore_id,
+                "type": "profile",
+                "container_names": container_names,
+                "container_tags": container_tags,
+                "infer_constraints": infer_constraints,
+                "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
+                "max_count_testing_sample": max_count_testing_sample,
+                "percent_testing_threshold": percent_testing_threshold,
+                "high_correlation_threshold": high_correlation_threshold,
+                "greater_than_time": greater_than_time,
+                "greater_than_batch": greater_than_batch,
+                "histogram_max_distinct_values": histogram_max_distinct_values
+            })
+            if 200 <= response.status_code <= 299:
+                print(f"[bold green] Successful Profile for datastore: {datastore_id} [/bold green]")
+                break
+        except Exception:
+            print(f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
+                  f"{OPERATION_ERROR_PATH}[/bold red]")
+            with open(OPERATION_ERROR_PATH, "a") as error_file:
+                message = response.json()["detail"]
+                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
+                break
+
+
+def wait_for_operation_finishes(operation: int, token: str):
+    """
+    Wait for an operation to finish executing.
+
+    Parameters:
+    - operation (int): The operation ID.
+    - headers (dict): Optional headers to pass to the requests request.
+
+    Returns:
+    - The operation response object.
+    """
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config['url'])
+    headers = _get_default_headers(token)
     max_retries = 10
     wait_time = 50
-    for datastore_id in track(datastore_ids, description="Processing..."):
-        for attempt in range(max_retries):
-            try:
-                response = requests.post(f'{url}',headers=_get_default_headers(token), json={
-                    "datastore_id": datastore_id,
-                    "type": "catalog",
-                    "include": include,
-                    "prune": prune,
-                    "recreate": recreate
-                })
-                if 200 <= response.status_code <= 299:
-                    print(f"[bold green] Successful Catalog for datastore: {datastore_id} [/bold green]")
-                    break
-            except Exception:
-                print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
-                      f"{OPERATION_ERROR_PATH}[/bold red]")
-                with open(OPERATION_ERROR_PATH, "a") as error_file:
-                    message = response.json()["detail"]
-                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
-                    break
-            if attempt == max_retries-1:
-                print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
-                      f"{OPERATION_ERROR_PATH}[/bold red]")
-                with open(OPERATION_ERROR_PATH, "a") as error_file:
-                    message = response.json()["detail"]
-                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
-                    break
+    for attempt in range(max_retries):
+        end_scan = None
+        response = None
+        while not end_scan:
+            print(" Waiting for operation to finish")
+            response = requests.get(base_url + f'operations/{operation}', headers=headers).json()
+            time.sleep(5)
+            if response['end_time']:
+                end_scan = True
+        time.sleep(10)
+        if response['result'] == 'success':
+
+            return response
+        if attempt == max_retries - 1:
+            return response
+        print(f"Attempt {attempt + 1} failed. Retrying in {wait_time} seconds...")
+        time.sleep(wait_time)
 
 
 
@@ -582,7 +646,7 @@ def schedule(
 
 
 @run_operation_app.command("catalog", help="Triggers a catalog operation for the specified datastores")
-def catalog_operation(datastore: str = typer.Option(..., "--datastore",
+def catalog_operation(datastores: str = typer.Option(..., "--datastore",
                                                 help="Comma-separated list of Datastore IDs or array-like format"),
                       include: Optional[str] = typer.Option(None,"--include",
                                                             help="Comma-separated list of include types or array-like format. Example: \"table,view\" or \"[table,view]\""),
@@ -592,11 +656,10 @@ def catalog_operation(datastore: str = typer.Option(..., "--datastore",
                                                               help="Recreate the operation. Do not include if you want recreate == false")
                       ):
     # Remove brackets if present and split by comma
-    datastores = [int(x.strip()) for x in datastore.strip("[]").split(",")]
+    datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
     config = load_config()
     base_url = validate_and_format_url(config['url'])
     token = is_token_valid(config['token'])
-    error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"
     if token:
         if include:
             include = [(x.strip()) for x in include.strip("[]").split(",")]
@@ -607,6 +670,52 @@ def catalog_operation(datastore: str = typer.Option(..., "--datastore",
         run_catalog(datastores, include, prune, recreate, token)
 
 
+@run_operation_app.command("profile",help="Triggers a profile operation for the specified datastores" )
+def profile_operation(datastores: str = typer.Option(..., "--datastore",
+                                                help="Comma-separated list of Datastore IDs or array-like format"),
+                      container_names: Optional[str] = typer.Option(None,"--container_names",
+                                                            help="Comma-separated list of include types or array-like format. Example: \"table,view\" or \"[table,view]\""),
+                      container_tags: Optional[str] = typer.Option(None,"--container_tags",
+                                                            help="Comma-separated list of include types or array-like format. Example: \"table,view\" or \"[table,view]\""),
+                      infer_constraints: Optional[bool] = typer.Option(None, "--infer_constraints",
+                                                           help="Infer quality checks in profile. Do not include if you want infer_constraints == false"),
+                      max_records_analyzed_per_partition: Optional[int] = typer.Option(None, "--max_records_analyzed_per_partition",
+                                                                                       help="Number of max records analyzed per partition"),
+                      max_count_testing_sample: Optional[int] = typer.Option(None, "--max_count_testing_sample",
+                                                                                       help="The number of records accumulated during profiling for validation of inferred checks. Capped at 100,000"),
+                      percent_testing_threshold: Optional[float] = typer.Option(None, "--percent_testing_threshold",
+                                                                                help=" Percent of Testing Threshold" ),
+                      high_correlation_threshold: Optional[float] = typer.Option(None, "--high_correlation_threshold",
+                                                                                 help="Number of Correlation Threshold"),
+                      greater_than_time: Optional[datetime] = typer.Option(None, "--greater_than_date",
+                                                                           help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S"),
+                      greater_than_batch: Optional[float] = typer.Option(None, "--greater_than_batch",
+                                                                         help="Only include rows where the incremental field's value is greater than this number"),
+                      histogram_max_distinct_values: Optional[int] = typer.Option(None, "--histogram_max_distinct_values",
+                                                                                  help="Number of max distinct values of the histogram")
+                      ):
+    # Remove brackets if present and split by comma
+    datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
+    config = load_config()
+    base_url = validate_and_format_url(config['url'])
+    token = is_token_valid(config['token'])
+    if token:
+        if container_names:
+            container_names = [(x.strip()) for x in container_names.strip("[]").split(",")]
+            print(container_names)
+        if container_tags:
+            container_tags = [(x.strip()) for x in container_tags.strip("[]").split(",")]
+        if greater_than_time:
+            greater_than_time = greater_than_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        run_profile(datastore_ids=datastores, container_names=container_names,container_tags=container_tags,
+                    infer_constraints=infer_constraints,max_records_analyzed_per_partition=max_records_analyzed_per_partition,
+                    max_count_testing_sample=max_count_testing_sample,percent_testing_threshold=percent_testing_threshold,
+                    high_correlation_threshold=high_correlation_threshold,greater_than_time=greater_than_time,
+                    greater_than_batch=greater_than_batch,histogram_max_distinct_values=histogram_max_distinct_values , token=token)
+
+
+# TODO: Update to wait for operation to finish to make sure it is completed.
 
 # Add the checks_app as a subcommand to the main app
 app.add_typer(checks_app, name="checks")
