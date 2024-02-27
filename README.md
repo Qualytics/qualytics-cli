@@ -62,16 +62,18 @@ qualytics show-config
 You can export checks to a file using the `checks export` command:
 
 ```bash
-qualytics checks export --datastore DATASTORE_ID
+qualytics checks export --datastore DATASTORE_ID [--containers CONTAINER_IDS] [--tags TAG_NAMES] [--output LOCATION_TO_BE_EXPORTED]
 ```
 
 By default, it saves the exported checks to `./qualytics/data_checks.json`. However, you can specify a different output path with the `--output` option.
 
 
-| Option        | Type     | Description                  | Default                            | Required |
-|---------------|----------|------------------------------|------------------------------------|----------|
-| `--datastore` | INTEGER  | Datastore ID                 | None                               | Yes      |
-| `--output`    | TEXT     | Output file path             | ./qualytics/data_checks.json   | No       |
+| Option         | Type            | Description      | Default                            | Required |
+|----------------|-----------------|------------------|------------------------------------|---------|
+| `--datastore`  | INTEGER         | Datastore ID     | None                               | Yes     |
+| `--containers` | List of INTEGER | Containers IDs   | None                               | No      |
+| `--tags`       | List of TEXT    | Tag names    | None                               | No      |
+| `--output`     | TEXT            | Output file path | ./qualytics/data_checks.json   | No      |
 
 
 ### Export Check Templates
@@ -94,17 +96,17 @@ To import checks from a file:
 
 
 ```bash
-qualytics checks import --datastore DATASTORE_ID_LIST
+qualytics checks import --datastore DATASTORE_ID_LIST [--input LOCATION_FROM_THE_EXPORT]
 ```
 
 By default, it reads the checks from `./qualytics/data_checks.json`. You can specify a different input file with the `--input` option.
 
 **Note**: Any errors encountered during the importing of checks will be logged in `./qualytics/errors.log`.
 
-| Option       | Type | Description                                                          | Default                           | Required |
-|--------------|------|----------------------------------------------------------------------|-----------------------------------|----------|
-| `--datastore`| TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]" | None                              | Yes      |
-| `--input`    | TEXT | Input file path  
+| Option       | Type | Description                                                          | Default                       | Required |
+|--------------|------|----------------------------------------------------------------------|-------------------------------|----------|
+| `--datastore`| TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]" | None  | Yes      |
+| `--input`    | TEXT | Input file path  | HOME/.qualytics/data_checks.json | None |
 
 
 ### Schedule Metadata Export:
