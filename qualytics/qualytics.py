@@ -242,17 +242,27 @@ def run_catalog(datastore_ids: [int], include: [str], prune: bool, recreate: boo
                 "prune": prune,
                 "recreate": recreate
             })
-            if 200 <= response.status_code <= 299:
-                print(f"[bold green] Successfully started Catalog operation "
+            if not (200 <= response.status_code <= 299):  # Operation fails before starting
+                response = response.json()
+                raise Exception
+            print(f"[bold green] Started Catalog operation "
+                  f"for datastore: {datastore_id} [/bold green]")
+            response = wait_for_operation_finishes(response.json()["id"], token)
+            if response["result"] == "success":
+                print(f"[bold green] Successfully Finished Catalog operation "
                       f"for datastore: {datastore_id} [/bold green]")
-                wait_for_operation_finishes(response.json()["id"], token)
-                print(f"[bold green] Successfully finished Catalog operation "
-                      f"for datastore: {datastore_id} [/bold green]")
+            else:
+                print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
+                      f"{OPERATION_ERROR_PATH}[/bold red]")
+                with open(OPERATION_ERROR_PATH, "a") as error_file:
+                    message = response["detail"]
+                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
         except Exception:
             print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
                   f"{OPERATION_ERROR_PATH}[/bold red]")
             with open(OPERATION_ERROR_PATH, "a") as error_file:
-                message = response.json()["detail"]
+                message = response["detail"]
                 current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
                 error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
 
@@ -282,17 +292,74 @@ def run_profile(datastore_ids: [int], container_names: list[str] | None, contain
                 "greater_than_batch": greater_than_batch,
                 "histogram_max_distinct_values": histogram_max_distinct_values
             })
-            if 200 <= response.status_code <= 299:
-                print(f"[bold green] Successful Profile for datastore: {datastore_id} [/bold green]")
-                break
+            if not (200 <= response.status_code <= 299):  # Operation fails before starting
+                response = response.json()
+                raise Exception
+            print(f"[bold green] Successfully Started Profile for datastore: {datastore_id} [/bold green]")
+            response = wait_for_operation_finishes(response.json()["id"], token)
+            if response["result"] == "success":
+                print(f"[bold green] Successfully Finished Profile operation "
+                      f"for datastore: {datastore_id} [/bold green]")
+            else:
+                print(f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
+                    f"{OPERATION_ERROR_PATH}[/bold red]")
+                with open(OPERATION_ERROR_PATH, "a") as error_file:
+                    message = response["detail"]
+                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
         except Exception:
             print(f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
                   f"{OPERATION_ERROR_PATH}[/bold red]")
             with open(OPERATION_ERROR_PATH, "a") as error_file:
-                message = response.json()["detail"]
+                message = response["detail"]
                 current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
                 error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
-                break
+
+
+def run_scan(datastore_ids: [int], container_names: list[str] | None, container_tags: list[str] | None,
+             incremental: bool | None, remediation: str | None, max_records_analyzed_per_partition: int | None,
+              enrichment_source_record_limit: int | None, greater_than_time: datetime | None,
+             greater_than_batch: float | None, token: str):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config['url'])
+    endpoint = "operations/run"
+    url = f"{base_url}{endpoint}"
+    for datastore_id in track(datastore_ids, description="Processing..."):
+        try:
+            response = requests.post(f'{url}', headers=_get_default_headers(token), json={
+                "datastore_id": datastore_id,
+                "type": "scan",
+                "container_names": container_names,
+                "container_tags": container_tags,
+                "incremental": incremental,
+                "remediation": remediation,
+                "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
+                "enrichment_source_record_limit": enrichment_source_record_limit,
+                "greater_than_time": greater_than_time,
+                "greater_than_batch": greater_than_batch,
+            })
+            if not (200 <= response.status_code <= 299):  # Operation fails before starting
+                response = response.json()
+                raise Exception
+            print(f"[bold green] Successfully Started Scan for datastore: {datastore_id} [/bold green]")
+            response = wait_for_operation_finishes(response.json()["id"], token)
+            if response["result"] == "success":
+                print(f"[bold green] Successfully Finished Scan operation "
+                      f"for datastore: {datastore_id} [/bold green]")
+            else:
+                print(f"[bold red] Failed Scan for datastore: {datastore_id}, Please check the path: "
+                    f"{OPERATION_ERROR_PATH}[/bold red]")
+                with open(OPERATION_ERROR_PATH, "a") as error_file:
+                    message = response["detail"]
+                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
+        except Exception:
+            print(f"[bold red] Failed Scan for datastore: {datastore_id}, Please check the path: "
+                  f"{OPERATION_ERROR_PATH}[/bold red]")
+            with open(OPERATION_ERROR_PATH, "a") as error_file:
+                message = response["detail"]
+                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
 
 
 def wait_for_operation_finishes(operation: int, token: str):
@@ -700,6 +767,10 @@ def profile_operation(datastores: str = typer.Option(..., "--datastore",
     base_url = validate_and_format_url(config['url'])
     token = is_token_valid(config['token'])
     if token:
+        if max_records_analyzed_per_partition and max_records_analyzed_per_partition <= -1:
+            print(f"[bold red] max_records_analyzed_per_partition must be greater than or equal to -1. Please try again"
+                  f"[/bold red]")
+            exit(1)
         if container_names:
             container_names = [(x.strip()) for x in container_names.strip("[]").split(",")]
             print(container_names)
@@ -715,7 +786,57 @@ def profile_operation(datastores: str = typer.Option(..., "--datastore",
                     greater_than_batch=greater_than_batch,histogram_max_distinct_values=histogram_max_distinct_values , token=token)
 
 
-# TODO: Update to wait for operation to finish to make sure it is completed.
+@run_operation_app.command("scan", help="Triggers a scan operation for the specified datastores")
+def scan_operation(datastores: str = typer.Option(..., "--datastore",
+                                                help="Comma-separated list of Datastore IDs or array-like format"),
+                   container_names: Optional[str] = typer.Option(None,"--container_names",
+                                                                 help="Comma-separated list of include types or array-like format. Example: \"table,view\" or \"[table,view]\""),
+                   container_tags: Optional[str] = typer.Option(None,"--container_tags",
+                                                                help="Comma-separated list of include types or array-like format. Example: \"table,view\" or \"[table,view]\""),
+                   incremental: Optional[bool] = typer.Option(False, "--incremental",
+                                                              help="Process only new or records updated since the last incremental scan"),
+                   remediation: Optional[str] = typer.Option("none", "--remediation", help="Replication strategy for source tables in the enrichment datastore. Either 'append', 'overwrite', or 'none'"),
+                   max_records_analyzed_per_partition: Optional[int] = typer.Option(None, "--max_records_analyzed_per_partition",
+                                                                                    help="Number of max records analyzed per partition. Value must be Greater than or equal to 0"),
+                   enrichment_source_record_limit: Optional[int] = typer.Option(10, "--enrichment_source_record_limit",
+                                                                                help="Limit of enrichment source records per . Value must be Greater than or equal to -1"),
+                   greater_than_time: Optional[datetime] = typer.Option(None, "--greater_than_time",
+                                                                        help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S"),
+                   greater_than_batch: Optional[float] = typer.Option(None, "--greater_than_batch",
+                                                                      help="Only include rows where the incremental field's value is greater than this number")
+                   ):
+    # Remove brackets if present and split by comma
+    datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
+    config = load_config()
+    base_url = validate_and_format_url(config['url'])
+    token = is_token_valid(config['token'])
+    if token:
+        if enrichment_source_record_limit < 1:
+            print(f"[bold red] enrichment_source_record_limit must be greater than or equal to 1. Please try again "
+                  f"[/bold red]")
+            exit(1)
+        if max_records_analyzed_per_partition and max_records_analyzed_per_partition <= -1:
+            print(f"[bold red] max_records_analyzed_per_partition must be greater than or equal to -1. Please try again"
+                  f"[/bold red]")
+            exit(1)
+        if container_names:
+            container_names = [(x.strip()) for x in container_names.strip("[]").split(",")]
+        if container_tags:
+            container_tags = [(x.strip()) for x in container_tags.strip("[]").split(",")]
+        if remediation and (remediation not in ["append","overwrite", "none"]):
+            print(f"[bold red] Remediation must be either 'append', 'overwrite', or 'none'. Please try again with the correct "
+                  f"values[/bold red]")
+            exit(1)
+        if greater_than_time:
+            greater_than_time = greater_than_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        run_scan(datastore_ids=datastores, container_names=container_names, container_tags=container_tags,
+                 incremental=incremental, remediation=remediation, max_records_analyzed_per_partition=max_records_analyzed_per_partition,
+                 enrichment_source_record_limit=enrichment_source_record_limit,
+                 greater_than_time=greater_than_time, greater_than_batch=greater_than_batch, token=token)
+
+#  TODO Update default values for all variables to be in line with UI
+#  TODO Add warning messages if operation succeded but a warning was thrown
 
 # Add the checks_app as a subcommand to the main app
 app.add_typer(checks_app, name="checks")
