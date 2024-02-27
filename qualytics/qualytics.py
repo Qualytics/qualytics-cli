@@ -176,9 +176,16 @@ def get_quality_checks(
     return all_quality_checks
 
 
-def get_quality_check_by_description(base_url: str, token: str, description: str):
+def get_quality_check_by_additional_metadata(
+    base_url: str, token: str, additional_metadata: dict
+):
     endpoint = "quality-checks"
-    params = {"search": description}
+    quality_check_key = "from quality check id"
+    datastore_id_key = "main datastore id"
+    params = {
+        "datastore": additional_metadata[datastore_id_key],
+        "search": f'"{quality_check_key}": "{additional_metadata[quality_check_key]}", "{datastore_id_key}": "{additional_metadata[datastore_id_key]}"',
+    }
     url = f"{base_url}{endpoint}"
 
     response = requests.get(
@@ -445,9 +452,7 @@ def checks_import(
                             f"Profile `{quality_check['container']['name']}` of quality check {quality_check['id']} was not found in datastore id: {datastore_id}",
                             BASE_PATH + error_log_path,
                         )
-
                     if container_id:
-                        description = f"[from quality check id: {quality_check['id']} - main datastore id: {datastore_id}]"
                         additional_metadata = {
                             "from quality check id": f"{quality_check['id']}",
                             "main datastore id": f"{datastore_id}",
@@ -464,7 +469,7 @@ def checks_import(
                             "fields": [
                                 field["name"] for field in quality_check["fields"]
                             ],
-                            "description": f"{quality_check['description']} {description}",
+                            "description": f"{quality_check['description']}",
                             "rule": quality_check["rule_type"],
                             "coverage": quality_check["coverage"],
                             "is_new": quality_check["is_new"],
@@ -478,8 +483,10 @@ def checks_import(
                             "additional_metadata": quality_check["additional_metadata"],
                         }
                         # gets the quality_check by the description
-                        quality_check_id = get_quality_check_by_description(
-                            base_url=base_url, token=token, description=description
+                        quality_check_id = get_quality_check_by_additional_metadata(
+                            base_url=base_url,
+                            token=token,
+                            additional_metadata=additional_metadata,
                         )
 
                         # If a quality check contains the description, we sync
@@ -553,7 +560,7 @@ def checks_import(
                                 )
 
             print(f"Updated a total of {total_updated_checks} quality checks.")
-            print(f"Created a tottal of {total_created_checks} quality checks.")
+            print(f"Created a total of {total_created_checks} quality checks.")
             distinct_file_content(BASE_PATH + error_log_path)
 
 
@@ -692,3 +699,5 @@ app.add_typer(schedule_app, name="schedule")
 
 if __name__ == "__main__":
     app()
+    # Uncomment for testing
+    # checks_import(datastore="1027", input_file=BASE_PATH + "/data_checks.json")
