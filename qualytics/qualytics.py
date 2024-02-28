@@ -248,23 +248,27 @@ def run_catalog(datastore_ids: [int], include: [str], prune: bool, recreate: boo
             print(f"[bold green] Started Catalog operation "
                   f"for datastore: {datastore_id} [/bold green]")
             response = wait_for_operation_finishes(response.json()["id"], token)
-            if response["result"] == "success":
+            if response["result"] == "success" and response["message"] is None:
                 print(f"[bold green] Successfully Finished Catalog operation "
                       f"for datastore: {datastore_id} [/bold green]")
+            elif response["result"] == "success" and response["message"] is not None:  # Warning occurred
+                msg = response["message"]
+                print(f"[bold yellow] Warning for profile operation on datastore {datastore_id}:"
+                      f" {msg}[/bold yellow]")
             else:
                 print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
                       f"{OPERATION_ERROR_PATH}[/bold red]")
-                with open(OPERATION_ERROR_PATH, "a") as error_file:
-                    message = response["detail"]
-                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
+                message = response["detail"]
+                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                message = f"{current_datetime}: Error executing catalog operation: {message}\n\n"
+                log_error(message, OPERATION_ERROR_PATH)
         except Exception:
             print(f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
                   f"{OPERATION_ERROR_PATH}[/bold red]")
-            with open(OPERATION_ERROR_PATH, "a") as error_file:
-                message = response["detail"]
-                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
+            message = response["detail"]
+            current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+            message = f"{current_datetime}: Error executing catalog operation: {message}\n\n"
+            log_error(message, OPERATION_ERROR_PATH)
 
 
 def run_profile(datastore_ids: [int], container_names: list[str] | None, container_tags: list[str] | None,
@@ -297,23 +301,27 @@ def run_profile(datastore_ids: [int], container_names: list[str] | None, contain
                 raise Exception
             print(f"[bold green] Successfully Started Profile for datastore: {datastore_id} [/bold green]")
             response = wait_for_operation_finishes(response.json()["id"], token)
-            if response["result"] == "success":
+            if response["result"] == "success" and response["message"] is None:
                 print(f"[bold green] Successfully Finished Profile operation "
                       f"for datastore: {datastore_id} [/bold green]")
+            elif response["result"] == "success" and response["message"] is not None: # Warning occurred
+                msg = response["message"]
+                print(f"[bold yellow] Warning for profile operation on datastore {datastore_id}:"
+                      f" {msg}[/bold yellow]")
             else:
                 print(f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
-                    f"{OPERATION_ERROR_PATH}[/bold red]")
-                with open(OPERATION_ERROR_PATH, "a") as error_file:
-                    message = response["detail"]
-                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
+                      f"{OPERATION_ERROR_PATH}[/bold red]")
+                message = response["detail"]
+                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                message = f"{current_datetime}: Error executing profile operation: {message}\n\n"
+                log_error(message, OPERATION_ERROR_PATH)
         except Exception:
             print(f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
                   f"{OPERATION_ERROR_PATH}[/bold red]")
-            with open(OPERATION_ERROR_PATH, "a") as error_file:
-                message = response["detail"]
-                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                error_file.write(f"{current_datetime} : Error executing catalog operation: {message}\n\n")
+            message = response["detail"]
+            current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+            message = f"{current_datetime}: Error executing profile operation: {message}\n\n"
+            log_error(message, OPERATION_ERROR_PATH)
 
 
 def run_scan(datastore_ids: [int], container_names: list[str] | None, container_tags: list[str] | None,
@@ -343,9 +351,13 @@ def run_scan(datastore_ids: [int], container_names: list[str] | None, container_
                 raise Exception
             print(f"[bold green] Successfully Started Scan for datastore: {datastore_id} [/bold green]")
             response = wait_for_operation_finishes(response.json()["id"], token)
-            if response["result"] == "success":
+            if response["result"] == "success" and response["message"] is None:
                 print(f"[bold green] Successfully Finished Scan operation "
                       f"for datastore: {datastore_id} [/bold green]")
+            elif response["result"] == "success" and response["message"] is not None:
+                msg = response["message"]
+                print(f"[bold yellow] Warning for scan operation on datastore {datastore_id}:"
+                      f" {msg}[/bold yellow]")
             else:
                 print(f"[bold red] Failed Scan for datastore: {datastore_id}, Please check the path: "
                     f"{OPERATION_ERROR_PATH}[/bold red]")
