@@ -6,10 +6,10 @@ with open(os.path.join(this_directory, "README.md")) as f:
     long_description = f.read()
 
 project_urls = {
-  'GitHub': 'https://github.com/Qualytics/qualytics-cli',
-  'Userguide': 'https://qualytics.github.io/userguide/'
+    "GitHub": "https://github.com/Qualytics/qualytics-cli",
+    "Userguide": "https://qualytics.github.io/userguide/",
 }
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 setup(
     name="qualytics-cli",
     packages=find_packages(),
@@ -30,13 +30,11 @@ setup(
         "pyjwt",
         "croniter",
     ],
-    entry_points={
-        'console_scripts': ['qualytics=qualytics.qualytics:app']
-    },
+    entry_points={"console_scripts": ["qualytics=qualytics.qualytics:app"]},
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.7'
+    python_requires=">=3.7",
 )
