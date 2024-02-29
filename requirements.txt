@@ -3,4 +3,6 @@ typer[all]
 bump2version
 pyjwt
 croniter
+requests
+typing_extensions
 pre-commit==3.6.2

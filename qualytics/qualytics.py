@@ -19,7 +19,7 @@ from typing import Optional
 from typing_extensions import Annotated
 from croniter import croniter
 
-__version__ = "0.1.11"
+__version__ = "0.1.12"
 
 app = typer.Typer()
 
@@ -28,6 +28,12 @@ checks_app = typer.Typer(name="checks", help="Commands for handling checks")
 
 # Create a new Typer instance for operation
 schedule_app = typer.Typer(name="schedule", help="Commands for handling schedules")
+
+# Creates a new Typer instance for triggering operations for datastores (catalog, profile, scan)
+run_operation_app = typer.Typer(
+    name="run",
+    help="Command to trigger a datastores operation. (catalog, profile, scan)",
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -41,6 +47,7 @@ BASE_PATH = f"{home}/{folder_name}"
 CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
 CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.txt")
 CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
+OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
 
 
 def validate_and_format_url(url: str) -> str:
@@ -263,6 +270,268 @@ def is_token_valid(token: str):
     except Exception as e:
         print("[bold red] WARNING: Your token is not valid [/bold red]")
         print(f"[bold red] {e} [/bold red]")
+
+
+def run_catalog(
+    datastore_ids: [int], include: [str], prune: bool, recreate: bool, token: str
+):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = "operations/run"
+    url = f"{base_url}{endpoint}"
+    for datastore_id in track(datastore_ids, description="Processing..."):
+        try:
+            response = requests.post(
+                f"{url}",
+                headers=_get_default_headers(token),
+                json={
+                    "datastore_id": datastore_id,
+                    "type": "catalog",
+                    "include": include,
+                    "prune": prune,
+                    "recreate": recreate,
+                },
+            )
+            if not (
+                200 <= response.status_code <= 299
+            ):  # Operation fails before starting
+                response = response.json()
+                raise Exception
+            print(
+                f"[bold green] Started Catalog operation "
+                f"for datastore: {datastore_id} [/bold green]"
+            )
+            response = wait_for_operation_finishes(response.json()["id"], token)
+            if response["result"] == "success" and response["message"] is None:
+                print(
+                    f"[bold green] Successfully Finished Catalog operation "
+                    f"for datastore: {datastore_id} [/bold green]"
+                )
+            elif (
+                response["result"] == "success" and response["message"] is not None
+            ):  # Warning occurred
+                msg = response["message"]
+                print(
+                    f"[bold yellow] Warning for profile operation on datastore {datastore_id}:"
+                    f" {msg}[/bold yellow]"
+                )
+            else:
+                print(
+                    f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
+                    f"{OPERATION_ERROR_PATH}[/bold red]"
+                )
+                message = response["detail"]
+                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                message = f"{current_datetime}: Error executing catalog operation: {message}\n\n"
+                log_error(message, OPERATION_ERROR_PATH)
+        except Exception:
+            print(
+                f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
+                f"{OPERATION_ERROR_PATH}[/bold red]"
+            )
+            message = response["detail"]
+            current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+            message = (
+                f"{current_datetime}: Error executing catalog operation: {message}\n\n"
+            )
+            log_error(message, OPERATION_ERROR_PATH)
+
+
+def run_profile(
+    datastore_ids: [int],
+    container_names: list[str] | None,
+    container_tags: list[str] | None,
+    infer_constraints: bool | None,
+    max_records_analyzed_per_partition: int | None,
+    max_count_testing_sample: int | None,
+    percent_testing_threshold: float | None,
+    high_correlation_threshold: float | None,
+    greater_than_time: datetime | None,
+    greater_than_batch: float | None,
+    histogram_max_distinct_values: int | None,
+    token: str,
+):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = "operations/run"
+    url = f"{base_url}{endpoint}"
+
+    for datastore_id in track(datastore_ids, description="Processing..."):
+        try:
+            response = requests.post(
+                f"{url}",
+                headers=_get_default_headers(token),
+                json={
+                    "datastore_id": datastore_id,
+                    "type": "profile",
+                    "container_names": container_names,
+                    "container_tags": container_tags,
+                    "infer_constraints": infer_constraints,
+                    "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
+                    "max_count_testing_sample": max_count_testing_sample,
+                    "percent_testing_threshold": percent_testing_threshold,
+                    "high_correlation_threshold": high_correlation_threshold,
+                    "greater_than_time": greater_than_time,
+                    "greater_than_batch": greater_than_batch,
+                    "histogram_max_distinct_values": histogram_max_distinct_values,
+                },
+            )
+            if not (
+                200 <= response.status_code <= 299
+            ):  # Operation fails before starting
+                response = response.json()
+                raise Exception
+            print(
+                f"[bold green] Successfully Started Profile for datastore: {datastore_id} [/bold green]"
+            )
+            response = wait_for_operation_finishes(response.json()["id"], token)
+            if response["result"] == "success" and response["message"] is None:
+                print(
+                    f"[bold green] Successfully Finished Profile operation "
+                    f"for datastore: {datastore_id} [/bold green]"
+                )
+            elif (
+                response["result"] == "success" and response["message"] is not None
+            ):  # Warning occurred
+                msg = response["message"]
+                print(
+                    f"[bold yellow] Warning for profile operation on datastore {datastore_id}:"
+                    f" {msg}[/bold yellow]"
+                )
+            else:
+                print(
+                    f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
+                    f"{OPERATION_ERROR_PATH}[/bold red]"
+                )
+                message = response["detail"]
+                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                message = f"{current_datetime}: Error executing profile operation: {message}\n\n"
+                log_error(message, OPERATION_ERROR_PATH)
+        except Exception:
+            print(
+                f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
+                f"{OPERATION_ERROR_PATH}[/bold red]"
+            )
+            message = response["detail"]
+            current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+            message = (
+                f"{current_datetime}: Error executing profile operation: {message}\n\n"
+            )
+            log_error(message, OPERATION_ERROR_PATH)
+
+
+def run_scan(
+    datastore_ids: [int],
+    container_names: list[str] | None,
+    container_tags: list[str] | None,
+    incremental: bool | None,
+    remediation: str | None,
+    max_records_analyzed_per_partition: int | None,
+    enrichment_source_record_limit: int | None,
+    greater_than_time: datetime | None,
+    greater_than_batch: float | None,
+    token: str,
+):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = "operations/run"
+    url = f"{base_url}{endpoint}"
+    for datastore_id in track(datastore_ids, description="Processing..."):
+        try:
+            response = requests.post(
+                f"{url}",
+                headers=_get_default_headers(token),
+                json={
+                    "datastore_id": datastore_id,
+                    "type": "scan",
+                    "container_names": container_names,
+                    "container_tags": container_tags,
+                    "incremental": incremental,
+                    "remediation": remediation,
+                    "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
+                    "enrichment_source_record_limit": enrichment_source_record_limit,
+                    "greater_than_time": greater_than_time,
+                    "greater_than_batch": greater_than_batch,
+                },
+            )
+            if not (
+                200 <= response.status_code <= 299
+            ):  # Operation fails before starting
+                response = response.json()
+                raise Exception
+            print(
+                f"[bold green] Successfully Started Scan for datastore: {datastore_id} [/bold green]"
+            )
+            response = wait_for_operation_finishes(response.json()["id"], token)
+            if response["result"] == "success" and response["message"] is None:
+                print(
+                    f"[bold green] Successfully Finished Scan operation "
+                    f"for datastore: {datastore_id} [/bold green]"
+                )
+            elif response["result"] == "success" and response["message"] is not None:
+                msg = response["message"]
+                print(
+                    f"[bold yellow] Warning for scan operation on datastore {datastore_id}:"
+                    f" {msg}[/bold yellow]"
+                )
+            else:
+                print(
+                    f"[bold red] Failed Scan for datastore: {datastore_id}, Please check the path: "
+                    f"{OPERATION_ERROR_PATH}[/bold red]"
+                )
+                with open(OPERATION_ERROR_PATH, "a") as error_file:
+                    message = response["detail"]
+                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                    error_file.write(
+                        f"{current_datetime} : Error executing catalog operation: {message}\n\n"
+                    )
+        except Exception:
+            print(
+                f"[bold red] Failed Scan for datastore: {datastore_id}, Please check the path: "
+                f"{OPERATION_ERROR_PATH}[/bold red]"
+            )
+            with open(OPERATION_ERROR_PATH, "a") as error_file:
+                message = response["detail"]
+                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                error_file.write(
+                    f"{current_datetime} : Error executing catalog operation: {message}\n\n"
+                )
+
+
+def wait_for_operation_finishes(operation: int, token: str):
+    """
+    Wait for an operation to finish executing.
+
+    Parameters:
+    - operation (int): The operation ID.
+    - headers (dict): Optional headers to pass to the requests request.
+
+    Returns:
+    - The operation response object.
+    """
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    headers = _get_default_headers(token)
+    max_retries = 10
+    wait_time = 50
+    for attempt in range(max_retries):
+        end_scan = None
+        response = None
+        while not end_scan:
+            print(" Waiting for operation to finish")
+            response = requests.get(
+                base_url + f"operations/{operation}", headers=headers
+            ).json()
+            time.sleep(5)
+            if response["end_time"]:
+                end_scan = True
+        time.sleep(10)
+        if response["result"] == "success":
+            return response
+        if attempt == max_retries - 1:
+            return response
+        print(f"Attempt {attempt + 1} failed. Retrying in {wait_time} seconds...")
+        time.sleep(wait_time)
 
 
 @app.callback(invoke_without_command=True)
@@ -691,11 +960,251 @@ def schedule(
                 return
 
 
+@run_operation_app.command(
+    "catalog", help="Triggers a catalog operation for the specified datastores"
+)
+def catalog_operation(
+    datastores: str = typer.Option(
+        ...,
+        "--datastore",
+        help="Comma-separated list of Datastore IDs or array-like format",
+    ),
+    include: Optional[str] = typer.Option(
+        None,
+        "--include",
+        help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
+    ),
+    prune: Optional[bool] = typer.Option(
+        None,
+        "--prune",
+        help="Prune the operation. Do not include if you want prune == false",
+    ),
+    recreate: Optional[bool] = typer.Option(
+        None,
+        "--recreate",
+        help="Recreate the operation. Do not include if you want recreate == false",
+    ),
+):
+    # Remove brackets if present and split by comma
+    datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
+    config = load_config()
+    token = is_token_valid(config["token"])
+    if token:
+        if include:
+            include = [(x.strip()) for x in include.strip("[]").split(",")]
+        if prune is None:
+            prune = False
+        if recreate is None:
+            recreate = False
+        run_catalog(datastores, include, prune, recreate, token)
+
+
+@run_operation_app.command(
+    "profile", help="Triggers a profile operation for the specified datastores"
+)
+def profile_operation(
+    datastores: str = typer.Option(
+        ...,
+        "--datastore",
+        help="Comma-separated list of Datastore IDs or array-like format",
+    ),
+    container_names: Optional[str] = typer.Option(
+        None,
+        "--container_names",
+        help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
+    ),
+    container_tags: Optional[str] = typer.Option(
+        None,
+        "--container_tags",
+        help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
+    ),
+    infer_constraints: Optional[bool] = typer.Option(
+        None,
+        "--infer_constraints",
+        help="Infer quality checks in profile. Do not include if you want infer_constraints == false",
+    ),
+    max_records_analyzed_per_partition: Optional[int] = typer.Option(
+        None,
+        "--max_records_analyzed_per_partition",
+        help="Number of max records analyzed per partition",
+    ),
+    max_count_testing_sample: Optional[int] = typer.Option(
+        None,
+        "--max_count_testing_sample",
+        help="The number of records accumulated during profiling for validation of inferred checks. Capped at 100,000",
+    ),
+    percent_testing_threshold: Optional[float] = typer.Option(
+        None, "--percent_testing_threshold", help=" Percent of Testing Threshold"
+    ),
+    high_correlation_threshold: Optional[float] = typer.Option(
+        None, "--high_correlation_threshold", help="Number of Correlation Threshold"
+    ),
+    greater_than_time: Optional[datetime] = typer.Option(
+        None,
+        "--greater_than_date",
+        help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S",
+    ),
+    greater_than_batch: Optional[float] = typer.Option(
+        None,
+        "--greater_than_batch",
+        help="Only include rows where the incremental field's value is greater than this number",
+    ),
+    histogram_max_distinct_values: Optional[int] = typer.Option(
+        None,
+        "--histogram_max_distinct_values",
+        help="Number of max distinct values of the histogram",
+    ),
+):
+    # Remove brackets if present and split by comma
+    datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
+    config = load_config()
+    token = is_token_valid(config["token"])
+    if token:
+        if (
+            max_records_analyzed_per_partition
+            and max_records_analyzed_per_partition <= -1
+        ):
+            print(
+                "[bold red] max_records_analyzed_per_partition must be greater than or equal to -1. Please try again"
+                "[/bold red]"
+            )
+            exit(1)
+        if container_names:
+            container_names = [
+                (x.strip()) for x in container_names.strip("[]").split(",")
+            ]
+        if container_tags:
+            container_tags = [
+                (x.strip()) for x in container_tags.strip("[]").split(",")
+            ]
+        if greater_than_time:
+            greater_than_time = greater_than_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        run_profile(
+            datastore_ids=datastores,
+            container_names=container_names,
+            container_tags=container_tags,
+            infer_constraints=infer_constraints,
+            max_records_analyzed_per_partition=max_records_analyzed_per_partition,
+            max_count_testing_sample=max_count_testing_sample,
+            percent_testing_threshold=percent_testing_threshold,
+            high_correlation_threshold=high_correlation_threshold,
+            greater_than_time=greater_than_time,
+            greater_than_batch=greater_than_batch,
+            histogram_max_distinct_values=histogram_max_distinct_values,
+            token=token,
+        )
+
+
+@run_operation_app.command(
+    "scan", help="Triggers a scan operation for the specified datastores"
+)
+def scan_operation(
+    datastores: str = typer.Option(
+        ...,
+        "--datastore",
+        help="Comma-separated list of Datastore IDs or array-like format",
+    ),
+    container_names: Optional[str] = typer.Option(
+        None,
+        "--container_names",
+        help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
+    ),
+    container_tags: Optional[str] = typer.Option(
+        None,
+        "--container_tags",
+        help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
+    ),
+    incremental: Optional[bool] = typer.Option(
+        False,
+        "--incremental",
+        help="Process only new or records updated since the last incremental scan",
+    ),
+    remediation: Optional[str] = typer.Option(
+        "none",
+        "--remediation",
+        help="Replication strategy for source tables in the enrichment datastore. Either 'append', 'overwrite', or 'none'",
+    ),
+    max_records_analyzed_per_partition: Optional[int] = typer.Option(
+        None,
+        "--max_records_analyzed_per_partition",
+        help="Number of max records analyzed per partition. Value must be Greater than or equal to 0",
+    ),
+    enrichment_source_record_limit: Optional[int] = typer.Option(
+        10,
+        "--enrichment_source_record_limit",
+        help="Limit of enrichment source records per . Value must be Greater than or equal to -1",
+    ),
+    greater_than_time: Optional[datetime] = typer.Option(
+        None,
+        "--greater_than_time",
+        help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S",
+    ),
+    greater_than_batch: Optional[float] = typer.Option(
+        None,
+        "--greater_than_batch",
+        help="Only include rows where the incremental field's value is greater than this number",
+    ),
+):
+    # Remove brackets if present and split by comma
+    datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
+    config = load_config()
+    token = is_token_valid(config["token"])
+    if token:
+        if enrichment_source_record_limit < 1:
+            print(
+                "[bold red] enrichment_source_record_limit must be greater than or equal to 1. Please try again "
+                "[/bold red]"
+            )
+            exit(1)
+        if (
+            max_records_analyzed_per_partition
+            and max_records_analyzed_per_partition <= -1
+        ):
+            print(
+                "[bold red] max_records_analyzed_per_partition must be greater than or equal to -1. Please try again"
+                "[/bold red]"
+            )
+            exit(1)
+        if container_names:
+            container_names = [
+                (x.strip()) for x in container_names.strip("[]").split(",")
+            ]
+        if container_tags:
+            container_tags = [
+                (x.strip()) for x in container_tags.strip("[]").split(",")
+            ]
+        if remediation and (remediation not in ["append", "overwrite", "none"]):
+            print(
+                "[bold red] Remediation must be either 'append', 'overwrite', or 'none'. Please try again with "
+                "the correct values[/bold red]"
+            )
+            exit(1)
+        if greater_than_time:
+            greater_than_time = greater_than_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        run_scan(
+            datastore_ids=datastores,
+            container_names=container_names,
+            container_tags=container_tags,
+            incremental=incremental,
+            remediation=remediation,
+            max_records_analyzed_per_partition=max_records_analyzed_per_partition,
+            enrichment_source_record_limit=enrichment_source_record_limit,
+            greater_than_time=greater_than_time,
+            greater_than_batch=greater_than_batch,
+            token=token,
+        )
+
+
 # Add the checks_app as a subcommand to the main app
 app.add_typer(checks_app, name="checks")
 
 # Add the schedule_app as a subcommand to the main app
 app.add_typer(schedule_app, name="schedule")
+
+# Add the trigger operation as a subcommand to the main app
+app.add_typer(run_operation_app, name="run")
 
 if __name__ == "__main__":
     app()

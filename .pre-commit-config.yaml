@@ -19,6 +19,9 @@ repos:
       - id: mixed-line-ending
       - id: trailing-whitespace
       - id: check-toml
+      - id: check-yaml
+        exclude: '^\.github/'
+
 
   # Run the Ruff linter.
   - repo: https://github.com/astral-sh/ruff-pre-commit
