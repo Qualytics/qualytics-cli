@@ -123,3 +123,20 @@ qualytics schedule_app export-metadata --crontab "CRONTAB_EXPRESSION" --datastor
 | `--datastore`    | TEXT | The datastore ID | Yes      |
 | `--containers`    | TEXT | Comma-separated list of container IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]" | No      |
 | `--options`    | TEXT | Comma-separated list of options to export or "all". Example: "anomalies, checks, field-profiles" | Yes      |
+
+
+### Run a Catalog Operation on a Datastore
+
+Allows you to trigger a catalog operation on any current datastore (datastore permission required by admin)
+
+```bash
+qualytics run catalog --datastore_id "DATSTORE_ID_LIST" --include --prune --recreate
+```
+
+
+| Option           | Type | Description                                                          | Required |
+|------------------|------|----------------------------------------------------------------------|----------|
+| `--datastore_id` | TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"| Yes      |
+| `--include`      | Text | Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"| No       |
+| `--prune`        | Bool | Prune the operation. Do not include if you want prune == false| No       |
+| `----recreate`   | Bool | Recreate the operation. Do not include if you want recreate == false | No       |
