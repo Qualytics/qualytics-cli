@@ -1041,7 +1041,7 @@ def profile_operation(
     ),
     greater_than_time: Optional[datetime] = typer.Option(
         None,
-        "--greater_than_date",
+        "--greater_than_time",
         help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S",
     ),
     greater_than_batch: Optional[float] = typer.Option(
