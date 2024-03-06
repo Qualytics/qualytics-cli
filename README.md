@@ -191,3 +191,14 @@ qualytics run scan --datastore "DATSTORE_ID_LIST" --container_names "CONTAINER_N
 | `--greater_than_date`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
 | `--greater_than_batch`                 | FlOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
 | `--background`                         | BOOL     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
+
+
+### Check Operation Status
+Allows a user to check an operation's status. Useful if a user triggered an operation but had it running in the background
+
+```bash
+qualytics check_status operation --ids "OPERATION_IDS"
+```
+| Option              | Type     | Description                                                                                                               | Required |
+|---------------------|----------|---------------------------------------------------------------------------------------------------------------------------|----------|
+| `--ids`             | TEXT     | Comma-separated list of Operation IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                           | Yes      |
