@@ -566,7 +566,6 @@ def check_operation_status(operation_ids: [int], token: str):
         response = requests.get(
             base_url + f"operations/{curr_id}", headers=headers
         ).json()
-        print(response.keys())
         if "result" not in response.keys():
             print(f"[bold red] Operation: {curr_id} Not Found")
         elif response["result"] == "success":
