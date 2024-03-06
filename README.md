@@ -138,9 +138,9 @@ qualytics run catalog --datastore "DATSTORE_ID_LIST" --include "INCLUDE_LIST" --
 |----------------|------|-----------------------------------------------------------------------------------------------------|----------|
 | `--datastore`  | TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"     | Yes      |
 | `--include`    | Text | Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]" | No       |
-| `--prune`      | Bool | Prune the operation. Do not include if you want prune == false                                      | No       |
-| `--recreate`   | Bool | Recreate the operation. Do not include if you want recreate == false                                | No       |
-| `--background` | Bool | Starts the catalog but does not wait for the operation to finish                                    | No       |
+| `--prune`      | BOOL | Prune the operation. Do not include if you want prune == false                                      | No       |
+| `--recreate`   | BOOL | Recreate the operation. Do not include if you want recreate == false                                | No       |
+| `--background` | BOOL | Starts the catalog but does not wait for the operation to finish                                    | No       |
 
 
 ### Run a Profile Operation on a Datastore
@@ -158,7 +158,7 @@ qualytics run profile --datastore "DATSTORE_ID_LIST" --container_names "CONTAINE
 | `--datastore`                          | TEXT     | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                                                  | Yes      |
 | `--container_names`                    | TEXT     | Comma-separated list of include types or array-like format. Example: "container1,container2" or "[container1,container2]"                        | No       |
 | `--container_tags`                     | TEXT     | Comma-separated list of include types or array-like format. Example: "tag1,tag2" or "[tag1,tag2]"                                                | No       |
-| `--infer_constraints`                  | Bool     | Infer quality checks in profile. Do not include if you want infer_constraints == false                                                           | No       |
+| `--infer_constraints`                  | BOOl     | Infer quality checks in profile. Do not include if you want infer_constraints == false                                                           | No       |
 | `--max_records_analyzed_per_partition` | FlOAT    | Number of max records analyzed per partition                                                                                                     | No       |
 | `--max_count_testing_sample`           | INT      | The number of records accumulated during profiling for validation of inferred checks. Capped at 100,000                                          | No       |
 | `--percent_testing_threshold`          | FlOAT    | Percent of testing threshold                                                                                                                     | No       |
@@ -166,7 +166,7 @@ qualytics run profile --datastore "DATSTORE_ID_LIST" --container_names "CONTAINE
 | `--greater_than_time`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
 | `--greater_than_batch`                 | FlOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
 | `--histogram_max_distinct_values`      | INT      | Number of max distinct values of the histogram                                                                                                   | No       |
-| `--background`                         | Bool     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
+| `--background`                         | BOOL     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
 
 
 
@@ -184,10 +184,10 @@ qualytics run scan --datastore "DATSTORE_ID_LIST" --container_names "CONTAINER_N
 | `--datastore`                          | TEXT     | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                                                  | Yes      |
 | `--container_names`                    | TEXT     | Comma-separated list of include types or array-like format. Example: "container1,container2" or "[container1,container2]"                        | No       |
 | `--container_tags`                     | TEXT     | Comma-separated list of include types or array-like format. Example: "tag1,tag2" or "[tag1,tag2]"                                                | No       |
-| `--incremental`                        | Bool     | Process only new or records updated since the last incremental scan                                                                              | No       |
+| `--incremental`                        | BOOL     | Process only new or records updated since the last incremental scan                                                                              | No       |
 | `--redediation`                        | TEXT     | Replication strategy for source tables in the enrichment datastore. Either 'append', 'overwrite', or 'none'                                      | No       |
 | `--max_records_analyzed_per_partition` | INT      | Number of max records analyzed per partition. Value must be Greater than or equal to 0                                                           | No       |
 | `--enrichment_source_record_limit`     | INT      | Limit of enrichment source records per . Value must be Greater than or equal to -1                                                               | No       |
 | `--greater_than_date`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
 | `--greater_than_batch`                 | FlOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
-| `--background`                         | Bool     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
+| `--background`                         | BOOL     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
