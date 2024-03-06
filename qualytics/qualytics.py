@@ -35,6 +35,11 @@ run_operation_app = typer.Typer(
     help="Command to trigger a datastores operation. (catalog, profile, scan)",
 )
 
+check_status_app = typer.Typer(
+    name="check_status",
+    help="Checks the status of a operation based on the operation ID",
+)
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Get the home directory
@@ -273,7 +278,12 @@ def is_token_valid(token: str):
 
 
 def run_catalog(
-    datastore_ids: [int], include: [str], prune: bool, recreate: bool, token: str
+    datastore_ids: [int],
+    include: [str],
+    prune: bool,
+    recreate: bool,
+    token: str,
+    background: bool,
 ):
     config = load_config()
     base_url = base_url = validate_and_format_url(config["url"])
@@ -297,33 +307,35 @@ def run_catalog(
             ):  # Operation fails before starting
                 response = response.json()
                 raise Exception
+            catalog_id = response.json()["id"]
             print(
-                f"[bold green] Started Catalog operation "
+                f"[bold green] Started Catalog operation {catalog_id} "
                 f"for datastore: {datastore_id} [/bold green]"
             )
-            response = wait_for_operation_finishes(response.json()["id"], token)
-            if response["result"] == "success" and response["message"] is None:
-                print(
-                    f"[bold green] Successfully Finished Catalog operation "
-                    f"for datastore: {datastore_id} [/bold green]"
-                )
-            elif (
-                response["result"] == "success" and response["message"] is not None
-            ):  # Warning occurred
-                msg = response["message"]
-                print(
-                    f"[bold yellow] Warning for profile operation on datastore {datastore_id}:"
-                    f" {msg}[/bold yellow]"
-                )
-            else:
-                print(
-                    f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
-                    f"{OPERATION_ERROR_PATH}[/bold red]"
-                )
-                message = response["detail"]
-                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                message = f"{current_datetime}: Error executing catalog operation: {message}\n\n"
-                log_error(message, OPERATION_ERROR_PATH)
+            if background is False:
+                response = wait_for_operation_finishes(response.json()["id"], token)
+                if response["result"] == "success" and response["message"] is None:
+                    print(
+                        f"[bold green] Successfully Finished Catalog operation {catalog_id}"
+                        f"for datastore: {datastore_id} [/bold green]"
+                    )
+                elif (
+                    response["result"] == "success" and response["message"] is not None
+                ):  # Warning occurred
+                    msg = response["message"]
+                    print(
+                        f"[bold yellow] Warning for Catalog operation {catalog_id} on datastore {datastore_id}:"
+                        f" {msg}[/bold yellow]"
+                    )
+                else:
+                    print(
+                        f"[bold red] Failed Catalog {catalog_id} for datastore: {datastore_id}, Please check the path: "
+                        f"{OPERATION_ERROR_PATH}[/bold red]"
+                    )
+                    message = response["detail"]
+                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                    message = f"{current_datetime}: Error executing catalog operation: {message}\n\n"
+                    log_error(message, OPERATION_ERROR_PATH)
         except Exception:
             print(
                 f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
@@ -350,6 +362,7 @@ def run_profile(
     greater_than_batch: float | None,
     histogram_max_distinct_values: int | None,
     token: str,
+    background: bool,
 ):
     config = load_config()
     base_url = base_url = validate_and_format_url(config["url"])
@@ -381,32 +394,34 @@ def run_profile(
             ):  # Operation fails before starting
                 response = response.json()
                 raise Exception
+            profile_id = response.json()["id"]
             print(
-                f"[bold green] Successfully Started Profile for datastore: {datastore_id} [/bold green]"
+                f"[bold green] Successfully Started Profile {profile_id} for datastore: {datastore_id} [/bold green]"
             )
-            response = wait_for_operation_finishes(response.json()["id"], token)
-            if response["result"] == "success" and response["message"] is None:
-                print(
-                    f"[bold green] Successfully Finished Profile operation "
-                    f"for datastore: {datastore_id} [/bold green]"
-                )
-            elif (
-                response["result"] == "success" and response["message"] is not None
-            ):  # Warning occurred
-                msg = response["message"]
-                print(
-                    f"[bold yellow] Warning for profile operation on datastore {datastore_id}:"
-                    f" {msg}[/bold yellow]"
-                )
-            else:
-                print(
-                    f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
-                    f"{OPERATION_ERROR_PATH}[/bold red]"
-                )
-                message = response["detail"]
-                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                message = f"{current_datetime}: Error executing profile operation: {message}\n\n"
-                log_error(message, OPERATION_ERROR_PATH)
+            if background is False:
+                response = wait_for_operation_finishes(response.json()["id"], token)
+                if response["result"] == "success" and response["message"] is None:
+                    print(
+                        f"[bold green] Successfully Finished Profile operation {profile_id} "
+                        f"for datastore: {datastore_id} [/bold green]"
+                    )
+                elif (
+                    response["result"] == "success" and response["message"] is not None
+                ):  # Warning occurred
+                    msg = response["message"]
+                    print(
+                        f"[bold yellow] Warning for profile operation {profile_id} on datastore {datastore_id}:"
+                        f" {msg}[/bold yellow]"
+                    )
+                else:
+                    print(
+                        f"[bold red] Failed Profile {profile_id} for datastore: {datastore_id}, Please check the path: "
+                        f"{OPERATION_ERROR_PATH}[/bold red]"
+                    )
+                    message = response["detail"]
+                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+                    message = f"{current_datetime}: Error executing profile operation: {message}\n\n"
+                    log_error(message, OPERATION_ERROR_PATH)
         except Exception:
             print(
                 f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
@@ -431,6 +446,7 @@ def run_scan(
     greater_than_time: datetime | None,
     greater_than_batch: float | None,
     token: str,
+    background: bool,
 ):
     config = load_config()
     base_url = base_url = validate_and_format_url(config["url"])
@@ -458,33 +474,40 @@ def run_scan(
                 200 <= response.status_code <= 299
             ):  # Operation fails before starting
                 response = response.json()
+                print(response)
                 raise Exception
+            scan_id = response.json()["id"]
             print(
-                f"[bold green] Successfully Started Scan for datastore: {datastore_id} [/bold green]"
+                f"[bold green] Successfully Started Scan {scan_id} for datastore: {datastore_id} [/bold green]"
             )
-            response = wait_for_operation_finishes(response.json()["id"], token)
-            if response["result"] == "success" and response["message"] is None:
-                print(
-                    f"[bold green] Successfully Finished Scan operation "
-                    f"for datastore: {datastore_id} [/bold green]"
-                )
-            elif response["result"] == "success" and response["message"] is not None:
-                msg = response["message"]
-                print(
-                    f"[bold yellow] Warning for scan operation on datastore {datastore_id}:"
-                    f" {msg}[/bold yellow]"
-                )
-            else:
-                print(
-                    f"[bold red] Failed Scan for datastore: {datastore_id}, Please check the path: "
-                    f"{OPERATION_ERROR_PATH}[/bold red]"
-                )
-                with open(OPERATION_ERROR_PATH, "a") as error_file:
-                    message = response["detail"]
-                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    error_file.write(
-                        f"{current_datetime} : Error executing catalog operation: {message}\n\n"
+            if background is False:
+                response = wait_for_operation_finishes(response.json()["id"], token)
+                if response["result"] == "success" and response["message"] is None:
+                    print(
+                        f"[bold green] Successfully Finished Scan operation {scan_id} "
+                        f"for datastore: {datastore_id} [/bold green]"
                     )
+                elif (
+                    response["result"] == "success" and response["message"] is not None
+                ):
+                    msg = response["message"]
+                    print(
+                        f"[bold yellow] Warning for scan operation {scan_id}on datastore {datastore_id}:"
+                        f" {msg}[/bold yellow]"
+                    )
+                else:
+                    print(
+                        f"[bold red] Failed Scan {scan_id} for datastore: {datastore_id}, Please check the path: "
+                        f"{OPERATION_ERROR_PATH}[/bold red]"
+                    )
+                    with open(OPERATION_ERROR_PATH, "a") as error_file:
+                        message = response["detail"]
+                        current_datetime = datetime.now().strftime(
+                            "[%m-%d-%Y %H:%M:%S]"
+                        )
+                        error_file.write(
+                            f"{current_datetime} : Error executing catalog operation: {message}\n\n"
+                        )
         except Exception:
             print(
                 f"[bold red] Failed Scan for datastore: {datastore_id}, Please check the path: "
@@ -532,6 +555,34 @@ def wait_for_operation_finishes(operation: int, token: str):
             return response
         print(f"Attempt {attempt + 1} failed. Retrying in {wait_time} seconds...")
         time.sleep(wait_time)
+
+
+def check_operation_status(operation_ids: [int], token: str):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    headers = _get_default_headers(token)
+
+    for curr_id in track(operation_ids, description="Processing..."):
+        response = requests.get(
+            base_url + f"operations/{curr_id}", headers=headers
+        ).json()
+        print(response.keys())
+        if "result" not in response.keys():
+            print(f"[bold red] Operation: {curr_id} Not Found")
+        elif response["result"] == "success":
+            if response["end_time"]:
+                print(
+                    f"[bold green] Successfully Finished Operation: {curr_id} [/bold green]"
+                )
+        elif response["result"] == "running":
+            print(f"[bold blue] Operation: {curr_id} is still running [/bold blue]")
+        elif response["result"] == "failure":
+            message = response["message"]
+            print(
+                f"[bold red] Operation: {curr_id} failed because {message} [/bold red]"
+            )
+        elif response["result"] == "aborted":
+            print(f"[bold red] Operation: {curr_id} was aborted [/bold red]")
 
 
 @app.callback(invoke_without_command=True)
@@ -984,6 +1035,12 @@ def catalog_operation(
         "--recreate",
         help="Recreate the operation. Do not include if you want recreate == false",
     ),
+    background: Optional[bool] = typer.Option(
+        False,
+        "--background",
+        help="Starts the catalog operation and has it run in the background, "
+        "not having the terminal wait for the operation to finish",
+    ),
 ):
     # Remove brackets if present and split by comma
     datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
@@ -996,7 +1053,7 @@ def catalog_operation(
             prune = False
         if recreate is None:
             recreate = False
-        run_catalog(datastores, include, prune, recreate, token)
+        run_catalog(datastores, include, prune, recreate, token, background)
 
 
 @run_operation_app.command(
@@ -1054,6 +1111,12 @@ def profile_operation(
         "--histogram_max_distinct_values",
         help="Number of max distinct values of the histogram",
     ),
+    background: Optional[bool] = typer.Option(
+        False,
+        "--background",
+        help="Starts the catalog operation and has it run in the background, "
+        "not having the terminal wait for the operation to finish",
+    ),
 ):
     # Remove brackets if present and split by comma
     datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
@@ -1093,6 +1156,7 @@ def profile_operation(
             greater_than_batch=greater_than_batch,
             histogram_max_distinct_values=histogram_max_distinct_values,
             token=token,
+            background=background,
         )
 
 
@@ -1145,6 +1209,12 @@ def scan_operation(
         "--greater_than_batch",
         help="Only include rows where the incremental field's value is greater than this number",
     ),
+    background: Optional[bool] = typer.Option(
+        False,
+        "--background",
+        help="Starts the catalog operation and has it run in the background, "
+        "not having the terminal wait for the operation to finish",
+    ),
 ):
     # Remove brackets if present and split by comma
     datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
@@ -1194,7 +1264,22 @@ def scan_operation(
             greater_than_time=greater_than_time,
             greater_than_batch=greater_than_batch,
             token=token,
+            background=background,
         )
+
+
+@check_status_app.command("operation", help="checks the status of a operation")
+def operation_status(
+    ids: str = typer.Option(
+        ...,
+        "--ids",
+        help="Comma-separated list of Operation IDs or array-like format",
+    ),
+):
+    ids = [int(x.strip()) for x in ids.strip("[]").split(",")]
+    config = load_config()
+    token = is_token_valid(config["token"])
+    check_operation_status(ids, token=token)
 
 
 # Add the checks_app as a subcommand to the main app
@@ -1205,6 +1290,8 @@ app.add_typer(schedule_app, name="schedule")
 
 # Add the trigger operation as a subcommand to the main app
 app.add_typer(run_operation_app, name="run")
+
+app.add_typer(check_status_app, name="check_status")
 
 if __name__ == "__main__":
     app()

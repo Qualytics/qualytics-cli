@@ -130,16 +130,17 @@ qualytics schedule_app export-metadata --crontab "CRONTAB_EXPRESSION" --datastor
 Allows you to trigger a catalog operation on any current datastore (datastore permission required by admin)
 
 ```bash
-qualytics run catalog --datastore "DATSTORE_ID_LIST" --include "INCLUDE_LIST" --prune --recreate
+qualytics run catalog --datastore "DATSTORE_ID_LIST" --include "INCLUDE_LIST" --prune --recreate --background
 ```
 
 
-| Option       | Type | Description                                                          | Required |
-|--------------|------|----------------------------------------------------------------------|----------|
-| `--datastore` | TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"| Yes      |
-| `--include`  | Text | Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"| No       |
-| `--prune`    | Bool | Prune the operation. Do not include if you want prune == false| No       |
-| `--recreate` | Bool | Recreate the operation. Do not include if you want recreate == false | No       |
+| Option         | Type | Description                                                                                         | Required |
+|----------------|------|-----------------------------------------------------------------------------------------------------|----------|
+| `--datastore`  | TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"     | Yes      |
+| `--include`    | Text | Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]" | No       |
+| `--prune`      | Bool | Prune the operation. Do not include if you want prune == false                                      | No       |
+| `--recreate`   | Bool | Recreate the operation. Do not include if you want recreate == false                                | No       |
+| `--background` | Bool | Starts the catalog but does not wait for the operation to finish                                    | No       |
 
 
 ### Run a Profile Operation on a Datastore
@@ -149,7 +150,7 @@ Allows you to trigger a profile operation on any current datastore (datastore pe
 qualytics run profile --datastore "DATSTORE_ID_LIST" --container_names "CONTAINER_NAMES_LIST" --container_tags "CONTAINER_TAGS_LIST"
 --infer_constraints --max_records_analyzed_per_partition "MAX_RECORDS_ANALYZED_PER_PARTITION" --max_count_testing_sample "MAX_COUNT_TESTING_SAMPLE"
 --percent_testing_threshold "PERCENT_TESTING_THRESHOLD" --high_correlation_threshold "HIGH_CORRELATION_THRESHOLD" --greater_then_date "GREATER_THAN_TIME"
---greater_than_batch "GREATER_THAN_BATCH" --histogram_max_distinct_values "HISTOGRAM_MAX_DISTINCT_VALUES"
+--greater_than_batch "GREATER_THAN_BATCH" --histogram_max_distinct_values "HISTOGRAM_MAX_DISTINCT_VALUES" --background
 ```
 
 | Option                                 | Type     | Description                                                                                                                                      | Required |
@@ -162,9 +163,10 @@ qualytics run profile --datastore "DATSTORE_ID_LIST" --container_names "CONTAINE
 | `--max_count_testing_sample`           | INT      | The number of records accumulated during profiling for validation of inferred checks. Capped at 100,000                                          | No       |
 | `--percent_testing_threshold`          | FlOAT    | Percent of testing threshold                                                                                                                     | No       |
 | `--high_correlation_threshold`         | FlOAT    | Number of Correlation Threshold                                                                                                                  | No       |
-| `--greater_than_date`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
+| `--greater_than_time`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
 | `--greater_than_batch`                 | FlOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
 | `--histogram_max_distinct_values`      | INT      | Number of max distinct values of the histogram                                                                                                   | No       |
+| `--background`                         | Bool     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
 
 
 
@@ -174,7 +176,7 @@ Allows you to trigger a scan operation on a datastore (datastore permission requ
 ```bash
 qualytics run scan --datastore "DATSTORE_ID_LIST" --container_names "CONTAINER_NAMES_LIST" --container_tags "CONTAINER_TAGS_LIST"
 --incremental --remediation --max_records_analyzed_per_partition "MAX_RECORDS_ANALYZED_PER_PARTITION" --enrichment_source_records_limit
---greater_then_date "GREATER_THAN_TIME" --greater_than_batch "GREATER_THAN_BATCH""
+--greater_then_date "GREATER_THAN_TIME" --greater_than_batch "GREATER_THAN_BATCH" --background
 ```
 
 | Option                                 | Type     | Description                                                                                                                                      | Required |
@@ -188,3 +190,4 @@ qualytics run scan --datastore "DATSTORE_ID_LIST" --container_names "CONTAINER_N
 | `--enrichment_source_record_limit`     | INT      | Limit of enrichment source records per . Value must be Greater than or equal to -1                                                               | No       |
 | `--greater_than_date`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
 | `--greater_than_batch`                 | FlOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
+| `--background`                         | Bool     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
