@@ -123,3 +123,82 @@ qualytics schedule_app export-metadata --crontab "CRONTAB_EXPRESSION" --datastor
 | `--datastore`    | TEXT | The datastore ID | Yes      |
 | `--containers`    | TEXT | Comma-separated list of container IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]" | No      |
 | `--options`    | TEXT | Comma-separated list of options to export or "all". Example: "anomalies, checks, field-profiles" | Yes      |
+
+
+### Run a Catalog Operation on a Datastore
+
+Allows you to trigger a catalog operation on any current datastore (datastore permission required by admin)
+
+```bash
+qualytics run catalog --datastore "DATSTORE_ID_LIST" --include "INCLUDE_LIST" --prune --recreate --background
+```
+
+
+| Option         | Type | Description                                                                                         | Required |
+|----------------|------|-----------------------------------------------------------------------------------------------------|----------|
+| `--datastore`  | TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"     | Yes      |
+| `--include`    | Text | Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]" | No       |
+| `--prune`      | BOOL | Prune the operation. Do not include if you want prune == false                                      | No       |
+| `--recreate`   | BOOL | Recreate the operation. Do not include if you want recreate == false                                | No       |
+| `--background` | BOOL | Starts the catalog but does not wait for the operation to finish                                    | No       |
+
+
+### Run a Profile Operation on a Datastore
+Allows you to trigger a profile operation on any current datastore (datastore permission required by admin)
+
+```bash
+qualytics run profile --datastore "DATSTORE_ID_LIST" --container_names "CONTAINER_NAMES_LIST" --container_tags "CONTAINER_TAGS_LIST"
+--infer_constraints --max_records_analyzed_per_partition "MAX_RECORDS_ANALYZED_PER_PARTITION" --max_count_testing_sample "MAX_COUNT_TESTING_SAMPLE"
+--percent_testing_threshold "PERCENT_TESTING_THRESHOLD" --high_correlation_threshold "HIGH_CORRELATION_THRESHOLD" --greater_then_date "GREATER_THAN_TIME"
+--greater_than_batch "GREATER_THAN_BATCH" --histogram_max_distinct_values "HISTOGRAM_MAX_DISTINCT_VALUES" --background
+```
+
+| Option                                 | Type     | Description                                                                                                                                      | Required |
+|----------------------------------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------|----------|
+| `--datastore`                          | TEXT     | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                                                  | Yes      |
+| `--container_names`                    | TEXT     | Comma-separated list of include types or array-like format. Example: "container1,container2" or "[container1,container2]"                        | No       |
+| `--container_tags`                     | TEXT     | Comma-separated list of include types or array-like format. Example: "tag1,tag2" or "[tag1,tag2]"                                                | No       |
+| `--infer_constraints`                  | BOOl     | Infer quality checks in profile. Do not include if you want infer_constraints == false                                                           | No       |
+| `--max_records_analyzed_per_partition` | FlOAT    | Number of max records analyzed per partition                                                                                                     | No       |
+| `--max_count_testing_sample`           | INT      | The number of records accumulated during profiling for validation of inferred checks. Capped at 100,000                                          | No       |
+| `--percent_testing_threshold`          | FlOAT    | Percent of testing threshold                                                                                                                     | No       |
+| `--high_correlation_threshold`         | FlOAT    | Number of Correlation Threshold                                                                                                                  | No       |
+| `--greater_than_time`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
+| `--greater_than_batch`                 | FlOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
+| `--histogram_max_distinct_values`      | INT      | Number of max distinct values of the histogram                                                                                                   | No       |
+| `--background`                         | BOOL     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
+
+
+
+### Run a Scan Operation on a Datastore
+Allows you to trigger a scan operation on a datastore (datastore permission required by admin)
+
+```bash
+qualytics run scan --datastore "DATSTORE_ID_LIST" --container_names "CONTAINER_NAMES_LIST" --container_tags "CONTAINER_TAGS_LIST"
+--incremental --remediation --max_records_analyzed_per_partition "MAX_RECORDS_ANALYZED_PER_PARTITION" --enrichment_source_records_limit
+--greater_then_date "GREATER_THAN_TIME" --greater_than_batch "GREATER_THAN_BATCH" --background
+```
+
+| Option                                 | Type     | Description                                                                                                                                      | Required |
+|----------------------------------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------|----------|
+| `--datastore`                          | TEXT     | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                                                  | Yes      |
+| `--container_names`                    | TEXT     | Comma-separated list of include types or array-like format. Example: "container1,container2" or "[container1,container2]"                        | No       |
+| `--container_tags`                     | TEXT     | Comma-separated list of include types or array-like format. Example: "tag1,tag2" or "[tag1,tag2]"                                                | No       |
+| `--incremental`                        | BOOL     | Process only new or records updated since the last incremental scan                                                                              | No       |
+| `--redediation`                        | TEXT     | Replication strategy for source tables in the enrichment datastore. Either 'append', 'overwrite', or 'none'                                      | No       |
+| `--max_records_analyzed_per_partition` | INT      | Number of max records analyzed per partition. Value must be Greater than or equal to 0                                                           | No       |
+| `--enrichment_source_record_limit`     | INT      | Limit of enrichment source records per . Value must be Greater than or equal to -1                                                               | No       |
+| `--greater_than_date`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
+| `--greater_than_batch`                 | FlOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
+| `--background`                         | BOOL     | Starts the catalog but does not wait for the operation to finish                                                                                 | No       |
+
+
+### Check Operation Status
+Allows a user to check an operation's status. Useful if a user triggered an operation but had it running in the background
+
+```bash
+qualytics check_status operation --ids "OPERATION_IDS"
+```
+| Option              | Type     | Description                                                                                                               | Required |
+|---------------------|----------|---------------------------------------------------------------------------------------------------------------------------|----------|
+| `--ids`             | TEXT     | Comma-separated list of Operation IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                           | Yes      |
