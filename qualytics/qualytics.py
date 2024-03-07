@@ -19,7 +19,7 @@ from typing import Optional
 from typing_extensions import Annotated
 from croniter import croniter
 
-__version__ = "0.1.12"
+__version__ = "0.1.13"
 
 app = typer.Typer()
 
