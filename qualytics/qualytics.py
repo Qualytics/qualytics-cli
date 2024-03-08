@@ -35,9 +35,9 @@ run_operation_app = typer.Typer(
     help="Command to trigger a datastores operation. (catalog, profile, scan)",
 )
 
-check_status_app = typer.Typer(
-    name="check_status",
-    help="Checks the status of a operation based on the operation ID",
+check_operation_app = typer.Typer(
+    name="operation",
+    help="Allows the user to view information about an operation such as it's status",
 )
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -883,6 +883,20 @@ def checks_import(
             distinct_file_content(BASE_PATH + error_log_path)
 
 
+# @checks_app.command("import_excel")
+# def import_excel(
+#     datastore: str = typer.Option(
+#         ...,
+#         "--datastore",
+#         help="Comma-separated list of Datastore IDs or array-like format",
+#     ),
+#     input_file: str = typer.Option(
+#         BASE_PATH + "/data_checks.json", "--input", help="Input file path"
+#     ),
+# ):
+#     x = 5
+
+
 @schedule_app.command("export-metadata")
 def schedule(
     crontab_expression: str = typer.Option(
@@ -1267,7 +1281,7 @@ def scan_operation(
         )
 
 
-@check_status_app.command("operation", help="checks the status of a operation")
+@check_operation_app.command("check_status", help="checks the status of a operation")
 def operation_status(
     ids: str = typer.Option(
         ...,
@@ -1290,7 +1304,7 @@ app.add_typer(schedule_app, name="schedule")
 # Add the trigger operation as a subcommand to the main app
 app.add_typer(run_operation_app, name="run")
 
-app.add_typer(check_status_app, name="check_status")
+app.add_typer(check_operation_app, name="operation")
 
 if __name__ == "__main__":
     app()
