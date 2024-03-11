@@ -474,7 +474,6 @@ def run_scan(
                 200 <= response.status_code <= 299
             ):  # Operation fails before starting
                 response = response.json()
-                print(response)
                 raise Exception
             scan_id = response.json()["id"]
             print(
