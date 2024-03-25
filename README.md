@@ -197,7 +197,7 @@ qualytics run scan --datastore "DATSTORE_ID_LIST" --container_names "CONTAINER_N
 Allows a user to check an operation's status. Useful if a user triggered an operation but had it running in the background
 
 ```bash
-qualytics check_status operation --ids "OPERATION_IDS"
+qualytics operation check_status --ids "OPERATION_IDS"
 ```
 | Option              | Type     | Description                                                                                                               | Required |
 |---------------------|----------|---------------------------------------------------------------------------------------------------------------------------|----------|
