@@ -9,7 +9,7 @@ project_urls = {
     "GitHub": "https://github.com/Qualytics/qualytics-cli",
     "Userguide": "https://qualytics.github.io/userguide/",
 }
-__version__ = "0.1.15"
+__version__ = "0.1.16"
 setup(
     name="qualytics-cli",
     packages=find_packages(),
