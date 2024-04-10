@@ -213,6 +213,85 @@ def get_quality_check_by_additional_metadata(
     return None
 
 
+def get_check_templates(
+    base_url: str,
+    token: str,
+    ids: list[int] | None,
+    status: bool | None,
+    rules: list[str] | None,
+    tags: list[str] | None,
+):
+    endpoint = "quality-checks"
+    url = f"{base_url}{endpoint}?template_only=true"
+
+    if status:
+        url += f"&template_locked={status}"
+
+    if rules:
+        rules_string = "".join(f"&rule_type={rule}" for rule in rules)
+        url += rules_string
+
+    if tags:
+        tags_string = "".join(f"&tag={tag}" for tag in tags)
+        url += tags_string
+
+    page = 1
+    size = 100
+    params = {"sort_created": "asc", "size": size, "page": page}
+
+    response = requests.get(
+        url, headers=_get_default_headers(token), params=params, verify=False
+    )
+
+    # Check for non-success status codes
+    if response.status_code != 200:
+        typer.secho(
+            f"Failed to retrieve check templates. Server responded with: {response.status_code} - {response.text}. Please verify if your credentials are correct.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+    data = response.json()
+
+    # Check if "total" is in the response data
+    if "total" not in data:
+        typer.secho(
+            f"Unexpected server response. 'total' field missing in: {data}. Please verify if your credentials are correct.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+    total = data["total"]
+    all_quality_checks = []
+
+    total_pages = -(-total // size)
+
+    # Loop through the pages based on total number and size
+    for current_page in track(
+        range(total_pages), description="Exporting quality checks..."
+    ):
+        # Append the current page's data to the concatenated array
+        all_quality_checks.extend(data["items"])
+
+        total -= size
+        page += 1
+
+        params["page"] = page
+        response = requests.get(
+            url, headers=_get_default_headers(token), params=params, verify=False
+        )
+        data = response.json()
+
+    if ids:
+        all_quality_checks = [
+            check for check in all_quality_checks if check["id"] in ids
+        ]
+
+    print(f"[bold green] Total of Check Templates = {data['total']} [/bold green]")
+    print(f"[bold green] Total pages = {total_pages} [/bold green]")
+    return all_quality_checks
+
+
 def get_table_ids(
     base_url: str, token: str, datastore_id: int, max_retries=5, retry_delay=5
 ):
@@ -673,13 +752,31 @@ def checks_export(
 
 @checks_app.command("export-templates")
 def check_templates_export(
-    enrich_datastore_id: int = typer.Option(
-        ..., "--enrichment_datastore_id", help="Enrichment Datastore ID"
+    enrich_datastore_id: Optional[int] = typer.Option(
+        None, "--enrichment_datastore_id", help="Enrichment Datastore ID"
     ),
     check_templates: Optional[str] = typer.Option(
         None,
         "--check_templates",
         help='Comma-separated list of check templates IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]"',
+    ),
+    status: Optional[bool] = typer.Option(
+        None,
+        "--status",
+        help="Check Template status send `true` if it's locked or `false` to unlocked.",
+    ),
+    rules: Optional[str] = typer.Option(
+        None,
+        "--rules",
+        help='Comma-separated list of check templates rule types or array-like format. Example: "afterDateTime, aggregationComparison" or "[afterDateTime, aggregationComparison]"',
+    ),
+    tags: Optional[str] = typer.Option(
+        None,
+        "--tags",
+        help='Comma-separated list of Tag names or array-like format. Example: "tag1, tag2, tag3" or "[tag1, tag2, tag3]"',
+    ),
+    output: str = typer.Option(
+        BASE_PATH + "/data_checks_template.json", "--output", help="Output file path"
     ),
 ):
     """
@@ -694,29 +791,45 @@ def check_templates_export(
             check_templates = [
                 int(x.strip()) for x in check_templates.strip("[]").split(",")
             ]
+        if enrich_datastore_id:
+            endpoint = "export/check-templates"
+            url = f"{base_url}{endpoint}?enrich_datastore_id={enrich_datastore_id}"
 
-        endpoint = "export/check-templates"
-        url = f"{base_url}{endpoint}?enrich_datastore_id={enrich_datastore_id}"
+            if check_templates:
+                containers_string = "".join(
+                    f"&template_ids={check_template}"
+                    for check_template in check_templates
+                )
+                url += containers_string
 
-        if check_templates:
-            containers_string = "".join(
-                f"&template_ids={check_template}" for check_template in check_templates
+            response = requests.post(
+                url, headers=_get_default_headers(token), verify=False
             )
-            url += containers_string
 
-        response = requests.post(url, headers=_get_default_headers(token), verify=False)
+            # Check for non-success status codes
+            if response.status_code != 204:
+                typer.secho(
+                    f"Failed to export check templates. Server responded with: {response.status_code} - {response.text}.",
+                    fg=typer.colors.RED,
+                )
+                raise typer.Exit(code=1)
 
-        # Check for non-success status codes
-        if response.status_code != 204:
-            typer.secho(
-                f"Failed to export check templates. Server responded with: {response.status_code} - {response.text}.",
-                fg=typer.colors.RED,
+            print(
+                f"[bold green]The check templates were exported to the table `_export_check_templates` to enrichment id: {enrich_datastore_id}.[/bold green]"
             )
-            raise typer.Exit(code=1)
+        else:
+            all_quality_checks = get_check_templates(
+                base_url=base_url,
+                token=token,
+                ids=check_templates,
+                status=status,
+                rules=rules,
+                tags=tags,
+            )
 
-        print(
-            f"[bold green]The check templates were exported to the table `_export_check_templates` to enrichment id: {enrich_datastore_id}.[/bold green]"
-        )
+            with open(output, "w") as f:
+                json.dump(all_quality_checks, f, indent=4)
+            print(f"[bold green]Data exported to {output}[/bold green]")
 
 
 @checks_app.command("import")
