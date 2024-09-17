@@ -234,7 +234,8 @@ def get_check_templates(
     if tags:
         tags_string = "".join(f"&tag={tag}" for tag in tags)
         url += tags_string
-
+    # https://develop.qualytics.io/api/quality-checks?template_only=true&rule_type=aggregationComparison&sort_checks=desc&page=1&size=12
+    print(url)
     page = 1
     size = 100
     params = {"sort_created": "asc", "size": size, "page": page}
@@ -432,7 +433,8 @@ def run_profile(
     datastore_ids: [int],
     container_names: list[str] | None,
     container_tags: list[str] | None,
-    infer_constraints: bool | None,
+    inference_threshold: int | None,
+    infer_as_draft: bool | None,
     max_records_analyzed_per_partition: int | None,
     max_count_testing_sample: int | None,
     percent_testing_threshold: float | None,
@@ -458,7 +460,8 @@ def run_profile(
                     "type": "profile",
                     "container_names": container_names,
                     "container_tags": container_tags,
-                    "infer_constraints": infer_constraints,
+                    "inference_threshold": inference_threshold,
+                    "infer_as_draft": infer_as_draft,
                     "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
                     "max_count_testing_sample": max_count_testing_sample,
                     "percent_testing_threshold": percent_testing_threshold,
@@ -780,7 +783,7 @@ def check_templates_export(
     ),
 ):
     """
-    Export checks to a file.
+    Export check templates to an enrichment or file.
     """
     config = load_config()
     base_url = validate_and_format_url(config["url"])
@@ -818,6 +821,9 @@ def check_templates_export(
                 f"[bold green]The check templates were exported to the table `_export_check_templates` to enrichment id: {enrich_datastore_id}.[/bold green]"
             )
         else:
+            if rules:
+                rules = [str(x.strip()) for x in rules.strip("[]").split(",")]
+
             all_quality_checks = get_check_templates(
                 base_url=base_url,
                 token=token,
@@ -995,18 +1001,89 @@ def checks_import(
             distinct_file_content(BASE_PATH + error_log_path)
 
 
-# @checks_app.command("import_excel")
-# def import_excel(
-#     datastore: str = typer.Option(
-#         ...,
-#         "--datastore",
-#         help="Comma-separated list of Datastore IDs or array-like format",
-#     ),
-#     input_file: str = typer.Option(
-#         BASE_PATH + "/data_checks.json", "--input", help="Input file path"
-#     ),
-# ):
-#     x = 5
+@checks_app.command("import-templates")
+def check_templates_import(
+    input_file: str = typer.Option(
+        BASE_PATH + "/data_checks_template.json", "--input", help="Input file path"
+    ),
+):
+    """
+    Import check templates from a file. Only creates new templates, no updates.
+    """
+    config = load_config()
+    base_url = validate_and_format_url(config["url"])
+    token = is_token_valid(config["token"])
+    error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"
+
+    if token:
+        with open(input_file, "r") as f:
+            all_check_templates = json.load(f)
+            total_created_templates = 0
+
+            # Process each check template from the file
+            for check_template in track(
+                all_check_templates, description="Processing templates..."
+            ):
+                try:
+                    additional_metadata = {
+                        "from quality check id": f"{check_template.get('id', None)}",
+                    }
+
+                    if check_template.get("additional_metadata", None) is None:
+                        check_template["additional_metadata"] = additional_metadata
+                    else:
+                        check_template["additional_metadata"].update(
+                            additional_metadata
+                        )
+
+                    # Build the payload for the API request
+                    payload = {
+                        "fields": [field["name"] for field in check_template["fields"]],
+                        "description": check_template["description"],
+                        "rule": check_template["rule_type"],
+                        "coverage": check_template["coverage"],
+                        "properties": check_template["properties"],
+                        "tags": [
+                            global_tag["name"]
+                            for global_tag in check_template["global_tags"]
+                        ],
+                        "template_locked": check_template.get("template_locked", False),
+                        "template_only": True,  # Mark as a template
+                        "additional_metadata": check_template.get(
+                            "additional_metadata", None
+                        ),
+                    }
+
+                    # Create a new check template via POST request
+                    response = requests.post(
+                        base_url + "quality-checks",
+                        headers=_get_default_headers(token),
+                        json=payload,
+                        verify=False,
+                    )
+                    if response.status_code == 200:
+                        print(
+                            f"[bold green]Check template id: {response.json()['id']} created successfully[/bold green]"
+                        )
+                        total_created_templates += 1
+                    else:
+                        print("[bold red]Error creating check template [/bold red]")
+                        log_error(
+                            f"Error creating check template. Details: {response.text}",
+                            BASE_PATH + error_log_path,
+                        )
+                except Exception as e:
+                    print(
+                        f"[bold red]Error processing check template {check_template['id']}: {str(e)}[/bold red]"
+                    )
+                    log_error(
+                        f"Error processing check template {check_template['id']}. Details: {str(e)}",
+                        BASE_PATH + error_log_path,
+                    )
+
+            # Print summary of created templates
+            print(f"Created a total of {total_created_templates} check templates.")
+            distinct_file_content(BASE_PATH + error_log_path)
 
 
 @schedule_app.command("export-metadata")
@@ -1200,10 +1277,15 @@ def profile_operation(
         "--container_tags",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    infer_constraints: Optional[bool] = typer.Option(
+    inference_threshold: Optional[int] = typer.Option(
         None,
-        "--infer_constraints",
-        help="Infer quality checks in profile. Do not include if you want infer_constraints == false",
+        "--inference_threshold",
+        help="Inference quality checks threshold in profile from 0 to 5. Do not include if you want inference_threshold == 0",
+    ),
+    infer_as_draft: Optional[bool] = typer.Option(
+        None,
+        "--infer_as_draft",
+        help="Infer all quality checks in profile as DRAFT. Do not include if you want infer_as_draft == False",
     ),
     max_records_analyzed_per_partition: Optional[int] = typer.Option(
         None,
@@ -1272,7 +1354,8 @@ def profile_operation(
             datastore_ids=datastores,
             container_names=container_names,
             container_tags=container_tags,
-            infer_constraints=infer_constraints,
+            inference_threshold=inference_threshold,
+            infer_as_draft=infer_as_draft,
             max_records_analyzed_per_partition=max_records_analyzed_per_partition,
             max_count_testing_sample=max_count_testing_sample,
             percent_testing_threshold=percent_testing_threshold,
