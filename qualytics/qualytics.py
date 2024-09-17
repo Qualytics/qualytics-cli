@@ -19,7 +19,7 @@ from typing import Optional
 from typing_extensions import Annotated
 from croniter import croniter
 
-__version__ = "0.1.17"
+__version__ = "0.1.18"
 
 app = typer.Typer()
 
@@ -234,8 +234,6 @@ def get_check_templates(
     if tags:
         tags_string = "".join(f"&tag={tag}" for tag in tags)
         url += tags_string
-    # https://develop.qualytics.io/api/quality-checks?template_only=true&rule_type=aggregationComparison&sort_checks=desc&page=1&size=12
-    print(url)
     page = 1
     size = 100
     params = {"sort_created": "asc", "size": size, "page": page}
@@ -288,8 +286,6 @@ def get_check_templates(
             check for check in all_quality_checks if check["id"] in ids
         ]
 
-    print(f"[bold green] Total of Check Templates = {data['total']} [/bold green]")
-    print(f"[bold green] Total pages = {total_pages} [/bold green]")
     return all_quality_checks
 
 
@@ -833,9 +829,17 @@ def check_templates_export(
                 tags=tags,
             )
 
-            with open(output, "w") as f:
-                json.dump(all_quality_checks, f, indent=4)
-            print(f"[bold green]Data exported to {output}[/bold green]")
+            if all_quality_checks is None or len(all_quality_checks) == 0:
+                print(
+                    f"[bold red] No check templates found for the ids: {check_templates} [/bold red]"
+                )
+            else:
+                print(
+                    f"[bold green] Total of Check Templates exported= {len(all_quality_checks)} [/bold green]"
+                )
+                with open(output, "w") as f:
+                    json.dump(all_quality_checks, f, indent=4)
+                print(f"[bold green]Data exported to {output}[/bold green]")
 
 
 @checks_app.command("import")
