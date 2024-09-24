@@ -19,7 +19,7 @@ from typing import Optional
 from typing_extensions import Annotated
 from croniter import croniter
 
-__version__ = "0.1.18"
+__version__ = "0.1.19"
 
 app = typer.Typer()
 
@@ -122,6 +122,7 @@ def get_quality_checks(
     datastore_id: int,
     containers: list[int] | None,
     tags: list[str] | None,
+    status: list[str] | None,
 ):
     endpoint = "quality-checks"
     url = f"{base_url}{endpoint}?datastore={datastore_id}"
@@ -135,6 +136,38 @@ def get_quality_checks(
     if tags:
         tags_string = "".join(f"&tag={tag}" for tag in tags)
         url += tags_string
+
+    status_string = ""
+    if status:
+        archived_only = False
+        active_or_draft_count = 0
+
+        # Process each status
+        for check_status in status:
+            check_status = check_status.lower()
+
+            if check_status not in ["active", "draft", "archived"]:
+                print(
+                    f"[bold red] The following status: {check_status} doesn't exist [/bold red]"
+                )
+            elif check_status == "archived":
+                archived_only = True
+            elif check_status in ["active", "draft"]:
+                active_or_draft_count += 1
+
+        # If archived is present, we only use archived=only and skip others
+        if archived_only:
+            status_string = "&archived=only"
+        # If only one of active or draft is present, append it
+        elif active_or_draft_count == 1:
+            for check_status in status:
+                if check_status in ["active", "draft"]:
+                    status_string += f"&status={check_status.capitalize()}"
+
+        # Add status_string to the url
+        url += status_string
+    else:
+        status = "Active"
 
     page = 1
     size = 100
@@ -329,6 +362,67 @@ def get_table_ids(
         fg=typer.colors.RED,
     )
     return None
+
+
+def get_check_templates_metadata(
+    base_url: str,
+    token: str,
+    ids: list[int] | None,
+):
+    endpoint = "quality-checks"
+    url = f"{base_url}{endpoint}?template_only=true"
+
+    page = 1
+    size = 100
+    params = {"sort_created": "asc", "size": size, "page": page}
+
+    response = requests.get(
+        url, headers=_get_default_headers(token), params=params, verify=False
+    )
+
+    # Check for non-success status codes
+    if response.status_code != 200:
+        typer.secho(
+            f"Failed to retrieve check templates. Server responded with: {response.status_code} - {response.text}. Please verify if your credentials are correct.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+    data = response.json()
+
+    # Check if "total" is in the response data
+    if "total" not in data:
+        typer.secho(
+            f"Unexpected server response. 'total' field missing in: {data}. Please verify if your credentials are correct.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+    total = data["total"]
+    all_quality_checks = []
+
+    total_pages = -(-total // size)
+
+    # Loop through the pages based on total number and size
+    for current_page in range(total_pages):
+        # Append the current page's data to the concatenated array
+        all_quality_checks.extend(data["items"])
+
+        total -= size
+        page += 1
+
+        params["page"] = page
+        response = requests.get(
+            url, headers=_get_default_headers(token), params=params, verify=False
+        )
+        data = response.json()
+
+    if ids:
+        all_quality_checks = [
+            check for check in all_quality_checks if check["id"] in ids
+        ]
+
+    return all_quality_checks
 
 
 def is_token_valid(token: str):
@@ -719,6 +813,11 @@ def checks_export(
         "--tags",
         help='Comma-separated list of Tag names or array-like format. Example: "tag1, tag2, tag3" or "[tag1, tag2, tag3]"',
     ),
+    status: Optional[str] = typer.Option(
+        None,
+        "--status",
+        help='Comma-separated list of status IDs or array-like format. Example: "Active, Draft, Archived" or "[Active, Draft, Archived]"',
+    ),
     output: str = typer.Option(
         BASE_PATH + "/data_checks.json", "--output", help="Output file path"
     ),
@@ -735,6 +834,8 @@ def checks_export(
             containers = [int(x.strip()) for x in containers.strip("[]").split(",")]
         if tags:
             tags = [str(x.strip()) for x in tags.strip("[]").split(",")]
+        if status:
+            status = [str(x.strip()) for x in status.strip("[]").split(",")]
 
         all_quality_checks = get_quality_checks(
             base_url=base_url,
@@ -742,6 +843,7 @@ def checks_export(
             datastore_id=datastore,
             containers=containers,
             tags=tags,
+            status=status,
         )
 
         with open(output, "w") as f:
@@ -922,6 +1024,7 @@ def checks_import(
                             ],
                             "container_id": container_id,
                             "additional_metadata": quality_check["additional_metadata"],
+                            "status": quality_check["status"],
                         }
                         # gets the quality_check by the description
                         quality_check_id = get_quality_check_by_additional_metadata(
@@ -959,46 +1062,135 @@ def checks_import(
                         #    a. If we notify a conflict, it will  update the check
                         #    b. If there's no conflict, it will create a new one
                         else:
-                            response = requests.post(
-                                base_url + "quality-checks",
-                                headers=_get_default_headers(token),
-                                json=payload,
-                                verify=False,
-                            )
-                            if response.status_code == 409:
-                                match = re.search(r"id: (\d+)", response.text)
-                                print(
-                                    f"[bold yellow]Quality check for container: {quality_check['container']['name']} was already created on datastore id: {datastore_id}. Updating check id: {match.group(1)}.[/bold yellow]"
+                            new_check_from_template = False
+                            if quality_check["template"] is not None:
+                                check_templates = get_check_templates_metadata(
+                                    base_url=base_url,
+                                    token=token,
+                                    ids=[quality_check["template"]["id"]],
                                 )
-                                response = requests.put(
-                                    base_url + f"quality-checks/{match.group(1)}",
+                                if len(check_templates) > 0:
+                                    for check_template in check_templates:
+                                        check_template_payload = {
+                                            "fields": [
+                                                field["name"]
+                                                for field in quality_check["fields"]
+                                            ],
+                                            "description": f"{check_template['description']}",
+                                            "rule": check_template["rule_type"],
+                                            "coverage": check_template["coverage"],
+                                            "filter": check_template["filter"],
+                                            "properties": check_template["properties"],
+                                            "tags": [
+                                                global_tag["name"]
+                                                for global_tag in check_template[
+                                                    "global_tags"
+                                                ]
+                                            ],
+                                            "container_id": container_id,
+                                            "additional_metadata": check_template[
+                                                "additional_metadata"
+                                            ],
+                                            "template_id": check_template["id"],
+                                            "status": quality_check["status"],
+                                        }
+                                        response = requests.post(
+                                            base_url + "quality-checks",
+                                            headers=_get_default_headers(token),
+                                            json=check_template_payload,
+                                            verify=False,
+                                        )
+                                        if response.status_code == 409:
+                                            match = re.search(
+                                                r"id: (\d+)", response.text
+                                            )
+                                            print(
+                                                f"[bold yellow]Quality check for container: {quality_check['container']['name']} was already created on datastore id: {datastore_id}. Updating check id: {match.group(1)}.[/bold yellow]"
+                                            )
+                                            response = requests.put(
+                                                base_url
+                                                + f"quality-checks/{match.group(1)}",
+                                                headers=_get_default_headers(token),
+                                                json=check_template_payload,
+                                                verify=False,
+                                            )
+                                            if response.status_code == 200:
+                                                print(
+                                                    f"[bold green]Quality check id: {match.group(1)} updated successfully for datastore id: {datastore_id} from the template: '{check_template['id']}'[/bold green]"
+                                                )
+                                                total_updated_checks += 1
+                                            else:
+                                                print(
+                                                    f"[bold red]Error updating quality check id: {match.group(1)} from the template: '{check_template['id']}' [/bold red]"
+                                                )
+                                                log_error(
+                                                    f"Error updating quality check id: {match.group(1)} on datastore id: {datastore_id} from the template: '{check_template['id']}'. Details: {response.text}",
+                                                    BASE_PATH + error_log_path,
+                                                )
+                                        elif response.status_code == 200:
+                                            print(
+                                                f"[bold green]Quality check id: {response.json()['id']} for container: {quality_check['container']['name']} created successfully from the template: '{check_template['id']}'[/bold green]"
+                                            )
+                                            total_created_checks += 1
+                                        elif response.status_code == 404:
+                                            print(
+                                                f"[bold yellow]Error creating quality check id: {match.group(1)} from the template: '{check_template['id']}'. Creating check without a template [/bold yellow]"
+                                            )
+                                            new_check_from_template = True
+                                        else:
+                                            log_error(
+                                                f"Error creating quality check for datastore id: {datastore_id}. Details: {response.text} from the template: '{check_template['id']}",
+                                                BASE_PATH + error_log_path,
+                                            )
+                                else:
+                                    print(
+                                        f"[bold yellow]Error creating quality check id: {quality_check['id']} from the template: '{quality_check['template']['id']}'. Attempt to create the check without a template [/bold yellow]"
+                                    )
+                                    new_check_from_template = True
+                            if (
+                                new_check_from_template
+                                or quality_check["template"] is None
+                            ):
+                                response = requests.post(
+                                    base_url + "quality-checks",
                                     headers=_get_default_headers(token),
                                     json=payload,
                                     verify=False,
                                 )
-                                if response.status_code == 200:
+                                if response.status_code == 409:
+                                    match = re.search(r"id: (\d+)", response.text)
                                     print(
-                                        f"[bold green]Quality check id: {match.group(1)} updated successfully for datastore id: {datastore_id}[/bold green]"
+                                        f"[bold yellow]Quality check for container: {quality_check['container']['name']} was already created on datastore id: {datastore_id}. Updating check id: {match.group(1)}.[/bold yellow]"
                                     )
-                                    total_updated_checks += 1
+                                    response = requests.put(
+                                        base_url + f"quality-checks/{match.group(1)}",
+                                        headers=_get_default_headers(token),
+                                        json=payload,
+                                        verify=False,
+                                    )
+                                    if response.status_code == 200:
+                                        print(
+                                            f"[bold green]Quality check id: {match.group(1)} updated successfully for datastore id: {datastore_id}[/bold green]"
+                                        )
+                                        total_updated_checks += 1
+                                    else:
+                                        print(
+                                            f"[bold red]Error updating quality check id: {match.group(1)} [/bold red]"
+                                        )
+                                        log_error(
+                                            f"Error updating quality check id: {match.group(1)} on datastore id: {datastore_id}. Details: {response.text}",
+                                            BASE_PATH + error_log_path,
+                                        )
+                                elif response.status_code == 200:
+                                    print(
+                                        f"[bold green]Quality check id: {response.json()['id']} for container: {quality_check['container']['name']} created successfully[/bold green]"
+                                    )
+                                    total_created_checks += 1
                                 else:
-                                    print(
-                                        f"[bold red]Error updating quality check id: {match.group(1)} [/bold red]"
-                                    )
                                     log_error(
-                                        f"Error updating quality check id: {match.group(1)} on datastore id: {datastore_id}. Details: {response.text}",
+                                        f"Error creating quality check for datastore id: {datastore_id}. Details: {response.text}",
                                         BASE_PATH + error_log_path,
                                     )
-                            elif response.status_code == 200:
-                                print(
-                                    f"[bold green]Quality check id: {response.json()['id']} for container: {quality_check['container']['name']} created successfully[/bold green]"
-                                )
-                                total_created_checks += 1
-                            else:
-                                log_error(
-                                    f"Error creating quality check for datastore id: {datastore_id}. Details: {response.text}",
-                                    BASE_PATH + error_log_path,
-                                )
 
             print(f"Updated a total of {total_updated_checks} quality checks.")
             print(f"Created a total of {total_created_checks} quality checks.")
