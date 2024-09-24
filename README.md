@@ -65,12 +65,13 @@ qualytics checks export --datastore DATASTORE_ID [--containers CONTAINER_IDS] [-
 
 By default, it saves the exported checks to `./qualytics/data_checks.json`. However, you can specify a different output path with the `--output` option.
 
-| Option         | Type            | Description        | Default                            | Required |
-|----------------|-----------------|--------------------|------------------------------------|----------|
-| `--datastore`  | INTEGER         | Datastore ID       | None                               | Yes      |
-| `--containers` | List of INTEGER | Containers IDs     | None                               | No       |
-| `--tags`       | List of TEXT    | Tag names          | None                               | No       |
-| `--output`     | TEXT            | Output file path   | ./qualytics/data_checks.json       | No       |
+| Option         | Type            | Description                                             | Default                            | Required |
+|----------------|-----------------|---------------------------------------------------------|------------------------------------|----------|
+| `--datastore`  | INTEGER         | Datastore ID                                            | None                               | Yes      |
+| `--containers` | List of INTEGER | Containers IDs                                          | None                               | No       |
+| `--tags`       | List of TEXT    | Tag names                                               | None                               | No       |
+| `--status`      | List of TEXT   | Status `Active`, `Draft` or `Archived`                  | None                               | No       |
+| `--output`     | TEXT            | Output file path   | ./qualytics/data_checks.json       | No                                 | No       |
 
 ### Export Check Templates
 
