@@ -306,7 +306,6 @@ qualytics-cli/
 │   ├── __init__.py
 │   └── qualytics.py     # CLI implementation
 ├── pyproject.toml       # Project configuration & dependencies
-├── uv.lock              # Locked dependencies
 └── .pre-commit-config.yaml  # Pre-commit hooks configuration
 ```
 
