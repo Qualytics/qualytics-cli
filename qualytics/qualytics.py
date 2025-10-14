@@ -16,7 +16,7 @@ from rich import print
 from rich.progress import track
 from itertools import product
 from typing import Optional
-from typing_extensions import Annotated
+from typing import Annotated
 from croniter import croniter
 
 __version__ = "0.1.19"
@@ -82,7 +82,7 @@ def save_config(data):
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r") as f:
+        with open(CONFIG_PATH) as f:
             return json.load(f)
     return None
 
@@ -96,7 +96,7 @@ def distinct_file_content(file_path):
     if not os.path.exists(file_path):
         return  # Return early if the file doesn't exist
 
-    with open(file_path, "r") as file:
+    with open(file_path) as file:
         # Using a set to automatically get distinct lines
         distinct_lines = set(file.readlines())
 
@@ -965,7 +965,7 @@ def checks_import(
     token = is_token_valid(config["token"])
     error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"
     if token:
-        with open(input_file, "r") as f:
+        with open(input_file) as f:
             all_quality_checks = json.load(f)
             total_created_checks = 0
             total_updated_checks = 0
@@ -1212,7 +1212,7 @@ def check_templates_import(
     error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"
 
     if token:
-        with open(input_file, "r") as f:
+        with open(input_file) as f:
             all_check_templates = json.load(f)
             total_created_templates = 0
 
@@ -1384,7 +1384,7 @@ def schedule(
 
             # Run crontab command and add generated commands
             try:
-                with open(CRONTAB_COMMANDS_PATH, "r") as commands_file:
+                with open(CRONTAB_COMMANDS_PATH) as commands_file:
                     commands_content = commands_file.read()
                 # Use input redirection to pass the content of the file to the crontab command
                 subprocess.run(

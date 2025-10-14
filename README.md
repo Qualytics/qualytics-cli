@@ -4,20 +4,29 @@ This is a CLI tool for working with the Qualytics API. With this tool, you can m
 
 ## Requirements
 
-- Python 3.7+
-- Packages:
-  - `typer`
-  - `os`
-  - `json`
-  - `requests`
-  - `urllib3`
-  - `re`
-  - `rich`
+- Python 3.9 or higher
 
 ## Installation
 
+### From PyPI (recommended)
+
 ```bash
 pip install qualytics-cli
+```
+
+### Using uv (faster)
+
+```bash
+uv pip install qualytics-cli
+```
+
+### From source
+
+```bash
+git clone https://github.com/Qualytics/qualytics-cli.git
+cd qualytics-cli
+uv sync
+uv pip install -e .
 ```
 
 ## Usage
@@ -213,3 +222,105 @@ qualytics operation check_status --ids "OPERATION_IDS"
 | Option  | Type     | Description                                                                                                               | Required |
 |---------|----------|---------------------------------------------------------------------------------------------------------------------------|----------|
 | `--ids` | TEXT     | Comma-separated list of Operation IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                           | Yes      |
+
+---
+
+## Development
+
+This project uses modern Python tooling with [uv](https://docs.astral.sh/uv/) for dependency management and [ruff](https://docs.astral.sh/ruff/) for linting and formatting.
+
+### Requirements
+
+- Python 3.9 or higher
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+
+### Setting Up Development Environment
+
+1. **Install uv** (if not already installed):
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. **Clone the repository**:
+   ```bash
+   git clone https://github.com/Qualytics/qualytics-cli.git
+   cd qualytics-cli
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   uv sync
+   ```
+
+4. **Install pre-commit hooks** (optional but recommended):
+   ```bash
+   uv run pre-commit install
+   ```
+
+### Development Commands
+
+```bash
+# Install/update dependencies
+uv sync
+
+# Run the CLI in development mode
+uv run qualytics --help
+
+# Run linting checks
+uv run ruff check qualytics/
+
+# Auto-fix linting issues
+uv run ruff check qualytics/ --fix
+
+# Format code
+uv run ruff format qualytics/
+
+# Run all pre-commit hooks (includes linting, formatting, and Python 3.9+ upgrades)
+uv run pre-commit run --all-files
+
+# Build the package
+uv build
+
+# Run tests (if available)
+uv run pytest
+
+# Bump version (patch/minor/major)
+bump2version patch   # 0.1.19 -> 0.1.20
+bump2version minor   # 0.1.19 -> 0.2.0
+bump2version major   # 0.1.19 -> 1.0.0
+```
+
+### Code Quality Standards
+
+This project enforces:
+- **Python 3.9+** minimum version
+- **Ruff** for linting and formatting (88 character line length)
+- **pyupgrade** for automatic Python syntax modernization
+- **Pre-commit hooks** for automated quality checks
+
+### Project Structure
+
+```
+qualytics-cli/
+├── qualytics/           # Main package
+│   ├── __init__.py
+│   └── qualytics.py     # CLI implementation
+├── pyproject.toml       # Project configuration & dependencies
+├── uv.lock              # Locked dependencies
+└── .pre-commit-config.yaml  # Pre-commit hooks configuration
+```
+
+### Contributing
+
+1. Create a new branch for your feature/fix
+2. Make your changes
+3. Run `uv run ruff check qualytics/` and `uv run ruff format qualytics/`
+4. Run `uv run pre-commit run --all-files` to ensure all checks pass
+5. Commit your changes (pre-commit hooks will run automatically if installed)
+6. Submit a pull request
+
+---
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
