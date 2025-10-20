@@ -1,3 +1,4 @@
+from __future__ import annotations
 import time
 
 import typer
@@ -9,8 +10,16 @@ import re
 import jwt
 import platform
 import subprocess
+import yaml
 
-from datetime import datetime
+import pathlib
+import typing as t
+
+import api.datastores as datastore
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+from datetime import datetime, timezone
 from pathlib import Path
 from rich import print
 from rich.progress import track
@@ -18,10 +27,32 @@ from itertools import product
 from typing import Optional
 from typing import Annotated
 from croniter import croniter
+from dotenv import load_dotenv
+
 
 __version__ = "0.1.19"
 
+# Get the home directory
+home = Path.home()
+
+# Define the new directory
+folder_name = ".qualytics"
+BASE_PATH = f"{home}/{folder_name}"
+
+CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
+CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.txt")
+CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
+OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
+DOTENV_PATH = os.path.expanduser(f"{BASE_PATH}/.env")
+CONNECTIONS_PATH = os.path.expanduser(f"{BASE_PATH}/connections.yml")
+
+
 app = typer.Typer()
+load_dotenv(DOTENV_PATH)
+
+# Custom classes
+class ConfigError(ValueError):
+    pass
 
 # Create a new Typer instance for checks
 checks_app = typer.Typer(name="checks", help="Commands for handling checks")
@@ -40,21 +71,36 @@ check_operation_app = typer.Typer(
     help="Allows the user to view information about an operation such as it's status",
 )
 
+# instance for datastores
+datastore_app = typer.Typer(
+    name="datastore",
+    help="Create, get, update or delete datastores"
+)
+
+# instance for enrichment datastores
+enrichment_datastore_app = typer.Typer(
+    name="enrichment_datastore",
+    help="Create, get, update or delete enrichment datastores"
+)
+
+# Add the checks_app as a subcommand to the main app
+app.add_typer(checks_app, name="checks")
+
+# Add the schedule_app as a subcommand to the main app
+app.add_typer(schedule_app, name="schedule")
+
+# Add the trigger operation as a subcommand to the main app
+app.add_typer(run_operation_app, name="run")
+
+app.add_typer(check_operation_app, name="operation")
+
+app.add_typer(datastore_app, name="dstore")
+
+app.add_typer(enrichment_datastore_app, name="e-dstore")
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Get the home directory
-home = Path.home()
-
-# Define the new directory
-folder_name = ".qualytics"
-BASE_PATH = f"{home}/{folder_name}"
-
-CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
-CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.txt")
-CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
-OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
-
-
+# ========================================== UTILITY FUNCTIONS =================================================================
 def validate_and_format_url(url: str) -> str:
     """Validates and formats the URL to the desired structure."""
 
@@ -73,12 +119,10 @@ def validate_and_format_url(url: str) -> str:
 
     return url
 
-
 def save_config(data):
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     with open(CONFIG_PATH, "w") as f:
         json.dump(data, f, indent=4)
-
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
@@ -86,10 +130,8 @@ def load_config():
             return json.load(f)
     return None
 
-
 def _get_default_headers(token):
     return {"Authorization": f"Bearer {token}"}
-
 
 def distinct_file_content(file_path):
     # Check if the file exists before opening it
@@ -104,7 +146,6 @@ def distinct_file_content(file_path):
         for line in distinct_lines:
             file.write(line)
 
-
 def log_error(message, file_path):
     # Check if the file exists before opening it
     if not os.path.exists(file_path):
@@ -115,7 +156,45 @@ def log_error(message, file_path):
         file.write(message + "\n")
         file.flush()
 
+def is_token_valid(token: str):
+    # Decode the JWT token
+    try:
+        decoded_token = jwt.decode(
+            token, algorithms=["none"], options={"verify_signature": False}
+        )
+        expiration_time = decoded_token.get("exp")
 
+        if expiration_time is not None:
+            current_time = datetime.now(timezone.utc).timestamp()
+            if not expiration_time >= current_time:
+                print(
+                    '[bold red] WARNING: Your token is expired, please setup with a new token by running: qualytics init --url "your-qualytics.io/api" --token "my-token" [/bold red]'
+                )
+                return None
+            else:
+                return token
+    except Exception as e:
+        print("[bold red] WARNING: Your token is not valid [/bold red]")
+        print(f"[bold red] {e} [/bold red]")
+
+def load_connections(yaml_path: str, env_path: str = ".env"):
+    """Load .env variables, then YAML, expanding env vars."""
+    load_dotenv(env_path)  # loads variables from .env into os.environ
+
+    with open(yaml_path, "r") as f:
+        raw = os.path.expandvars(f.read())  # substitutes ${VAR} from .env
+        config = yaml.safe_load(raw)
+    return config.get("connections", {})
+
+def get_connection(yaml_path: str, name: str, env_path: str = ".env"):
+    connections = load_connections(yaml_path, env_path)
+    conn = connections.get(name)
+    if not conn:
+        raise ValueError(f"Connection '{name}' not found in YAML.")
+    return conn
+
+
+# ========================================== CHECKS FUNCTIONS =================================================================
 def get_quality_checks(
     base_url: str,
     token: str,
@@ -220,7 +299,6 @@ def get_quality_checks(
     print(f"[bold green] Total pages = {total_pages} [/bold green]")
     return all_quality_checks
 
-
 def get_quality_check_by_additional_metadata(
     base_url: str, token: str, additional_metadata: dict
 ):
@@ -244,7 +322,6 @@ def get_quality_check_by_additional_metadata(
             return response.json()["items"][0]["id"]
 
     return None
-
 
 def get_check_templates(
     base_url: str,
@@ -321,7 +398,6 @@ def get_check_templates(
 
     return all_quality_checks
 
-
 def get_table_ids(
     base_url: str, token: str, datastore_id: int, max_retries=5, retry_delay=5
 ):
@@ -362,7 +438,6 @@ def get_table_ids(
         fg=typer.colors.RED,
     )
     return None
-
 
 def get_check_templates_metadata(
     base_url: str,
@@ -425,28 +500,8 @@ def get_check_templates_metadata(
     return all_quality_checks
 
 
-def is_token_valid(token: str):
-    # Decode the JWT token
-    try:
-        decoded_token = jwt.decode(
-            token, algorithms=["none"], options={"verify_signature": False}
-        )
-        expiration_time = decoded_token.get("exp")
 
-        if expiration_time is not None:
-            current_time = datetime.utcnow().timestamp()
-            if not expiration_time >= current_time:
-                print(
-                    '[bold red] WARNING: Your token is expired, please setup with a new token by running: qualytics init --url "your-qualytics.io/api" --token "my-token" [/bold red]'
-                )
-                return None
-            else:
-                return token
-    except Exception as e:
-        print("[bold red] WARNING: Your token is not valid [/bold red]")
-        print(f"[bold red] {e} [/bold red]")
-
-
+# ========================================== RUN FUNCTIONS =================================================================
 def run_catalog(
     datastore_ids: [int],
     include: [str],
@@ -692,6 +747,7 @@ def run_scan(
                 )
 
 
+# ========================================== STATUS FUNCTIONS =================================================================
 def wait_for_operation_finishes(operation: int, token: str):
     """
     Wait for an operation to finish executing.
@@ -755,6 +811,7 @@ def check_operation_status(operation_ids: [int], token: str):
             print(f"[bold red] Operation: {curr_id} was aborted [/bold red]")
 
 
+# ========================================== APP COMMANDS =================================================================
 @app.callback(invoke_without_command=True)
 def version_callback(
     version: Annotated[Optional[bool], typer.Option("--version", is_eager=True)] = None,
@@ -800,6 +857,7 @@ def init(
         print("[bold green] Configuration saved! [/bold green]")
 
 
+# ========================================== CHECKS_APP COMMANDS =================================================================
 @checks_app.command("export")
 def checks_export(
     datastore: int = typer.Option(..., "--datastore", help="Datastore ID"),
@@ -1282,6 +1340,7 @@ def check_templates_import(
             distinct_file_content(BASE_PATH + error_log_path)
 
 
+# ========================================== SCHEDULE_APP COMMANDS =================================================================
 @schedule_app.command("export-metadata")
 def schedule(
     crontab_expression: str = typer.Option(
@@ -1409,6 +1468,7 @@ def schedule(
                 return
 
 
+# ========================================== RUN_OPERATION_APP COMMANDS =================================================================
 @run_operation_app.command(
     "catalog", help="Triggers a catalog operation for the specified datastores"
 )
@@ -1672,6 +1732,7 @@ def scan_operation(
         )
 
 
+# ========================================== CHECK_OPERATION_APP COMMANDS =================================================================
 @check_operation_app.command("check_status", help="checks the status of a operation")
 def operation_status(
     ids: str = typer.Option(
@@ -1686,17 +1747,211 @@ def operation_status(
     check_operation_status(ids, token=token)
 
 
-# Add the checks_app as a subcommand to the main app
-app.add_typer(checks_app, name="checks")
+# ========================================== DATASTORE COMMANDS ============================================================================
+@datastore_app.command("new", help="new datastore")
+def new_datastore(
+    name: str = typer.Option(..., "--name", "-n", help="Datastore name"),
+    type: str = typer.Option(..., "--type", "-t", help="Connection type (snowflake, postgresql, athena etc)"),
+    connection_id: t.Optional[int] = typer.Option(None, "--connection-id", help="Existing connection id to reference"),
+    tags: t.Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
+    teams: t.Optional[str] = typer.Option(None, "--teams", help="Comma-separated team names"),
+    enrichment_only: bool = typer.Option(False, "--enrichment-only/--no-enrichment-only", help="Set enrichment_only"),
+    enrichment_prefix: t.Optional[str] = typer.Option(None, "--enrichment-prefix", help="Prefix for enrichment artifacts"),
+    enrichment_source_record_limit: t.Optional[int] = typer.Option(None, "--enrichment-source-record-limit", min=1),
+    enrichment_remediation_strategy: str = typer.Option("none", "--enrichment-remediation-strategy"),
+    high_count_rollup_threshold: t.Optional[int] = typer.Option(None, "--high-count-rollup-threshold", min=1),
+    trigger_catalog: bool = typer.Option(True, "--trigger-catalog/--no-trigger-catalog", help="Whether to trigger catalog"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print payload only; no HTTP"),
+):
+    
+    base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
+    api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
+    url = f"{base_url}/datastores"
 
-# Add the schedule_app as a subcommand to the main app
-app.add_typer(schedule_app, name="schedule")
+    headers = {"Content-Type": "application/json"}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
 
-# Add the trigger operation as a subcommand to the main app
-app.add_typer(run_operation_app, name="run")
+    config = load_config()
+    token = is_token_valid(config["token"])
+    if token:
+        try:
+            connection = get_connection(CONNECTIONS_PATH, type)
 
-app.add_typer(check_operation_app, name="operation")
+            payload = build_new_datastore_payload(
+                cfg=connection,
+                name=name,
+                connection_id=connection_id,
+                tags=[t.strip() for t in tags.split(",")] if tags else None,
+                teams=[t.strip() for t in teams.split(",")] if teams else None,
+                enrichment_only=enrichment_only,
+                enrichment_prefix=enrichment_prefix,
+                enrichment_source_record_limit=enrichment_source_record_limit,
+                enrichment_remediation_strategy=enrichment_remediation_strategy,
+                high_count_rollup_threshold=high_count_rollup_threshold,
+                trigger_catalog=trigger_catalog,
+            )
 
+            # Pretty preview (mask key if present)
+            printable = json.loads(json.dumps(payload))
+            try:
+                if "parameters" in printable["connection"] and "private_key_der_b64" in printable["connection"]["parameters"]:
+                    printable["connection"]["parameters"]["private_key_der_b64"] = "*** redacted ***"
+            except Exception:
+                pass
+
+            print("[bold]Datastore Create Payload (derived):[/bold]")
+            print(json.dumps(printable, indent=2))
+
+            if dry_run:
+                print("[green]Dry run successful. No HTTP request was made.[/green]")
+                raise typer.Exit(code=0)
+
+            print("[cyan]POSTing datastore to API...[/cyan]")
+            result = datastore.create_datastore(payload, base_url, url, headers)
+            print("[green]Datastore created (API response):[/green]")
+            print(json.dumps(result, indent=2))
+        except ConfigError as e:
+            print(f"[red]Config error:[/red] {e}")
+            raise typer.Exit(code=2)
+        except requests.RequestException as e:
+            print(f"[red]Network error calling API:[/red] {e}")
+            raise typer.Exit(code=4)
+        except RuntimeError as e:
+            print(f"[red]{e}[/red]")
+            raise typer.Exit(code=5)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            print(f"[red]Unexpected error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+@datastore_app.command("list", help="List all datastores")
+def list_datastores():
+
+    base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
+    api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
+    url = f"{base_url}/datastores"
+
+    headers = {"Content-Type": "application/json"}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
+
+    config = load_config()
+    token = is_token_valid(config["token"])
+    if token:
+        try:
+            result = datastore.list_datastores(url, headers)
+            print("[green]Datastores listed:[/green]")
+            print(json.dumps(result, indent=2))
+        except ConfigError as e:
+            print(f"[red]Config error:[/red] {e}")
+            raise typer.Exit(code=2)
+        except requests.RequestException as e:
+            print(f"[red]Network error calling API:[/red] {e}")
+            raise typer.Exit(code=4)
+        except RuntimeError as e:
+            print(f"[red]{e}[/red]")
+            raise typer.Exit(code=5)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            print(f"[red]Unexpected error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+@datastore_app.command("get", help="Get a datastore. You need to pass the datastore id.")
+def get_datastore_by_id(
+    id: int = typer.Option(..., "--id", help="Datastore id"),
+):
+    
+    base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
+    api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
+    url = f"{base_url}/datastores/{id}"
+
+    headers = {"Content-Type": "application/json"}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
+
+    config = load_config()
+    token = is_token_valid(config["token"])
+    if token:
+        try:
+            result = datastore.get_datastore_by_id(url, headers)
+            print("[green]Datastores listed:[/green]")
+            print(json.dumps(result, indent=2))
+        except ConfigError as e:
+            print(f"[red]Config error:[/red] {e}")
+            raise typer.Exit(code=2)
+        except requests.RequestException as e:
+            print(f"[red]Network error calling API:[/red] {e}")
+            raise typer.Exit(code=4)
+        except RuntimeError as e:
+            print(f"[red]{e}[/red]")
+            raise typer.Exit(code=5)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            print(f"[red]Unexpected error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+
+# ========================================== API CALLS SECTION ============================================================================
+
+# DATASTORES
+def build_new_datastore_payload(
+    *,
+    cfg: dict,
+    name: str,
+    connection_id: t.Optional[int] = None,
+    tags: t.Optional[t.List[str]] = None,
+    teams: t.Optional[t.List[str]] = None,
+    enrichment_only: bool = False,
+    enrichment_prefix: t.Optional[str] = None,
+    enrichment_source_record_limit: t.Optional[int] = None,
+    enrichment_remediation_strategy: str = "none",
+    high_count_rollup_threshold: t.Optional[int] = None,
+    trigger_catalog: bool = True,
+) -> dict:
+    params = cfg["parameters"]
+
+    # Base connection block (aligned to your schema)
+    connection: dict = {
+        "name": cfg["name"],
+        "type": cfg["type"],
+        "host": params["host"],
+        "port": params["port"],
+        "username": params["user"],
+        "password": params["password"],
+    }
+
+    # Top-level payload per your schema
+    payload: dict = {
+        "name": name,
+        "connection": connection,
+        "enrichment_only": enrichment_only,
+        "enrichment_remediation_strategy": enrichment_remediation_strategy,
+        "trigger_catalog": trigger_catalog,
+        "database": params["database"],  # your schema expects these at top-level
+        "schema": params["schema"],
+    }
+
+    # Optional fields
+    if connection_id is not None:
+        payload["connection_id"] = int(connection_id)
+    if tags:
+        payload["tags"] = tags
+    if teams:
+        payload["teams"] = teams
+    if enrichment_prefix is not None:
+        payload["enrichment_prefix"] = enrichment_prefix
+    if enrichment_source_record_limit is not None:
+        payload["enrichment_source_record_limit"] = int(enrichment_source_record_limit)
+    if high_count_rollup_threshold is not None:
+        payload["high_count_rollup_threshold"] = int(high_count_rollup_threshold)
+
+    return payload
+
+    
 if __name__ == "__main__":
     app()
     # Uncomment for testing
