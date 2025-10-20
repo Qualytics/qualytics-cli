@@ -1,0 +1,26 @@
+connections:
+  snowflake:
+    type: snowflake
+    name: prod_snowflake_connection
+    parameters:
+      host: ${SNOWFLAKE_HOST}
+      role: ${SNOWFLAKE_ROLE}
+      warehouse: ${SNOWFLAKE_WAREHOUSE}
+      database: ${SNOWFLAKE_DEV_DB}
+      schema: ${SNOWFLAKE_SCHEMA}
+      authentication:
+        method: keypair
+        user: ${SNOWFLAKE_USER}
+        private_key_path: ${SNOWFLAKE_PRIVATE_KEY_PATH}
+
+  postgresql:
+    type: postgresql
+    name: dev_db
+    parameters:
+      host: ${POSTGRES_HOST}
+      port: ${POSTGRES_PORT}
+      user: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      database: ${POSTGRES_DB}
+      schema: ${POSTGRES_SCHEMA}
+
