@@ -15,7 +15,7 @@ import yaml
 import pathlib
 import typing as t
 
-import api.datastores as datastore
+from .api import datastores as datastore
 
 #from cryptography.hazmat.primitives import serialization
 #from cryptography.hazmat.backends import default_backend
