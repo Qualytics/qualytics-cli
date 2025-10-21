@@ -23,4 +23,3 @@ connections:
       password: ${POSTGRES_PASSWORD}
       database: ${POSTGRES_DB}
       schema: ${POSTGRES_SCHEMA}
-
