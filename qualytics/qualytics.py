@@ -17,8 +17,8 @@ import typing as t
 
 import api.datastores as datastore
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.backends import default_backend
+#from cryptography.hazmat.primitives import serialization
+#from cryptography.hazmat.backends import default_backend
 from datetime import datetime, timezone
 from pathlib import Path
 from rich import print
@@ -1755,12 +1755,12 @@ def new_datastore(
     connection_id: t.Optional[int] = typer.Option(None, "--connection-id", help="Existing connection id to reference"),
     tags: t.Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
     teams: t.Optional[str] = typer.Option(None, "--teams", help="Comma-separated team names"),
-    enrichment_only: bool = typer.Option(False, "--enrichment-only/--no-enrichment-only", help="Set enrichment_only"),
+    enrichment_only: bool = typer.Option(False, "--enrichment-only/--no-enrichment-only", help="Set if datastore will be an enrichment one"),
     enrichment_prefix: t.Optional[str] = typer.Option(None, "--enrichment-prefix", help="Prefix for enrichment artifacts"),
     enrichment_source_record_limit: t.Optional[int] = typer.Option(None, "--enrichment-source-record-limit", min=1),
     enrichment_remediation_strategy: str = typer.Option("none", "--enrichment-remediation-strategy"),
     high_count_rollup_threshold: t.Optional[int] = typer.Option(None, "--high-count-rollup-threshold", min=1),
-    trigger_catalog: bool = typer.Option(True, "--trigger-catalog/--no-trigger-catalog", help="Whether to trigger catalog"),
+    trigger_catalog: bool = typer.Option(True, "--trigger-catalog/--no-trigger-catalog", help="Whether to trigger catalog. Default is TRUE"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print payload only; no HTTP"),
 ):
     
@@ -1894,8 +1894,47 @@ def get_datastore_by_id(
             print(f"[red]Unexpected error:[/red] {e}")
             raise typer.Exit(code=1)
 
+@datastore_app.command("remove", help="Remove a datastore. Use with caution!")
+def remove_datastore(
+    id: int = typer.Option(..., "--id", help="Datastore id"),
+):
+    
+    base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
+    api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
+    url = f"{base_url}/datastores/{id}"
 
-# ========================================== API CALLS SECTION ============================================================================
+    headers = {"Content-Type": "application/json"}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
+
+    config = load_config()
+    token = is_token_valid(config["token"])
+    if token:
+        try:
+            result = datastore.remove_datastore(url, headers)
+            print("[green]Datastore removed:[/green]")
+            print(json.dumps(result, indent=2))
+        except ConfigError as e:
+            print(f"[red]Config error:[/red] {e}")
+            raise typer.Exit(code=2)
+        except requests.RequestException as e:
+            print(f"[red]Network error calling API:[/red] {e}")
+            raise typer.Exit(code=4)
+        except RuntimeError as e:
+            print(f"[red]{e}[/red]")
+            raise typer.Exit(code=5)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            print(f"[red]Unexpected error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+
+
+
+
+
+# ========================================== API HELPERS SECTION ============================================================================
 
 # DATASTORES
 def build_new_datastore_payload(

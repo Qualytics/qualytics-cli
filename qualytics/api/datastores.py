@@ -26,3 +26,11 @@ def get_datastore_by_id(url: str, headers: dict) -> dict:
     except requests.HTTPError as e:
         raise RuntimeError(f"HTTP {resp.status_code} from {url}: {resp.text}") from e
     return resp.json()
+
+def remove_datastore(url: str, headers: dict) -> dict:
+    resp = requests.delete(url,headers=headers, timeout=30)
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        raise RuntimeError(f"HTTP {resp.status_code} from {url}: {resp.text}") from e
+    return resp.json()
