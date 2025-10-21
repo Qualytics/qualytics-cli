@@ -12,7 +12,6 @@ import platform
 import subprocess
 import yaml
 
-import pathlib
 import typing as t
 
 from .api import datastores as datastore
@@ -24,7 +23,6 @@ from pathlib import Path
 from rich import print
 from rich.progress import track
 from itertools import product
-from typing import Optional
 from typing import Annotated
 from croniter import croniter
 from dotenv import load_dotenv
@@ -190,7 +188,7 @@ def load_connections(yaml_path: str, env_path: str = ".env"):
     """Load .env variables, then YAML, expanding env vars."""
     load_dotenv(env_path)  # loads variables from .env into os.environ
 
-    with open(yaml_path, "r") as f:
+    with open(yaml_path) as f:
         raw = os.path.expandvars(f.read())  # substitutes ${VAR} from .env
         config = yaml.safe_load(raw)
     return config.get("connections", {})
@@ -827,7 +825,7 @@ def check_operation_status(operation_ids: [int], token: str):
 # ========================================== APP COMMANDS =================================================================
 @app.callback(invoke_without_command=True)
 def version_callback(
-    version: Annotated[Optional[bool], typer.Option("--version", is_eager=True)] = None,
+    version: Annotated[bool | None, typer.Option("--version", is_eager=True)] = None,
 ):
     if version:
         print(f"Qualytics CLI Version: {__version__}")
@@ -874,17 +872,17 @@ def init(
 @checks_app.command("export")
 def checks_export(
     datastore: int = typer.Option(..., "--datastore", help="Datastore ID"),
-    containers: Optional[str] = typer.Option(
+    containers: str | None = typer.Option(
         None,
         "--containers",
         help='Comma-separated list of containers IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]"',
     ),
-    tags: Optional[str] = typer.Option(
+    tags: str | None = typer.Option(
         None,
         "--tags",
         help='Comma-separated list of Tag names or array-like format. Example: "tag1, tag2, tag3" or "[tag1, tag2, tag3]"',
     ),
-    status: Optional[str] = typer.Option(
+    status: str | None = typer.Option(
         None,
         "--status",
         help='Comma-separated list of status IDs or array-like format. Example: "Active, Draft, Archived" or "[Active, Draft, Archived]"',
@@ -924,25 +922,25 @@ def checks_export(
 
 @checks_app.command("export-templates")
 def check_templates_export(
-    enrich_datastore_id: Optional[int] = typer.Option(
+    enrich_datastore_id: int | None = typer.Option(
         None, "--enrichment_datastore_id", help="Enrichment Datastore ID"
     ),
-    check_templates: Optional[str] = typer.Option(
+    check_templates: str | None = typer.Option(
         None,
         "--check_templates",
         help='Comma-separated list of check templates IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]"',
     ),
-    status: Optional[bool] = typer.Option(
+    status: bool | None = typer.Option(
         None,
         "--status",
         help="Check Template status send `true` if it's locked or `false` to unlocked.",
     ),
-    rules: Optional[str] = typer.Option(
+    rules: str | None = typer.Option(
         None,
         "--rules",
         help='Comma-separated list of check templates rule types or array-like format. Example: "afterDateTime, aggregationComparison" or "[afterDateTime, aggregationComparison]"',
     ),
-    tags: Optional[str] = typer.Option(
+    tags: str | None = typer.Option(
         None,
         "--tags",
         help='Comma-separated list of Tag names or array-like format. Example: "tag1, tag2, tag3" or "[tag1, tag2, tag3]"',
@@ -1362,7 +1360,7 @@ def schedule(
         help="Crontab expression inside quotes, specifying when the task should run. Example: '0 * * * *' ",
     ),
     datastore: str = typer.Option(..., "--datastore", help="The datastore ID"),
-    containers: Optional[str] = typer.Option(
+    containers: str | None = typer.Option(
         None,
         "--containers",
         help='Comma-separated list of containers IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]"',
@@ -1491,22 +1489,22 @@ def catalog_operation(
         "--datastore",
         help="Comma-separated list of Datastore IDs or array-like format",
     ),
-    include: Optional[str] = typer.Option(
+    include: str | None = typer.Option(
         None,
         "--include",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    prune: Optional[bool] = typer.Option(
+    prune: bool | None = typer.Option(
         None,
         "--prune",
         help="Prune the operation. Do not include if you want prune == false",
     ),
-    recreate: Optional[bool] = typer.Option(
+    recreate: bool | None = typer.Option(
         None,
         "--recreate",
         help="Recreate the operation. Do not include if you want recreate == false",
     ),
-    background: Optional[bool] = typer.Option(
+    background: bool | None = typer.Option(
         False,
         "--background",
         help="Starts the catalog operation and has it run in the background, "
@@ -1536,58 +1534,58 @@ def profile_operation(
         "--datastore",
         help="Comma-separated list of Datastore IDs or array-like format",
     ),
-    container_names: Optional[str] = typer.Option(
+    container_names: str | None = typer.Option(
         None,
         "--container_names",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    container_tags: Optional[str] = typer.Option(
+    container_tags: str | None = typer.Option(
         None,
         "--container_tags",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    inference_threshold: Optional[int] = typer.Option(
+    inference_threshold: int | None = typer.Option(
         None,
         "--inference_threshold",
         help="Inference quality checks threshold in profile from 0 to 5. Do not include if you want inference_threshold == 0",
     ),
-    infer_as_draft: Optional[bool] = typer.Option(
+    infer_as_draft: bool | None = typer.Option(
         None,
         "--infer_as_draft",
         help="Infer all quality checks in profile as DRAFT. Do not include if you want infer_as_draft == False",
     ),
-    max_records_analyzed_per_partition: Optional[int] = typer.Option(
+    max_records_analyzed_per_partition: int | None = typer.Option(
         None,
         "--max_records_analyzed_per_partition",
         help="Number of max records analyzed per partition",
     ),
-    max_count_testing_sample: Optional[int] = typer.Option(
+    max_count_testing_sample: int | None = typer.Option(
         None,
         "--max_count_testing_sample",
         help="The number of records accumulated during profiling for validation of inferred checks. Capped at 100,000",
     ),
-    percent_testing_threshold: Optional[float] = typer.Option(
+    percent_testing_threshold: float | None = typer.Option(
         None, "--percent_testing_threshold", help=" Percent of Testing Threshold"
     ),
-    high_correlation_threshold: Optional[float] = typer.Option(
+    high_correlation_threshold: float | None = typer.Option(
         None, "--high_correlation_threshold", help="Number of Correlation Threshold"
     ),
-    greater_than_time: Optional[datetime] = typer.Option(
+    greater_than_time: datetime | None = typer.Option(
         None,
         "--greater_than_time",
         help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S",
     ),
-    greater_than_batch: Optional[float] = typer.Option(
+    greater_than_batch: float | None = typer.Option(
         None,
         "--greater_than_batch",
         help="Only include rows where the incremental field's value is greater than this number",
     ),
-    histogram_max_distinct_values: Optional[int] = typer.Option(
+    histogram_max_distinct_values: int | None = typer.Option(
         None,
         "--histogram_max_distinct_values",
         help="Number of max distinct values of the histogram",
     ),
-    background: Optional[bool] = typer.Option(
+    background: bool | None = typer.Option(
         False,
         "--background",
         help="Starts the catalog operation and has it run in the background, "
@@ -1646,47 +1644,47 @@ def scan_operation(
         "--datastore",
         help="Comma-separated list of Datastore IDs or array-like format",
     ),
-    container_names: Optional[str] = typer.Option(
+    container_names: str | None = typer.Option(
         None,
         "--container_names",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    container_tags: Optional[str] = typer.Option(
+    container_tags: str | None = typer.Option(
         None,
         "--container_tags",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    incremental: Optional[bool] = typer.Option(
+    incremental: bool | None = typer.Option(
         False,
         "--incremental",
         help="Process only new or records updated since the last incremental scan",
     ),
-    remediation: Optional[str] = typer.Option(
+    remediation: str | None = typer.Option(
         "none",
         "--remediation",
         help="Replication strategy for source tables in the enrichment datastore. Either 'append', 'overwrite', or 'none'",
     ),
-    max_records_analyzed_per_partition: Optional[int] = typer.Option(
+    max_records_analyzed_per_partition: int | None = typer.Option(
         None,
         "--max_records_analyzed_per_partition",
         help="Number of max records analyzed per partition. Value must be Greater than or equal to 0",
     ),
-    enrichment_source_record_limit: Optional[int] = typer.Option(
+    enrichment_source_record_limit: int | None = typer.Option(
         10,
         "--enrichment_source_record_limit",
         help="Limit of enrichment source records per . Value must be Greater than or equal to -1",
     ),
-    greater_than_time: Optional[datetime] = typer.Option(
+    greater_than_time: datetime | None = typer.Option(
         None,
         "--greater_than_time",
         help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S",
     ),
-    greater_than_batch: Optional[float] = typer.Option(
+    greater_than_batch: float | None = typer.Option(
         None,
         "--greater_than_batch",
         help="Only include rows where the incremental field's value is greater than this number",
     ),
-    background: Optional[bool] = typer.Option(
+    background: bool | None = typer.Option(
         False,
         "--background",
         help="Starts the catalog operation and has it run in the background, "
@@ -1800,7 +1798,6 @@ def new_datastore(
         False, "--dry-run", help="Print payload only; no HTTP"
     ),
 ):
-
     base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores"
@@ -1836,9 +1833,9 @@ def new_datastore(
                     "parameters" in printable["connection"]
                     and "private_key_der_b64" in printable["connection"]["parameters"]
                 ):
-                    printable["connection"]["parameters"][
-                        "private_key_der_b64"
-                    ] = "*** redacted ***"
+                    printable["connection"]["parameters"]["private_key_der_b64"] = (
+                        "*** redacted ***"
+                    )
             except Exception:
                 pass
 
@@ -1871,7 +1868,6 @@ def new_datastore(
 
 @datastore_app.command("list", help="List all datastores")
 def list_datastores():
-
     base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores"
@@ -1909,7 +1905,6 @@ def list_datastores():
 def get_datastore_by_id(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
-
     base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores/{id}"
@@ -1945,7 +1940,6 @@ def get_datastore_by_id(
 def remove_datastore(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
-
     base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores/{id}"
