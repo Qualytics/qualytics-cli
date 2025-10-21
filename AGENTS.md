@@ -21,13 +21,14 @@ qualytics-cli/
 │   ├── __init__.py                # Package initialization (minimal)
 │   └── qualytics.py               # Main CLI application logic
 ├── .bumpversion.cfg               # Version bumping configuration
-├── .gitignore                     # Git ignore rules
+├── .gitignore                     # Git ignore rules (includes uv.lock)
 ├── .pre-commit-config.yaml        # Pre-commit hooks (ruff, pyupgrade)
 ├── LICENSE                        # MIT License
 ├── README.md                      # User-facing documentation
-├── pyproject.toml                 # Modern Python packaging (PEP 621)
-└── uv.lock                        # uv lock file for reproducible builds
+└── pyproject.toml                 # Modern Python packaging (PEP 621)
 ```
+
+**Note**: `uv.lock` is generated locally but not committed (library best practice).
 
 ---
 
@@ -203,7 +204,7 @@ If Not Background:
 - **Build System**: setuptools (>=77.0.0)
 - **Build Backend**: setuptools.build_meta
 - **Packaging**: Modern pyproject.toml (PEP 621)
-- **Lock File**: uv.lock for reproducible builds
+- **Dependency Management**: uv (lock file not committed - library best practice)
 - **Minimum Python**: 3.9+ (no support for 3.7 or 3.8)
 
 ### CI/CD Pipeline
