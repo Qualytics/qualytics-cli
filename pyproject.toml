@@ -31,6 +31,9 @@ dependencies = [
     "rich",
     "shellingham",
     "click",
+    "python-dotenv",
+    "pyyaml",
+    "urllib3",
 ]
 
 [project.optional-dependencies]

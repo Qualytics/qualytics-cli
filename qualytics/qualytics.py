@@ -15,10 +15,10 @@ import yaml
 import pathlib
 import typing as t
 
-import api.datastores as datastore
+from .api import datastores as datastore
 
-#from cryptography.hazmat.primitives import serialization
-#from cryptography.hazmat.backends import default_backend
+# from cryptography.hazmat.primitives import serialization
+# from cryptography.hazmat.backends import default_backend
 from datetime import datetime, timezone
 from pathlib import Path
 from rich import print
@@ -50,9 +50,11 @@ CONNECTIONS_PATH = os.path.expanduser(f"{BASE_PATH}/connections.yml")
 app = typer.Typer()
 load_dotenv(DOTENV_PATH)
 
+
 # Custom classes
 class ConfigError(ValueError):
     pass
+
 
 # Create a new Typer instance for checks
 checks_app = typer.Typer(name="checks", help="Commands for handling checks")
@@ -73,14 +75,13 @@ check_operation_app = typer.Typer(
 
 # instance for datastores
 datastore_app = typer.Typer(
-    name="datastore",
-    help="Create, get, update or delete datastores"
+    name="datastore", help="Create, get, update or delete datastores"
 )
 
 # instance for enrichment datastores
 enrichment_datastore_app = typer.Typer(
     name="enrichment_datastore",
-    help="Create, get, update or delete enrichment datastores"
+    help="Create, get, update or delete enrichment datastores",
 )
 
 # Add the checks_app as a subcommand to the main app
@@ -99,6 +100,7 @@ app.add_typer(datastore_app, name="dstore")
 app.add_typer(enrichment_datastore_app, name="e-dstore")
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 
 # ========================================== UTILITY FUNCTIONS =================================================================
 def validate_and_format_url(url: str) -> str:
@@ -119,10 +121,12 @@ def validate_and_format_url(url: str) -> str:
 
     return url
 
+
 def save_config(data):
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     with open(CONFIG_PATH, "w") as f:
         json.dump(data, f, indent=4)
+
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
@@ -130,8 +134,10 @@ def load_config():
             return json.load(f)
     return None
 
+
 def _get_default_headers(token):
     return {"Authorization": f"Bearer {token}"}
+
 
 def distinct_file_content(file_path):
     # Check if the file exists before opening it
@@ -146,6 +152,7 @@ def distinct_file_content(file_path):
         for line in distinct_lines:
             file.write(line)
 
+
 def log_error(message, file_path):
     # Check if the file exists before opening it
     if not os.path.exists(file_path):
@@ -155,6 +162,7 @@ def log_error(message, file_path):
     with open(file_path, "a") as file:
         file.write(message + "\n")
         file.flush()
+
 
 def is_token_valid(token: str):
     # Decode the JWT token
@@ -177,6 +185,7 @@ def is_token_valid(token: str):
         print("[bold red] WARNING: Your token is not valid [/bold red]")
         print(f"[bold red] {e} [/bold red]")
 
+
 def load_connections(yaml_path: str, env_path: str = ".env"):
     """Load .env variables, then YAML, expanding env vars."""
     load_dotenv(env_path)  # loads variables from .env into os.environ
@@ -185,6 +194,7 @@ def load_connections(yaml_path: str, env_path: str = ".env"):
         raw = os.path.expandvars(f.read())  # substitutes ${VAR} from .env
         config = yaml.safe_load(raw)
     return config.get("connections", {})
+
 
 def get_connection(yaml_path: str, name: str, env_path: str = ".env"):
     connections = load_connections(yaml_path, env_path)
@@ -299,6 +309,7 @@ def get_quality_checks(
     print(f"[bold green] Total pages = {total_pages} [/bold green]")
     return all_quality_checks
 
+
 def get_quality_check_by_additional_metadata(
     base_url: str, token: str, additional_metadata: dict
 ):
@@ -322,6 +333,7 @@ def get_quality_check_by_additional_metadata(
             return response.json()["items"][0]["id"]
 
     return None
+
 
 def get_check_templates(
     base_url: str,
@@ -398,6 +410,7 @@ def get_check_templates(
 
     return all_quality_checks
 
+
 def get_table_ids(
     base_url: str, token: str, datastore_id: int, max_retries=5, retry_delay=5
 ):
@@ -438,6 +451,7 @@ def get_table_ids(
         fg=typer.colors.RED,
     )
     return None
+
 
 def get_check_templates_metadata(
     base_url: str,
@@ -498,7 +512,6 @@ def get_check_templates_metadata(
         ]
 
     return all_quality_checks
-
 
 
 # ========================================== RUN FUNCTIONS =================================================================
@@ -1751,19 +1764,43 @@ def operation_status(
 @datastore_app.command("new", help="new datastore")
 def new_datastore(
     name: str = typer.Option(..., "--name", "-n", help="Datastore name"),
-    type: str = typer.Option(..., "--type", "-t", help="Connection type (snowflake, postgresql, athena etc)"),
-    connection_id: t.Optional[int] = typer.Option(None, "--connection-id", help="Existing connection id to reference"),
+    type: str = typer.Option(
+        ..., "--type", "-t", help="Connection type (snowflake, postgresql, athena etc)"
+    ),
+    connection_id: t.Optional[int] = typer.Option(
+        None, "--connection-id", help="Existing connection id to reference"
+    ),
     tags: t.Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
-    teams: t.Optional[str] = typer.Option(None, "--teams", help="Comma-separated team names"),
-    enrichment_only: bool = typer.Option(False, "--enrichment-only/--no-enrichment-only", help="Set if datastore will be an enrichment one"),
-    enrichment_prefix: t.Optional[str] = typer.Option(None, "--enrichment-prefix", help="Prefix for enrichment artifacts"),
-    enrichment_source_record_limit: t.Optional[int] = typer.Option(None, "--enrichment-source-record-limit", min=1),
-    enrichment_remediation_strategy: str = typer.Option("none", "--enrichment-remediation-strategy"),
-    high_count_rollup_threshold: t.Optional[int] = typer.Option(None, "--high-count-rollup-threshold", min=1),
-    trigger_catalog: bool = typer.Option(True, "--trigger-catalog/--no-trigger-catalog", help="Whether to trigger catalog. Default is TRUE"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print payload only; no HTTP"),
+    teams: t.Optional[str] = typer.Option(
+        None, "--teams", help="Comma-separated team names"
+    ),
+    enrichment_only: bool = typer.Option(
+        False,
+        "--enrichment-only/--no-enrichment-only",
+        help="Set if datastore will be an enrichment one",
+    ),
+    enrichment_prefix: t.Optional[str] = typer.Option(
+        None, "--enrichment-prefix", help="Prefix for enrichment artifacts"
+    ),
+    enrichment_source_record_limit: t.Optional[int] = typer.Option(
+        None, "--enrichment-source-record-limit", min=1
+    ),
+    enrichment_remediation_strategy: str = typer.Option(
+        "none", "--enrichment-remediation-strategy"
+    ),
+    high_count_rollup_threshold: t.Optional[int] = typer.Option(
+        None, "--high-count-rollup-threshold", min=1
+    ),
+    trigger_catalog: bool = typer.Option(
+        True,
+        "--trigger-catalog/--no-trigger-catalog",
+        help="Whether to trigger catalog. Default is TRUE",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print payload only; no HTTP"
+    ),
 ):
-    
+
     base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores"
@@ -1795,8 +1832,13 @@ def new_datastore(
             # Pretty preview (mask key if present)
             printable = json.loads(json.dumps(payload))
             try:
-                if "parameters" in printable["connection"] and "private_key_der_b64" in printable["connection"]["parameters"]:
-                    printable["connection"]["parameters"]["private_key_der_b64"] = "*** redacted ***"
+                if (
+                    "parameters" in printable["connection"]
+                    and "private_key_der_b64" in printable["connection"]["parameters"]
+                ):
+                    printable["connection"]["parameters"][
+                        "private_key_der_b64"
+                    ] = "*** redacted ***"
             except Exception:
                 pass
 
@@ -1825,6 +1867,7 @@ def new_datastore(
         except Exception as e:
             print(f"[red]Unexpected error:[/red] {e}")
             raise typer.Exit(code=1)
+
 
 @datastore_app.command("list", help="List all datastores")
 def list_datastores():
@@ -1859,11 +1902,14 @@ def list_datastores():
             print(f"[red]Unexpected error:[/red] {e}")
             raise typer.Exit(code=1)
 
-@datastore_app.command("get", help="Get a datastore. You need to pass the datastore id.")
+
+@datastore_app.command(
+    "get", help="Get a datastore. You need to pass the datastore id."
+)
 def get_datastore_by_id(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
-    
+
     base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores/{id}"
@@ -1894,11 +1940,12 @@ def get_datastore_by_id(
             print(f"[red]Unexpected error:[/red] {e}")
             raise typer.Exit(code=1)
 
+
 @datastore_app.command("remove", help="Remove a datastore. Use with caution!")
 def remove_datastore(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
-    
+
     base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores/{id}"
@@ -1930,11 +1977,8 @@ def remove_datastore(
             raise typer.Exit(code=1)
 
 
-
-
-
-
 # ========================================== API HELPERS SECTION ============================================================================
+
 
 # DATASTORES
 def build_new_datastore_payload(
@@ -1990,7 +2034,7 @@ def build_new_datastore_payload(
 
     return payload
 
-    
+
 if __name__ == "__main__":
     app()
     # Uncomment for testing
