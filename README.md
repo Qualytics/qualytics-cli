@@ -223,6 +223,77 @@ qualytics operation check_status --ids "OPERATION_IDS"
 |---------|----------|---------------------------------------------------------------------------------------------------------------------------|----------|
 | `--ids` | TEXT     | Comma-separated list of Operation IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                           | Yes      |
 
+### Add a New Datastore
+
+Allows you to create a new datastore in Qualytics. You can either reference an existing connection by ID or create a new connection from a YAML configuration file.
+
+#### Example: Adding a Regular Datastore
+
+```bash
+qualytics datastore new \
+  --name "Production Analytics" \
+  --connection-name "prod_snowflake_connection" \
+  --database "ANALYTICS_DB" \
+  --schema "PUBLIC" \
+  --tags "production,analytics" \
+  --teams "data-team,engineering" \
+  --trigger-catalog
+```
+
+#### Example: Adding an Enrichment Datastore
+
+```bash
+qualytics datastore new \
+  --name "Data Quality Enrichment" \
+  --connection-name "enrichment_db_connection" \
+  --database "DQ_ENRICHMENT" \
+  --schema "QUALITY" \
+  --enrichment-only \
+  --enrichment-prefix "dq_" \
+  --enrichment-source-record-limit 1000 \
+  --enrichment-remediation-strategy "append" \
+  --trigger-catalog
+```
+
+| Option                                 | Type    | Description                                                                                      | Required |
+|----------------------------------------|---------|--------------------------------------------------------------------------------------------------|----------|
+| `--name`                               | TEXT    | Name for the datastore                                                                           | Yes      |
+| `--connection-name`                    | TEXT    | Connection name from the 'name' field in connections.yml (mutually exclusive with connection-id)| No       |
+| `--connection-id`                      | INTEGER | Existing connection ID to reference (mutually exclusive with connection-name)                    | No       |
+| `--database`                           | TEXT    | The database name from the connection being used                                                 | Yes      |
+| `--schema`                             | TEXT    | The schema name from the connection being used                                                   | Yes      |
+| `--tags`                               | TEXT    | Comma-separated list of tags                                                                     | No       |
+| `--teams`                              | TEXT    | Comma-separated list of team names                                                               | No       |
+| `--enrichment-only`                    | BOOL    | Set if datastore will be an enrichment one (use flag to enable)                                  | No       |
+| `--enrichment-prefix`                  | TEXT    | Prefix for enrichment artifacts                                                                  | No       |
+| `--enrichment-source-record-limit`     | INTEGER | Limit of enrichment source records (min: 1)                                                      | No       |
+| `--enrichment-remediation-strategy`    | TEXT    | Strategy for enrichment: 'append', 'overwrite', or 'none' (default: 'none')                     | No       |
+| `--high-count-rollup-threshold`        | INTEGER | High count rollup threshold (min: 1)                                                             | No       |
+| `--trigger-catalog`/`--no-trigger-catalog` | BOOL | Whether to trigger catalog after creation (default: True)                                     | No       |
+| `--dry-run`                            | BOOL    | Print payload only without making HTTP request                                                   | No       |
+
+**Note**: You must provide either `--connection-name` or `--connection-id`, but not both. Use `--connection-name` to create a new connection from your YAML config, or `--connection-id` to reference an existing connection.
+
+### List All Datastores
+
+```bash
+qualytics datastore list
+```
+
+### Get a Datastore by ID
+
+```bash
+qualytics datastore get --id DATASTORE_ID
+```
+
+### Remove a Datastore
+
+```bash
+qualytics datastore remove --id DATASTORE_ID
+```
+
+**Warning**: Use with caution as this will permanently delete the datastore.
+
 ---
 
 ## Development
