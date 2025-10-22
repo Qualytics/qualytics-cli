@@ -869,6 +869,18 @@ def init(
 
 
 # ========================================== CHECKS_APP COMMANDS =================================================================
+def convert_json_to_yaml(json_data: dict | list, output_path: str) -> None:
+    """
+    Convert JSON data to YAML format and write to file.
+
+    Args:
+        json_data: The JSON data (dict or list) to convert
+        output_path: Path where the YAML file should be written
+    """
+    with open(output_path, "w") as f:
+        yaml.dump(json_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
 @checks_app.command("export")
 def checks_export(
     datastore: int = typer.Option(..., "--datastore", help="Datastore ID"),
@@ -889,6 +901,11 @@ def checks_export(
     ),
     output: str = typer.Option(
         BASE_PATH + "/data_checks.json", "--output", help="Output file path"
+    ),
+    file_type: str = typer.Option(
+        "json",
+        "--file-type",
+        help='Output file format: "json" or "yaml"',
     ),
 ):
     """
@@ -915,8 +932,21 @@ def checks_export(
             status=status,
         )
 
-        with open(output, "w") as f:
-            json.dump(all_quality_checks, f, indent=4)
+        # Normalize file_type to lowercase for comparison
+        file_type_lower = file_type.lower()
+
+        # Validate file_type
+        if file_type_lower not in ["json", "yaml", "yml"]:
+            print(f"[bold red]Error: Invalid file type '{file_type}'. Must be 'json' or 'yaml'.[/bold red]")
+            raise typer.Exit(code=1)
+
+        # Export based on file type
+        if file_type_lower in ["yaml", "yml"]:
+            convert_json_to_yaml(all_quality_checks, output)
+        else:
+            with open(output, "w") as f:
+                json.dump(all_quality_checks, f, indent=4)
+
         print(f"[bold green]Data exported to {output}[/bold green]")
 
 
