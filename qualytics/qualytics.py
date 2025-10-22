@@ -42,7 +42,8 @@ CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.
 CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
 OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
 DOTENV_PATH = os.path.expanduser(f"{BASE_PATH}/.env")
-CONNECTIONS_PATH = os.path.expanduser(f"{BASE_PATH}/connections.yml")
+CONNECTIONS_PATH = os.path.expanduser(f"{BASE_PATH}/config/connections.yml")
+PROJECT_CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config/config.yml")
 
 
 app = typer.Typer()
@@ -93,7 +94,7 @@ app.add_typer(run_operation_app, name="run")
 
 app.add_typer(check_operation_app, name="operation")
 
-app.add_typer(datastore_app, name="dstore")
+app.add_typer(datastore_app, name="datastore")
 
 app.add_typer(enrichment_datastore_app, name="e-dstore")
 
@@ -195,11 +196,30 @@ def load_connections(yaml_path: str, env_path: str = ".env"):
 
 
 def get_connection(yaml_path: str, name: str, env_path: str = ".env"):
+    """
+    Get a connection by its name field (not the type key).
+    Searches through all connections and finds the one matching the name field.
+    """
     connections = load_connections(yaml_path, env_path)
-    conn = connections.get(name)
-    if not conn:
-        raise ValueError(f"Connection '{name}' not found in YAML.")
-    return conn
+
+    # Search for connection by name field
+    for conn_key, conn_data in connections.items():
+        if conn_data.get("name") == name:
+            return conn_data
+
+    # If not found, raise error
+    raise ValueError(
+        f"Connection with name '{name}' not found in YAML. "
+        f"Available connections: {[c.get('name') for c in connections.values()]}"
+    )
+
+# def load_project_config(project_name: str, env_path: str = ".env"):
+#     load_dotenv(env_path)
+
+#     with open(PROJECT_CONFIG_PATH) as f:
+#         raw = os.path.expandvars(f.read())
+#         config = yaml.safe_load(raw)
+#     return config.get(project_name, {})
 
 
 # ========================================== CHECKS FUNCTIONS =================================================================
@@ -1762,11 +1782,19 @@ def operation_status(
 @datastore_app.command("new", help="new datastore")
 def new_datastore(
     name: str = typer.Option(..., "--name", "-n", help="Datastore name"),
-    type: str = typer.Option(
-        ..., "--type", "-t", help="Connection type (snowflake, postgresql, athena etc)"
+    connection_name: t.Optional[str] = typer.Option(
+        None, "--connection-name", "-cn", help="Connection name from the 'name' field in connections.yml (e.g., 'prod_snowflake_connection', not 'snowflake')"
     ),
     connection_id: t.Optional[int] = typer.Option(
         None, "--connection-id", help="Existing connection id to reference"
+    ),
+    database: str = typer.Option(
+        ...,
+        "--database", "-db", help="The database name from the connection being used"
+    ),
+    schema: str = typer.Option(
+        ...,
+        "--schema", "-sc", help="The schema name from the connection being used"
     ),
     tags: t.Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
     teams: t.Optional[str] = typer.Option(
@@ -1798,9 +1826,10 @@ def new_datastore(
         False, "--dry-run", help="Print payload only; no HTTP"
     ),
 ):
-    base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
+    base_url = os.getenv("QUALYTICS_DEV_API_URL")
+    base_url = validate_and_format_url(base_url)
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
-    url = f"{base_url}/datastores"
+    url = f"{base_url}datastores"
 
     headers = {"Content-Type": "application/json"}
     if api_token:
@@ -1810,7 +1839,19 @@ def new_datastore(
     token = is_token_valid(config["token"])
     if token:
         try:
-            connection = get_connection(CONNECTIONS_PATH, type)
+            # Validation: require either connection_name or connection_id, but not both
+            if connection_name and connection_id:
+                print("[red]Error: Cannot specify both --connection-name and --connection-id. Please use only one.[/red]")
+                raise typer.Exit(code=1)
+
+            if not connection_name and not connection_id:
+                print("[red]Error: Must specify either --connection-name or --connection-id.[/red]")
+                raise typer.Exit(code=1)
+
+            # Only fetch connection config if connection_name is provided
+            connection = None
+            if connection_name:
+                connection = get_connection(CONNECTIONS_PATH, connection_name)
 
             payload = build_new_datastore_payload(
                 cfg=connection,
@@ -1824,6 +1865,8 @@ def new_datastore(
                 enrichment_remediation_strategy=enrichment_remediation_strategy,
                 high_count_rollup_threshold=high_count_rollup_threshold,
                 trigger_catalog=trigger_catalog,
+                database=database,
+                schema=schema
             )
 
             # Pretty preview (mask key if present)
@@ -1847,7 +1890,7 @@ def new_datastore(
                 raise typer.Exit(code=0)
 
             print("[cyan]POSTing datastore to API...[/cyan]")
-            result = datastore.create_datastore(payload, base_url, url, headers)
+            result = datastore.create_datastore(payload, url, headers)
             print("[green]Datastore created (API response):[/green]")
             print(json.dumps(result, indent=2))
         except ConfigError as e:
@@ -1857,7 +1900,14 @@ def new_datastore(
             print(f"[red]Network error calling API:[/red] {e}")
             raise typer.Exit(code=4)
         except RuntimeError as e:
-            print(f"[red]{e}[/red]")
+            error_msg = str(e)
+            # Check if the error is due to a connection already existing
+            if "409" in error_msg or "already exists" in error_msg.lower() or "conflict" in error_msg.lower():
+                print("[red]Error: A connection with these credentials already exists.[/red]")
+                print("[yellow]Suggestion: Use the --connection-id flag to reference the existing connection instead.[/yellow]")
+                print(f"[yellow]Details: {error_msg}[/yellow]")
+            else:
+                print(f"[red]{error_msg}[/red]")
             raise typer.Exit(code=5)
         except typer.Exit:
             raise
@@ -1868,7 +1918,8 @@ def new_datastore(
 
 @datastore_app.command("list", help="List all datastores")
 def list_datastores():
-    base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
+    base_url = os.getenv("QUALYTICS_DEV_API_URL")
+    validate_and_format_url(base_url)
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores"
 
@@ -1905,7 +1956,8 @@ def list_datastores():
 def get_datastore_by_id(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
-    base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
+    base_url = os.getenv("QUALYTICS_DEV_API_URL")
+    validate_and_format_url(base_url)
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores/{id}"
 
@@ -1940,7 +1992,8 @@ def get_datastore_by_id(
 def remove_datastore(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
-    base_url = os.getenv("QUALYTICS_DEV_API_URL").rstrip("/")
+    base_url = os.getenv("QUALYTICS_DEV_API_URL")
+    validate_and_format_url(base_url)
     api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
     url = f"{base_url}/datastores/{id}"
 
@@ -1977,7 +2030,7 @@ def remove_datastore(
 # DATASTORES
 def build_new_datastore_payload(
     *,
-    cfg: dict,
+    cfg: t.Optional[dict],
     name: str,
     connection_id: t.Optional[int] = None,
     tags: t.Optional[t.List[str]] = None,
@@ -1988,37 +2041,40 @@ def build_new_datastore_payload(
     enrichment_remediation_strategy: str = "none",
     high_count_rollup_threshold: t.Optional[int] = None,
     trigger_catalog: bool = True,
+    database: str,
+    schema: str
 ) -> dict:
-    params = cfg["parameters"]
-
-    # Base connection block (aligned to your schema)
-    connection: dict = {
-        "name": cfg["name"],
-        "type": cfg["type"],
-        "host": params["host"],
-        "port": params["port"],
-        "username": params["user"],
-        "password": params["password"],
-    }
-
-    # Top-level payload per your schema
+    # Base payload structure
     payload: dict = {
         "name": name,
-        "connection": connection,
         "enrichment_only": enrichment_only,
         "enrichment_remediation_strategy": enrichment_remediation_strategy,
         "trigger_catalog": trigger_catalog,
-        "database": params["database"],  # your schema expects these at top-level
-        "schema": params["schema"],
+        "tags": tags,
+        "teams": teams,
+        "database": database,
+        "schema": schema
     }
 
-    # Optional fields
+    # If connection_id is provided, use it to reference existing connection
     if connection_id is not None:
         payload["connection_id"] = int(connection_id)
-    if tags:
-        payload["tags"] = tags
-    if teams:
-        payload["teams"] = teams
+    # If cfg (connection config from YAML) is provided, build the connection object
+    elif cfg is not None:
+        params = cfg["parameters"]
+        # Base connection block (aligned to your schema)
+        connection: dict = {
+            "name": cfg["name"],
+            "type": cfg["type"],
+            "host": params["host"],
+            "port": params["port"],
+            "username": params["user"],
+            "password": params["password"],
+        }
+
+        payload["connection"] = connection
+    else:
+        raise ValueError("Either cfg or connection_id must be provided")
     if enrichment_prefix is not None:
         payload["enrichment_prefix"] = enrichment_prefix
     if enrichment_source_record_limit is not None:
