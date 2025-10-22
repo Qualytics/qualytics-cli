@@ -213,6 +213,7 @@ def get_connection(yaml_path: str, name: str, env_path: str = ".env"):
         f"Available connections: {[c.get('name') for c in connections.values()]}"
     )
 
+
 # def load_project_config(project_name: str, env_path: str = ".env"):
 #     load_dotenv(env_path)
 
@@ -1783,18 +1784,22 @@ def operation_status(
 def new_datastore(
     name: str = typer.Option(..., "--name", "-n", help="Datastore name"),
     connection_name: t.Optional[str] = typer.Option(
-        None, "--connection-name", "-cn", help="Connection name from the 'name' field in connections.yml (e.g., 'prod_snowflake_connection', not 'snowflake')"
+        None,
+        "--connection-name",
+        "-cn",
+        help="Connection name from the 'name' field in connections.yml (e.g., 'prod_snowflake_connection', not 'snowflake')",
     ),
     connection_id: t.Optional[int] = typer.Option(
         None, "--connection-id", help="Existing connection id to reference"
     ),
     database: str = typer.Option(
         ...,
-        "--database", "-db", help="The database name from the connection being used"
+        "--database",
+        "-db",
+        help="The database name from the connection being used",
     ),
     schema: str = typer.Option(
-        ...,
-        "--schema", "-sc", help="The schema name from the connection being used"
+        ..., "--schema", "-sc", help="The schema name from the connection being used"
     ),
     tags: t.Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
     teams: t.Optional[str] = typer.Option(
@@ -1841,11 +1846,15 @@ def new_datastore(
         try:
             # Validation: require either connection_name or connection_id, but not both
             if connection_name and connection_id:
-                print("[red]Error: Cannot specify both --connection-name and --connection-id. Please use only one.[/red]")
+                print(
+                    "[red]Error: Cannot specify both --connection-name and --connection-id. Please use only one.[/red]"
+                )
                 raise typer.Exit(code=1)
 
             if not connection_name and not connection_id:
-                print("[red]Error: Must specify either --connection-name or --connection-id.[/red]")
+                print(
+                    "[red]Error: Must specify either --connection-name or --connection-id.[/red]"
+                )
                 raise typer.Exit(code=1)
 
             # Only fetch connection config if connection_name is provided
@@ -1866,7 +1875,7 @@ def new_datastore(
                 high_count_rollup_threshold=high_count_rollup_threshold,
                 trigger_catalog=trigger_catalog,
                 database=database,
-                schema=schema
+                schema=schema,
             )
 
             # Pretty preview (mask key if present)
@@ -1902,9 +1911,17 @@ def new_datastore(
         except RuntimeError as e:
             error_msg = str(e)
             # Check if the error is due to a connection already existing
-            if "409" in error_msg or "already exists" in error_msg.lower() or "conflict" in error_msg.lower():
-                print("[red]Error: A connection with these credentials already exists.[/red]")
-                print("[yellow]Suggestion: Use the --connection-id flag to reference the existing connection instead.[/yellow]")
+            if (
+                "409" in error_msg
+                or "already exists" in error_msg.lower()
+                or "conflict" in error_msg.lower()
+            ):
+                print(
+                    "[red]Error: A connection with these credentials already exists.[/red]"
+                )
+                print(
+                    "[yellow]Suggestion: Use the --connection-id flag to reference the existing connection instead.[/yellow]"
+                )
                 print(f"[yellow]Details: {error_msg}[/yellow]")
             else:
                 print(f"[red]{error_msg}[/red]")
@@ -2042,7 +2059,7 @@ def build_new_datastore_payload(
     high_count_rollup_threshold: t.Optional[int] = None,
     trigger_catalog: bool = True,
     database: str,
-    schema: str
+    schema: str,
 ) -> dict:
     # Base payload structure
     payload: dict = {
@@ -2053,7 +2070,7 @@ def build_new_datastore_payload(
         "tags": tags,
         "teams": teams,
         "database": database,
-        "schema": schema
+        "schema": schema,
     }
 
     # If connection_id is provided, use it to reference existing connection
