@@ -1,0 +1,14 @@
+cli_version: 0.1.19
+
+project: 
+  name: data_quality_tool
+  url: https://develop.qualytics.io
+  api_token:
+
+checks:
+  import:
+    file_format: json
+  export:
+    output_folder: ${BASE_PATH}/checks/exports
+    file_format: json
+    error_log: ${OPERATION_ERROR_PATH}

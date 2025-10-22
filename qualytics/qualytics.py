@@ -43,6 +43,7 @@ CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt"
 OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
 DOTENV_PATH = os.path.expanduser(f"{BASE_PATH}/.env")
 CONNECTIONS_PATH = os.path.expanduser(f"{BASE_PATH}/connections.yml")
+PROJECT_CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config/config.yml")
 
 
 app = typer.Typer()
@@ -93,9 +94,9 @@ app.add_typer(run_operation_app, name="run")
 
 app.add_typer(check_operation_app, name="operation")
 
-app.add_typer(datastore_app, name="dstore")
+app.add_typer(datastore_app, name="datastore")
 
-app.add_typer(enrichment_datastore_app, name="e-dstore")
+app.add_typer(enrichment_datastore_app, name="enrich-datastore")
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -194,6 +195,102 @@ def load_connections(yaml_path: str, env_path: str = ".env"):
     return config.get("connections", {})
 
 
+def load_project_config(config_path: str = PROJECT_CONFIG_PATH, env_path: str = DOTENV_PATH):
+    """
+    Load project configuration YAML with variable expansion.
+    Supports both OS environment variables and Python constants from this module.
+
+    YAML Variable Substitution:
+    ---------------------------
+    You can use ${VARIABLE_NAME} in your config.yml to reference:
+      1. Python constants from this module (BASE_PATH, CONNECTIONS_PATH, etc.)
+      2. Environment variables from .env file
+      3. System environment variables
+
+    Available Python Constants:
+      - ${BASE_PATH}              : Base directory (~/.qualytics)
+      - ${CONNECTIONS_PATH}       : Path to connections.yml
+      - ${CONFIG_PATH}            : Path to config.json
+      - ${DOTENV_PATH}            : Path to .env file
+      - ${OPERATION_ERROR_PATH}   : Path to operation errors log
+      - ${CRONTAB_ERROR_PATH}     : Path to crontab errors log
+      - ${CRONTAB_COMMANDS_PATH}  : Path to crontab commands file
+      - ${PROJECT_CONFIG_PATH}    : Path to this config.yml file
+
+    Example config.yml:
+    -------------------
+    cli_version: 0.1.19
+    project_name: my_project
+    connections_file_path: ${CONNECTIONS_PATH}
+
+    checks:
+      export:
+        output_folder: ${BASE_PATH}/exports
+        output_format: json
+      import:
+        input_folder: ${BASE_PATH}/imports
+        error_log: ${OPERATION_ERROR_PATH}
+
+    Usage in Python:
+    ----------------
+    # Load entire config
+    config = load_project_config()
+
+    # Access nested values with dot notation
+    output_format = get_config_value('checks.export.output_format', default='json')
+    connections_path = get_config_value('connections_file_path')
+
+    Args:
+        config_path: Path to config.yml file (defaults to PROJECT_CONFIG_PATH)
+        env_path: Path to .env file (defaults to DOTENV_PATH)
+
+    Returns:
+        dict: Parsed configuration with expanded variables
+
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+    """
+    # Load .env variables first
+    load_dotenv(env_path)
+
+    # Create a mapping of Python constants that can be used in YAML
+    # Add any module-level constants you want to be available in YAML
+    python_vars = {
+        'BASE_PATH': BASE_PATH,
+        'CONNECTIONS_PATH': CONNECTIONS_PATH,
+        'CONFIG_PATH': CONFIG_PATH,
+        'DOTENV_PATH': DOTENV_PATH,
+        'OPERATION_ERROR_PATH': OPERATION_ERROR_PATH,
+        'CRONTAB_ERROR_PATH': CRONTAB_ERROR_PATH,
+        'CRONTAB_COMMANDS_PATH': CRONTAB_COMMANDS_PATH,
+        'PROJECT_CONFIG_PATH': PROJECT_CONFIG_PATH,
+    }
+
+    # Temporarily add Python constants to environment for expansion
+    original_env = {}
+    for key, value in python_vars.items():
+        if key in os.environ:
+            original_env[key] = os.environ[key]
+        os.environ[key] = str(value)
+
+    try:
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Project config file not found: {config_path}")
+
+        with open(config_path) as f:
+            raw = os.path.expandvars(f.read())  # substitutes ${VAR}
+            config = yaml.safe_load(raw)
+
+        return config
+    finally:
+        # Restore original environment
+        for key in python_vars.keys():
+            if key in original_env:
+                os.environ[key] = original_env[key]
+            else:
+                os.environ.pop(key, None)
+
+
 def get_connection(yaml_path: str, name: str, env_path: str = ".env"):
     connections = load_connections(yaml_path, env_path)
     conn = connections.get(name)
@@ -202,6 +299,60 @@ def get_connection(yaml_path: str, name: str, env_path: str = ".env"):
     return conn
 
 
+def get_config_value(key_path: str, default=None):
+    """
+    Get a value from the project config using dot notation.
+
+    Args:
+        key_path: Dot-separated path to the config value (e.g., 'checks.export.output_format')
+        default: Default value if key is not found
+
+    Returns:
+        The config value or default if not found
+
+    Example:
+        output_format = get_config_value('checks.export.output_format', default='json')
+        connections_path = get_config_value('connections_file_path')
+    """
+    try:
+        config = load_project_config()
+        keys = key_path.split('.')
+        value = config
+
+        for key in keys:
+            if isinstance(value, dict):
+                value = value.get(key)
+                if value is None:
+                    return default
+            else:
+                return default
+
+        return value
+    except (FileNotFoundError, Exception):
+        return default
+
+def setup_initial_env():
+    """
+    Initial setup: creates the config directory in the .qualytics folder.
+    This directory can be used for project-specific configuration files.
+    """
+    try:
+        # Create the config directory if it doesn't exist
+        os.makedirs(PROJECT_CONFIG_PATH, exist_ok=True)
+        return True
+    
+        # Create connections.yml file is it doesn't exist
+        
+    except PermissionError as e:
+        print(f"[bold red] ERROR: Permission denied creating directory: {PROJECT_CONFIG_PATH} [/bold red]")
+        print(f"[bold red] Details: {e} [/bold red]")
+        return False
+    except Exception as e:
+        print(f"[bold red] ERROR: Failed to create directory: {PROJECT_CONFIG_PATH} [/bold red]")
+        print(f"[bold red] Details: {e} [/bold red]")
+        return False
+    
+    
 # ========================================== CHECKS FUNCTIONS =================================================================
 def get_quality_checks(
     base_url: str,
@@ -848,15 +999,152 @@ def show_config():
     else:
         print("Configuration not found!")
 
+@app.command("show-paths")
+def show_paths():
+    """
+    Display all available path variables that can be used in config.yml.
+    These variables can be referenced in YAML files using ${VARIABLE_NAME} syntax.
+    """
+    print("[bold cyan] Available Path Variables for config.yml: [/bold cyan]\n")
+
+    paths = {
+        'BASE_PATH': BASE_PATH,
+        'CONFIG_PATH': CONFIG_PATH,
+        'CONNECTIONS_PATH': CONNECTIONS_PATH,
+        'DOTENV_PATH': DOTENV_PATH,
+        'OPERATION_ERROR_PATH': OPERATION_ERROR_PATH,
+        'CRONTAB_ERROR_PATH': CRONTAB_ERROR_PATH,
+        'CRONTAB_COMMANDS_PATH': CRONTAB_COMMANDS_PATH,
+        'PROJECT_CONFIG_PATH': PROJECT_CONFIG_PATH,
+    }
+
+    for var_name, var_value in paths.items():
+        print(f"  [bold yellow]${{{var_name}}}[/bold yellow] = {var_value}")
+
+    print(f"\n[bold green]Example usage in config.yml:[/bold green]")
+    print(f"  connections_file_path: ${{CONNECTIONS_PATH}}")
+    print(f"  output_folder: ${{BASE_PATH}}/exports")
+    print(f"  error_log: ${{OPERATION_ERROR_PATH}}")
+
+
+@app.command("get-config")
+def get_config_command(
+    key: str = typer.Argument(..., help="Config key path (use dot notation for nested values, e.g., 'checks.export.output_format')"),
+    default: str = typer.Option(None, "--default", "-d", help="Default value if key not found"),
+):
+    """
+    Get a specific value from config.yml using dot notation.
+
+    Examples:
+      qualytics get-config connections_file_path
+      qualytics get-config checks.export.output_format
+      qualytics get-config some.missing.key --default "default_value"
+    """
+    try:
+        value = get_config_value(key, default=default)
+
+        if value is None:
+            print(f"[bold red] Key '{key}' not found in config and no default provided [/bold red]")
+            raise typer.Exit(code=1)
+
+        # Handle different value types
+        if isinstance(value, (dict, list)):
+            print(json.dumps(value, indent=2))
+        else:
+            print(value)
+
+    except Exception as e:
+        print(f"[bold red] ERROR: {e} [/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("test-env")
+def test_env():
+    """
+    Test environment setup by creating necessary directories and loading config.
+    """
+    print(f"[bold cyan] Testing environment setup... [/bold cyan]")
+    print(f"[bold cyan] Config file path: {PROJECT_CONFIG_PATH} [/bold cyan]")
+
+    # Test loading the project config
+    try:
+        config = load_project_config()
+        print(f"[bold green] Project config loaded successfully! [/bold green]")
+        print(f"\n[bold cyan] Full config contents (with expanded variables): [/bold cyan]")
+        print(json.dumps(config, indent=2))
+
+        # Demonstrate getting specific values
+        print(f"\n[bold cyan] Examples of accessing config values: [/bold cyan]")
+
+        # Example 1: Direct key access
+        connections_path = config.get('connections_file_path')
+        print(f"  connections_file_path: [bold yellow]{connections_path}[/bold yellow]")
+
+        # Example 2: Using helper function with dot notation
+        export_format = get_config_value('checks.export.output_format', default='json')
+        print(f"  checks.export.output_format: [bold yellow]{export_format}[/bold yellow]")
+
+        import_format = get_config_value('checks.import.output_format', default='json')
+        print(f"  checks.import.output_format: [bold yellow]{import_format}[/bold yellow]")
+
+        # Example 3: Non-existent key with default
+        non_existent = get_config_value('some.non.existent.key', default='default_value')
+        print(f"  some.non.existent.key: [bold yellow]{non_existent}[/bold yellow] (using default)")
+
+        print(f"\n[bold green] All config values loaded and expanded successfully! [/bold green]")
+
+    except FileNotFoundError as e:
+        print(f"[bold red] ERROR: {e} [/bold red]")
+        print(f"[bold yellow] You can create a config.yml file at: {PROJECT_CONFIG_PATH} [/bold yellow]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        print(f"[bold red] ERROR loading config: {e} [/bold red]")
+        import traceback
+        traceback.print_exc()
+        raise typer.Exit(code=1)
 
 @app.command()
 def init(
     url: str = typer.Option(
-        ..., help="The URL to be set. Example: https://your-qualytics.qualytics.io/"
+        None, help="The URL to be set. Example: https://your-qualytics.qualytics.io/"
     ),
-    token: str = typer.Option(..., help="The token to be set."),
+    token: str = typer.Option(None, help="The token to be set."),
 ):
-    url = validate_and_format_url(url)
+    """
+    Initialize the Qualytics CLI configuration with URL and token.
+    If URL and token are not provided as options, they will be prompted interactively.
+    """
+    # Prompt for URL if not provided
+    if url is None:
+        url = typer.prompt("Enter the Qualytics URL")
+
+    # Validate URL is not empty
+    url = url.strip()
+    if not url:
+        print("[bold red] ERROR: URL cannot be empty! [/bold red]")
+        raise typer.Exit(code=1)
+
+    # Validate and format the URL
+    try:
+        url = validate_and_format_url(url)
+    except Exception as e:
+        print(f"[bold red] ERROR: Invalid URL format: {e} [/bold red]")
+        raise typer.Exit(code=1)
+
+    # Prompt for token if not provided
+    if token is None:
+        token = typer.prompt("Enter your API token", hide_input=True)
+
+    # Validate token is not empty
+    token = token.strip()
+    if not token:
+        print("[bold red] ERROR: Token cannot be empty! [/bold red]")
+        raise typer.Exit(code=1)
+
+    # Validate token format (basic JWT structure check)
+    if token.count('.') != 2:
+        print("[bold red] ERROR: Token format is invalid. Expected a valid JWT token. [/bold red]")
+        raise typer.Exit(code=1)
 
     config = {"url": url, "token": token}
 
@@ -866,12 +1154,22 @@ def init(
     if token_valid:
         save_config(config)
         print("[bold green] Configuration saved! [/bold green]")
+    else:
+        print("[bold red] ERROR: Configuration not saved due to invalid token! [/bold red]")
+        raise typer.Exit(code=1)
+    
+    # Create connections file
 
 
 # ========================================== CHECKS_APP COMMANDS =================================================================
 @checks_app.command("export")
 def checks_export(
     datastore: int = typer.Option(..., "--datastore", help="Datastore ID"),
+    file_type: str = typer.Option(
+        ...,
+        "--file-type",
+        help="Output file format (default JSON). Options are yml (more to come)"
+    ),
     containers: str | None = typer.Option(
         None,
         "--containers",
@@ -889,7 +1187,7 @@ def checks_export(
     ),
     output: str = typer.Option(
         BASE_PATH + "/data_checks.json", "--output", help="Output file path"
-    ),
+    )
 ):
     """
     Export checks to a file.
@@ -912,7 +1210,7 @@ def checks_export(
             datastore_id=datastore,
             containers=containers,
             tags=tags,
-            status=status,
+            status=status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
         )
 
         with open(output, "w") as f:

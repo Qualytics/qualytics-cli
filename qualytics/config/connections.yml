@@ -6,7 +6,7 @@ connections:
       host: ${SNOWFLAKE_HOST}
       role: ${SNOWFLAKE_ROLE}
       warehouse: ${SNOWFLAKE_WAREHOUSE}
-      database: ${SNOWFLAKE_DEV_DB}
+      database: ${SNOWFLAKE_DB}
       schema: ${SNOWFLAKE_SCHEMA}
       authentication:
         method: keypair
