@@ -28,7 +28,7 @@ from croniter import croniter
 from dotenv import load_dotenv
 
 
-__version__ = "0.1.19"
+__version__ = "0.2.0"
 
 # Get the home directory
 home = Path.home()
