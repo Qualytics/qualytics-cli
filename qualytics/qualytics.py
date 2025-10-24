@@ -2068,9 +2068,9 @@ def new_datastore(
                     if "parameters" in printable["connection"]:
                         for field in sensitive_fields:
                             if field in printable["connection"]["parameters"]:
-                                printable["connection"]["parameters"][
-                                    field
-                                ] = "*** redacted ***"
+                                printable["connection"]["parameters"][field] = (
+                                    "*** redacted ***"
+                                )
 
                         # Redact in nested authentication object
                         if "authentication" in printable["connection"]["parameters"]:
@@ -2138,7 +2138,6 @@ def new_datastore(
 
 @datastore_app.command("list", help="List all datastores")
 def list_datastores():
-
     config = load_config()
     base_url = base_url = validate_and_format_url(config["url"])
     endpoint = "datastores/listing"
