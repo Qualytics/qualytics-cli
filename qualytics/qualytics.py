@@ -1,3 +1,4 @@
+from __future__ import annotations
 import time
 
 import typer
@@ -9,19 +10,50 @@ import re
 import jwt
 import platform
 import subprocess
+import yaml
 
-from datetime import datetime
+import typing as t
+
+from .api import datastores as datastore
+
+# from cryptography.hazmat.primitives import serialization
+# from cryptography.hazmat.backends import default_backend
+from datetime import datetime, timezone
 from pathlib import Path
 from rich import print
 from rich.progress import track
 from itertools import product
-from typing import Optional
 from typing import Annotated
 from croniter import croniter
+from dotenv import load_dotenv
 
-__version__ = "0.1.19"
+
+__version__ = "0.2.0"
+
+# Get the home directory
+home = Path.home()
+
+# Define the new directory
+folder_name = ".qualytics"
+BASE_PATH = f"{home}/{folder_name}"
+
+CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
+CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.txt")
+CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
+OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
+DOTENV_PATH = os.path.expanduser(f"{BASE_PATH}/.env")
+CONNECTIONS_PATH = os.path.expanduser(f"{BASE_PATH}/config/connections.yml")
+PROJECT_CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config/config.yml")
+
 
 app = typer.Typer()
+load_dotenv(DOTENV_PATH)
+
+
+# Custom classes
+class ConfigError(ValueError):
+    pass
+
 
 # Create a new Typer instance for checks
 checks_app = typer.Typer(name="checks", help="Commands for handling checks")
@@ -40,21 +72,28 @@ check_operation_app = typer.Typer(
     help="Allows the user to view information about an operation such as it's status",
 )
 
+# instance for datastores
+datastore_app = typer.Typer(
+    name="datastore", help="Create, get, update or delete datastores"
+)
+
+# Add the checks_app as a subcommand to the main app
+app.add_typer(checks_app, name="checks")
+
+# Add the schedule_app as a subcommand to the main app
+app.add_typer(schedule_app, name="schedule")
+
+# Add the trigger operation as a subcommand to the main app
+app.add_typer(run_operation_app, name="run")
+
+app.add_typer(check_operation_app, name="operation")
+
+app.add_typer(datastore_app, name="datastore")
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Get the home directory
-home = Path.home()
 
-# Define the new directory
-folder_name = ".qualytics"
-BASE_PATH = f"{home}/{folder_name}"
-
-CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
-CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.txt")
-CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
-OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
-
-
+# ========================================== UTILITY FUNCTIONS =================================================================
 def validate_and_format_url(url: str) -> str:
     """Validates and formats the URL to the desired structure."""
 
@@ -116,6 +155,218 @@ def log_error(message, file_path):
         file.flush()
 
 
+def is_token_valid(token: str):
+    # Decode the JWT token
+    try:
+        decoded_token = jwt.decode(
+            token, algorithms=["none"], options={"verify_signature": False}
+        )
+        expiration_time = decoded_token.get("exp")
+
+        if expiration_time is not None:
+            current_time = datetime.now(timezone.utc).timestamp()
+            if not expiration_time >= current_time:
+                print(
+                    '[bold red] WARNING: Your token is expired, please setup with a new token by running: qualytics init --url "your-qualytics.io/api" --token "my-token" [/bold red]'
+                )
+                return None
+            else:
+                return token
+    except Exception as e:
+        print("[bold red] WARNING: Your token is not valid [/bold red]")
+        print(f"[bold red] {e} [/bold red]")
+
+
+def load_connections(yaml_path: str, env_path: str = ".env"):
+    """Load .env variables, then YAML, expanding env vars."""
+    load_dotenv(env_path)  # loads variables from .env into os.environ
+
+    with open(yaml_path) as f:
+        raw = os.path.expandvars(f.read())  # substitutes ${VAR} from .env
+        config = yaml.safe_load(raw)
+    return config.get("connections", {})
+
+
+def get_connection(yaml_path: str, name: str, env_path: str = ".env"):
+    """
+    Get a connection by its name field (not the type key).
+    Searches through all connections and finds the one matching the name field.
+    """
+    connections = load_connections(yaml_path, env_path)
+
+    # Search for connection by name field
+    for conn_key, conn_data in connections.items():
+        if conn_data.get("name") == name:
+            return conn_data
+
+    # If not found, raise error
+    raise ValueError(
+        f"Connection with name '{name}' not found in YAML. "
+        f"Available connections: {[c.get('name') for c in connections.values()]}"
+    )
+
+
+def get_connection_by(
+    base_url: str, token: str, connection_id: int = None, connection_name: str = None
+):
+    """
+    Get connection from Qualytics API by ID or name.
+    Handles pagination to search through all connections.
+
+    Args:
+        base_url: The Qualytics API base URL
+        token: The authentication token
+        connection_id: The ID of the connection to search for (optional)
+        connection_name: The name of the connection to search for (optional)
+
+    Returns:
+        dict: The connection object if found
+        None: If connection not found
+
+    Raises:
+        ValueError: If neither connection_id nor connection_name is provided
+        requests.RequestException: If API call fails
+    """
+    if connection_id is None and connection_name is None:
+        raise ValueError("Either connection_id or connection_name must be provided")
+
+    if connection_id is not None and connection_name is not None:
+        raise ValueError(
+            "Cannot specify both connection_id and connection_name. Please use only one."
+        )
+
+    endpoint = "connections"
+    headers = _get_default_headers(token)
+
+    # Pagination parameters
+    page = 1
+    size = 50  # Using 50 as the minimum size
+
+    try:
+        while True:
+            # Build URL with pagination params
+            url = f"{base_url}{endpoint}?page={page}&size={size}"
+            response = requests.get(url, headers=headers, verify=False)
+            response.raise_for_status()
+
+            data = response.json()
+
+            # Check if response has the expected structure
+            if "items" not in data:
+                raise ValueError(
+                    f"Unexpected API response format. Expected 'items' field but got: {list(data.keys())}"
+                )
+
+            connections = data["items"]
+
+            # Search for connection by ID or name in current page
+            for connection in connections:
+                if connection_id is not None and connection.get("id") == connection_id:
+                    return connection
+                if (
+                    connection_name is not None
+                    and connection.get("name") == connection_name
+                ):
+                    return connection
+
+            # Check if there are more pages
+            if len(connections) < size:
+                # Last page reached, connection not found
+                break
+
+            page += 1
+
+        # If not found after all pages, return None
+        return None
+
+    except requests.RequestException as e:
+        raise requests.RequestException(f"Failed to fetch connections from API: {e}")
+
+
+def get_datastore_by(
+    base_url: str, token: str, datastore_id: int = None, datastore_name: str = None
+):
+    """
+    Get datastore from Qualytics API by ID or name.
+    Uses the listing endpoint for consistent response format.
+    Handles pagination to search through all datastores.
+
+    Args:
+        base_url: The Qualytics API base URL
+        token: The authentication token
+        datastore_id: The ID of the datastore to search for (optional)
+        datastore_name: The name of the datastore to search for (optional)
+
+    Returns:
+        dict: The datastore object if found
+        None: If datastore not found
+
+    Raises:
+        ValueError: If neither datastore_id nor datastore_name is provided
+        requests.RequestException: If API call fails
+    """
+    if datastore_id is None and datastore_name is None:
+        raise ValueError("Either datastore_id or datastore_name must be provided")
+
+    if datastore_id is not None and datastore_name is not None:
+        raise ValueError(
+            "Cannot specify both datastore_id and datastore_name. Please use only one."
+        )
+
+    # Use listing endpoint for both ID and name searches for consistent format
+    endpoint = "datastores/listing"
+    headers = _get_default_headers(token)
+
+    # Pagination parameters
+    page = 1
+    size = 50
+
+    try:
+        while True:
+            # Build URL with pagination params
+            url = f"{base_url}{endpoint}?page={page}&size={size}"
+            response = requests.get(url, headers=headers, verify=False)
+            response.raise_for_status()
+
+            data = response.json()
+
+            # The listing endpoint returns an array directly (not wrapped in items)
+            datastores = data if isinstance(data, list) else data.get("items", [])
+
+            # Search for datastore by ID or name in current page
+            for datastore in datastores:
+                if datastore_id is not None and datastore.get("id") == datastore_id:
+                    return datastore
+                if (
+                    datastore_name is not None
+                    and datastore.get("name") == datastore_name
+                ):
+                    return datastore
+
+            # Check if there are more pages
+            if len(datastores) < size:
+                # Last page reached, datastore not found
+                break
+
+            page += 1
+
+        # If not found after all pages, return None
+        return None
+
+    except requests.RequestException as e:
+        raise requests.RequestException(f"Failed to fetch datastores from API: {e}")
+
+
+# def load_project_config(project_name: str, env_path: str = ".env"):
+#     load_dotenv(env_path)
+
+#     with open(PROJECT_CONFIG_PATH) as f:
+#         raw = os.path.expandvars(f.read())
+#         config = yaml.safe_load(raw)
+#     return config.get(project_name, {})
+
+
+# ========================================== CHECKS FUNCTIONS =================================================================
 def get_quality_checks(
     base_url: str,
     token: str,
@@ -425,28 +676,7 @@ def get_check_templates_metadata(
     return all_quality_checks
 
 
-def is_token_valid(token: str):
-    # Decode the JWT token
-    try:
-        decoded_token = jwt.decode(
-            token, algorithms=["none"], options={"verify_signature": False}
-        )
-        expiration_time = decoded_token.get("exp")
-
-        if expiration_time is not None:
-            current_time = datetime.utcnow().timestamp()
-            if not expiration_time >= current_time:
-                print(
-                    '[bold red] WARNING: Your token is expired, please setup with a new token by running: qualytics init --url "your-qualytics.io/api" --token "my-token" [/bold red]'
-                )
-                return None
-            else:
-                return token
-    except Exception as e:
-        print("[bold red] WARNING: Your token is not valid [/bold red]")
-        print(f"[bold red] {e} [/bold red]")
-
-
+# ========================================== RUN FUNCTIONS =================================================================
 def run_catalog(
     datastore_ids: [int],
     include: [str],
@@ -692,6 +922,7 @@ def run_scan(
                 )
 
 
+# ========================================== STATUS FUNCTIONS =================================================================
 def wait_for_operation_finishes(operation: int, token: str):
     """
     Wait for an operation to finish executing.
@@ -755,9 +986,10 @@ def check_operation_status(operation_ids: [int], token: str):
             print(f"[bold red] Operation: {curr_id} was aborted [/bold red]")
 
 
+# ========================================== APP COMMANDS =================================================================
 @app.callback(invoke_without_command=True)
 def version_callback(
-    version: Annotated[Optional[bool], typer.Option("--version", is_eager=True)] = None,
+    version: Annotated[bool | None, typer.Option("--version", is_eager=True)] = None,
 ):
     if version:
         print(f"Qualytics CLI Version: {__version__}")
@@ -800,20 +1032,21 @@ def init(
         print("[bold green] Configuration saved! [/bold green]")
 
 
+# ========================================== CHECKS_APP COMMANDS =================================================================
 @checks_app.command("export")
 def checks_export(
     datastore: int = typer.Option(..., "--datastore", help="Datastore ID"),
-    containers: Optional[str] = typer.Option(
+    containers: str | None = typer.Option(
         None,
         "--containers",
         help='Comma-separated list of containers IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]"',
     ),
-    tags: Optional[str] = typer.Option(
+    tags: str | None = typer.Option(
         None,
         "--tags",
         help='Comma-separated list of Tag names or array-like format. Example: "tag1, tag2, tag3" or "[tag1, tag2, tag3]"',
     ),
-    status: Optional[str] = typer.Option(
+    status: str | None = typer.Option(
         None,
         "--status",
         help='Comma-separated list of status IDs or array-like format. Example: "Active, Draft, Archived" or "[Active, Draft, Archived]"',
@@ -853,25 +1086,25 @@ def checks_export(
 
 @checks_app.command("export-templates")
 def check_templates_export(
-    enrich_datastore_id: Optional[int] = typer.Option(
+    enrich_datastore_id: int | None = typer.Option(
         None, "--enrichment_datastore_id", help="Enrichment Datastore ID"
     ),
-    check_templates: Optional[str] = typer.Option(
+    check_templates: str | None = typer.Option(
         None,
         "--check_templates",
         help='Comma-separated list of check templates IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]"',
     ),
-    status: Optional[bool] = typer.Option(
+    status: bool | None = typer.Option(
         None,
         "--status",
         help="Check Template status send `true` if it's locked or `false` to unlocked.",
     ),
-    rules: Optional[str] = typer.Option(
+    rules: str | None = typer.Option(
         None,
         "--rules",
         help='Comma-separated list of check templates rule types or array-like format. Example: "afterDateTime, aggregationComparison" or "[afterDateTime, aggregationComparison]"',
     ),
-    tags: Optional[str] = typer.Option(
+    tags: str | None = typer.Option(
         None,
         "--tags",
         help='Comma-separated list of Tag names or array-like format. Example: "tag1, tag2, tag3" or "[tag1, tag2, tag3]"',
@@ -1282,6 +1515,7 @@ def check_templates_import(
             distinct_file_content(BASE_PATH + error_log_path)
 
 
+# ========================================== SCHEDULE_APP COMMANDS =================================================================
 @schedule_app.command("export-metadata")
 def schedule(
     crontab_expression: str = typer.Option(
@@ -1290,7 +1524,7 @@ def schedule(
         help="Crontab expression inside quotes, specifying when the task should run. Example: '0 * * * *' ",
     ),
     datastore: str = typer.Option(..., "--datastore", help="The datastore ID"),
-    containers: Optional[str] = typer.Option(
+    containers: str | None = typer.Option(
         None,
         "--containers",
         help='Comma-separated list of containers IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]"',
@@ -1409,6 +1643,7 @@ def schedule(
                 return
 
 
+# ========================================== RUN_OPERATION_APP COMMANDS =================================================================
 @run_operation_app.command(
     "catalog", help="Triggers a catalog operation for the specified datastores"
 )
@@ -1418,22 +1653,22 @@ def catalog_operation(
         "--datastore",
         help="Comma-separated list of Datastore IDs or array-like format",
     ),
-    include: Optional[str] = typer.Option(
+    include: str | None = typer.Option(
         None,
         "--include",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    prune: Optional[bool] = typer.Option(
+    prune: bool | None = typer.Option(
         None,
         "--prune",
         help="Prune the operation. Do not include if you want prune == false",
     ),
-    recreate: Optional[bool] = typer.Option(
+    recreate: bool | None = typer.Option(
         None,
         "--recreate",
         help="Recreate the operation. Do not include if you want recreate == false",
     ),
-    background: Optional[bool] = typer.Option(
+    background: bool | None = typer.Option(
         False,
         "--background",
         help="Starts the catalog operation and has it run in the background, "
@@ -1463,58 +1698,58 @@ def profile_operation(
         "--datastore",
         help="Comma-separated list of Datastore IDs or array-like format",
     ),
-    container_names: Optional[str] = typer.Option(
+    container_names: str | None = typer.Option(
         None,
         "--container_names",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    container_tags: Optional[str] = typer.Option(
+    container_tags: str | None = typer.Option(
         None,
         "--container_tags",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    inference_threshold: Optional[int] = typer.Option(
+    inference_threshold: int | None = typer.Option(
         None,
         "--inference_threshold",
         help="Inference quality checks threshold in profile from 0 to 5. Do not include if you want inference_threshold == 0",
     ),
-    infer_as_draft: Optional[bool] = typer.Option(
+    infer_as_draft: bool | None = typer.Option(
         None,
         "--infer_as_draft",
         help="Infer all quality checks in profile as DRAFT. Do not include if you want infer_as_draft == False",
     ),
-    max_records_analyzed_per_partition: Optional[int] = typer.Option(
+    max_records_analyzed_per_partition: int | None = typer.Option(
         None,
         "--max_records_analyzed_per_partition",
         help="Number of max records analyzed per partition",
     ),
-    max_count_testing_sample: Optional[int] = typer.Option(
+    max_count_testing_sample: int | None = typer.Option(
         None,
         "--max_count_testing_sample",
         help="The number of records accumulated during profiling for validation of inferred checks. Capped at 100,000",
     ),
-    percent_testing_threshold: Optional[float] = typer.Option(
+    percent_testing_threshold: float | None = typer.Option(
         None, "--percent_testing_threshold", help=" Percent of Testing Threshold"
     ),
-    high_correlation_threshold: Optional[float] = typer.Option(
+    high_correlation_threshold: float | None = typer.Option(
         None, "--high_correlation_threshold", help="Number of Correlation Threshold"
     ),
-    greater_than_time: Optional[datetime] = typer.Option(
+    greater_than_time: datetime | None = typer.Option(
         None,
         "--greater_than_time",
         help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S",
     ),
-    greater_than_batch: Optional[float] = typer.Option(
+    greater_than_batch: float | None = typer.Option(
         None,
         "--greater_than_batch",
         help="Only include rows where the incremental field's value is greater than this number",
     ),
-    histogram_max_distinct_values: Optional[int] = typer.Option(
+    histogram_max_distinct_values: int | None = typer.Option(
         None,
         "--histogram_max_distinct_values",
         help="Number of max distinct values of the histogram",
     ),
-    background: Optional[bool] = typer.Option(
+    background: bool | None = typer.Option(
         False,
         "--background",
         help="Starts the catalog operation and has it run in the background, "
@@ -1573,47 +1808,47 @@ def scan_operation(
         "--datastore",
         help="Comma-separated list of Datastore IDs or array-like format",
     ),
-    container_names: Optional[str] = typer.Option(
+    container_names: str | None = typer.Option(
         None,
         "--container_names",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    container_tags: Optional[str] = typer.Option(
+    container_tags: str | None = typer.Option(
         None,
         "--container_tags",
         help='Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]"',
     ),
-    incremental: Optional[bool] = typer.Option(
+    incremental: bool | None = typer.Option(
         False,
         "--incremental",
         help="Process only new or records updated since the last incremental scan",
     ),
-    remediation: Optional[str] = typer.Option(
+    remediation: str | None = typer.Option(
         "none",
         "--remediation",
         help="Replication strategy for source tables in the enrichment datastore. Either 'append', 'overwrite', or 'none'",
     ),
-    max_records_analyzed_per_partition: Optional[int] = typer.Option(
+    max_records_analyzed_per_partition: int | None = typer.Option(
         None,
         "--max_records_analyzed_per_partition",
         help="Number of max records analyzed per partition. Value must be Greater than or equal to 0",
     ),
-    enrichment_source_record_limit: Optional[int] = typer.Option(
+    enrichment_source_record_limit: int | None = typer.Option(
         10,
         "--enrichment_source_record_limit",
         help="Limit of enrichment source records per . Value must be Greater than or equal to -1",
     ),
-    greater_than_time: Optional[datetime] = typer.Option(
+    greater_than_time: datetime | None = typer.Option(
         None,
         "--greater_than_time",
         help="Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S",
     ),
-    greater_than_batch: Optional[float] = typer.Option(
+    greater_than_batch: float | None = typer.Option(
         None,
         "--greater_than_batch",
         help="Only include rows where the incremental field's value is greater than this number",
     ),
-    background: Optional[bool] = typer.Option(
+    background: bool | None = typer.Option(
         False,
         "--background",
         help="Starts the catalog operation and has it run in the background, "
@@ -1672,6 +1907,7 @@ def scan_operation(
         )
 
 
+# ========================================== CHECK_OPERATION_APP COMMANDS =================================================================
 @check_operation_app.command("check_status", help="checks the status of a operation")
 def operation_status(
     ids: str = typer.Option(
@@ -1686,16 +1922,393 @@ def operation_status(
     check_operation_status(ids, token=token)
 
 
-# Add the checks_app as a subcommand to the main app
-app.add_typer(checks_app, name="checks")
+# ========================================== DATASTORE COMMANDS ============================================================================
+@datastore_app.command("new", help="new datastore")
+def new_datastore(
+    name: str = typer.Option(..., "--name", "-n", help="Datastore name"),
+    connection_name: t.Optional[str] = typer.Option(
+        None,
+        "--connection-name",
+        "-cn",
+        help="Connection name from the 'name' field in connections.yml (e.g., 'prod_snowflake_connection', not 'snowflake')",
+    ),
+    connection_id: t.Optional[int] = typer.Option(
+        None, "--connection-id", help="Existing connection id to reference"
+    ),
+    database: str = typer.Option(
+        ...,
+        "--database",
+        "-db",
+        help="The database name from the connection being used",
+    ),
+    schema: str = typer.Option(
+        ..., "--schema", "-sc", help="The schema name from the connection being used"
+    ),
+    tags: t.Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
+    teams: t.Optional[str] = typer.Option(
+        None, "--teams", help="Comma-separated team names"
+    ),
+    enrichment_only: bool = typer.Option(
+        False,
+        "--enrichment-only/--no-enrichment-only",
+        help="Set if datastore will be an enrichment one",
+    ),
+    enrichment_prefix: t.Optional[str] = typer.Option(
+        None, "--enrichment-prefix", help="Prefix for enrichment artifacts"
+    ),
+    enrichment_source_record_limit: t.Optional[int] = typer.Option(
+        None, "--enrichment-source-record-limit", min=1
+    ),
+    enrichment_remediation_strategy: str = typer.Option(
+        "none", "--enrichment-remediation-strategy"
+    ),
+    high_count_rollup_threshold: t.Optional[int] = typer.Option(
+        None, "--high-count-rollup-threshold", min=1
+    ),
+    trigger_catalog: bool = typer.Option(
+        True,
+        "--trigger-catalog/--no-trigger-catalog",
+        help="Whether to trigger catalog. Default is TRUE",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print payload only; no HTTP"
+    ),
+):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = "datastores"
+    url = f"{base_url}{endpoint}"
+    token = is_token_valid(config["token"])
+    headers = _get_default_headers(token)
 
-# Add the schedule_app as a subcommand to the main app
-app.add_typer(schedule_app, name="schedule")
+    if token:
+        try:
+            # Validation: require either connection_name or connection_id, but not both
+            if connection_name and connection_id:
+                print(
+                    "[red]Error: Cannot specify both --connection-name and --connection-id. Please use only one.[/red]"
+                )
+                raise typer.Exit(code=1)
 
-# Add the trigger operation as a subcommand to the main app
-app.add_typer(run_operation_app, name="run")
+            if not connection_name and not connection_id:
+                print(
+                    "[red]Error: Must specify either --connection-name or --connection-id.[/red]"
+                )
+                raise typer.Exit(code=1)
 
-app.add_typer(check_operation_app, name="operation")
+            # Determine whether to use existing connection or create new one
+            connection_cfg = None
+
+            if connection_name:
+                # First, check if connection already exists in Qualytics
+                print(
+                    f"[cyan]Checking if connection '{connection_name}' exists in Qualytics...[/cyan]"
+                )
+                existing_connection = get_connection_by(
+                    base_url, token, connection_name=connection_name
+                )
+
+                if existing_connection:
+                    # Connection exists in Qualytics, use its ID
+                    connection_id = existing_connection["id"]
+                    print(
+                        f"[green]Found existing connection with ID: {connection_id}[/green]"
+                    )
+                else:
+                    # Connection doesn't exist, get config from YAML to create new one
+                    print(
+                        f"[yellow]Connection not found in Qualytics. Getting config from YAML to create new connection...[/yellow]"
+                    )
+                    connection_cfg = get_connection(CONNECTIONS_PATH, connection_name)
+                    connection_id = None
+
+            # Build the payload (either with connection_id or cfg)
+            payload = build_new_datastore_payload(
+                cfg=connection_cfg,
+                name=name,
+                connection_id=connection_id,
+                tags=[t.strip() for t in tags.split(",")] if tags else None,
+                teams=[t.strip() for t in teams.split(",")] if teams else None,
+                enrichment_only=enrichment_only,
+                enrichment_prefix=enrichment_prefix,
+                enrichment_source_record_limit=enrichment_source_record_limit,
+                enrichment_remediation_strategy=enrichment_remediation_strategy,
+                high_count_rollup_threshold=high_count_rollup_threshold,
+                trigger_catalog=trigger_catalog,
+                database=database,
+                schema=schema,
+            )
+
+            # Pretty preview (mask sensitive fields)
+            printable = json.loads(json.dumps(payload))
+
+            # List of sensitive field names to redact
+            sensitive_fields = [
+                "password",
+                "token",
+                "api_key",
+                "secret",
+                "private_key",
+                "private_key_der_b64",
+                "private_key_path",
+                "access_key",
+                "secret_key",
+                "credentials",
+                "auth_token",
+            ]
+
+            try:
+                if "connection" in printable:
+                    # Redact sensitive fields in connection object
+                    for field in sensitive_fields:
+                        if field in printable["connection"]:
+                            printable["connection"][field] = "*** redacted ***"
+
+                    # Redact sensitive fields in parameters
+                    if "parameters" in printable["connection"]:
+                        for field in sensitive_fields:
+                            if field in printable["connection"]["parameters"]:
+                                printable["connection"]["parameters"][field] = (
+                                    "*** redacted ***"
+                                )
+
+                        # Redact in nested authentication object
+                        if "authentication" in printable["connection"]["parameters"]:
+                            for field in sensitive_fields:
+                                if (
+                                    field
+                                    in printable["connection"]["parameters"][
+                                        "authentication"
+                                    ]
+                                ):
+                                    printable["connection"]["parameters"][
+                                        "authentication"
+                                    ][field] = "*** redacted ***"
+            except Exception:
+                pass
+
+            print(
+                "[bold]Datastore Create Payload (preview with redacted secrets):[/bold]"
+            )
+            print(json.dumps(printable, indent=2))
+
+            if dry_run:
+                print("[green]Dry run successful. No HTTP request was made.[/green]")
+                raise typer.Exit(code=0)
+
+            print("[cyan]POSTing datastore to API...[/cyan]")
+            result = datastore.create_datastore(payload, url, headers)
+            print("[green]Datastore created successfully![/green]")
+            print(f"[green]Datastore ID: {result.get('id')}[/green]")
+            print(f"[green]Datastore Name: {result.get('name')}[/green]")
+            if result.get("connection"):
+                print(
+                    f"[green]Connection ID: {result.get('connection', {}).get('id')}[/green]"
+                )
+        except ConfigError as e:
+            print(f"[red]Config error:[/red] {e}")
+            raise typer.Exit(code=2)
+        except requests.RequestException as e:
+            print(f"[red]Network error calling API:[/red] {e}")
+            raise typer.Exit(code=4)
+        except RuntimeError as e:
+            error_msg = str(e)
+            # Check if the error is due to a connection already existing
+            if (
+                "409" in error_msg
+                or "already exists" in error_msg.lower()
+                or "conflict" in error_msg.lower()
+            ):
+                print(
+                    "[red]Error: A connection with these credentials already exists.[/red]"
+                )
+                print(
+                    "[yellow]Suggestion: Use the --connection-id flag to reference the existing connection instead.[/yellow]"
+                )
+                print(f"[yellow]Details: {error_msg}[/yellow]")
+            else:
+                print(f"[red]{error_msg}[/red]")
+            raise typer.Exit(code=5)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            print(f"[red]Unexpected error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+
+@datastore_app.command("list", help="List all datastores")
+def list_datastores():
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = "datastores/listing"
+    url = f"{base_url}{endpoint}"
+    token = is_token_valid(config["token"])
+    headers = _get_default_headers(token)
+    if token:
+        try:
+            result = datastore.list_datastores(url, headers)
+            print("[green]Datastores listed:[/green]")
+            print(json.dumps(result, indent=2))
+        except ConfigError as e:
+            print(f"[red]Config error:[/red] {e}")
+            raise typer.Exit(code=2)
+        except requests.RequestException as e:
+            print(f"[red]Network error calling API:[/red] {e}")
+            raise typer.Exit(code=4)
+        except RuntimeError as e:
+            print(f"[red]{e}[/red]")
+            raise typer.Exit(code=5)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            print(f"[red]Unexpected error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+
+@datastore_app.command("get", help="Get a datastore by ID or name.")
+def get_datastore(
+    id: int = typer.Option(None, "--id", help="Datastore ID"),
+    name: str = typer.Option(None, "--name", help="Datastore name"),
+):
+    config = load_config()
+    base_url = validate_and_format_url(config["url"])
+    token = is_token_valid(config["token"])
+
+    if token:
+        try:
+            # Validation: require either id or name, but not both
+            if id and name:
+                print(
+                    "[red]Error: Cannot specify both --id and --name. Please use only one.[/red]"
+                )
+                raise typer.Exit(code=1)
+
+            if not id and not name:
+                print("[red]Error: Must specify either --id or --name.[/red]")
+                raise typer.Exit(code=1)
+
+            # Fetch datastore using the helper function
+            result = get_datastore_by(
+                base_url=base_url, token=token, datastore_id=id, datastore_name=name
+            )
+
+            if result is None:
+                identifier = f"ID {id}" if id else f"name '{name}'"
+                print(f"[red]Datastore with {identifier} not found.[/red]")
+                raise typer.Exit(code=1)
+
+            print("[green]Datastore found:[/green]")
+            print(json.dumps(result, indent=2))
+
+        except ConfigError as e:
+            print(f"[red]Config error:[/red] {e}")
+            raise typer.Exit(code=2)
+        except requests.RequestException as e:
+            print(f"[red]Network error calling API:[/red] {e}")
+            raise typer.Exit(code=4)
+        except RuntimeError as e:
+            print(f"[red]{e}[/red]")
+            raise typer.Exit(code=5)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            print(f"[red]Unexpected error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+
+@datastore_app.command("remove", help="Remove a datastore. Use with caution!")
+def remove_datastore(
+    id: int = typer.Option(..., "--id", help="Datastore id"),
+):
+    config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = f"datastores/{id}"
+    url = f"{base_url}{endpoint}"
+    token = is_token_valid(config["token"])
+    headers = _get_default_headers(token)
+
+    if token:
+        try:
+            result = datastore.remove_datastore(url, headers)
+            print(f"[green]✓ Datastore with ID {id} removed successfully![/green]")
+            if result.get("message"):
+                print(f"[green]{result.get('message')}[/green]")
+        except ConfigError as e:
+            print(f"[red]Config error:[/red] {e}")
+            raise typer.Exit(code=2)
+        except requests.RequestException as e:
+            print(f"[red]Network error calling API:[/red] {e}")
+            raise typer.Exit(code=4)
+        except RuntimeError as e:
+            print(f"[red]{e}[/red]")
+            raise typer.Exit(code=5)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            print(f"[red]Unexpected error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+
+# ========================================== API HELPERS SECTION ============================================================================
+
+
+# DATASTORES
+def build_new_datastore_payload(
+    *,
+    cfg: t.Optional[dict],
+    name: str,
+    connection_id: t.Optional[int] = None,
+    tags: t.Optional[t.List[str]] = None,
+    teams: t.Optional[t.List[str]] = None,
+    enrichment_only: bool = False,
+    enrichment_prefix: t.Optional[str] = None,
+    enrichment_source_record_limit: t.Optional[int] = None,
+    enrichment_remediation_strategy: str = "none",
+    high_count_rollup_threshold: t.Optional[int] = None,
+    trigger_catalog: bool = True,
+    database: str,
+    schema: str,
+) -> dict:
+    # Base payload structure
+    payload: dict = {
+        "name": name,
+        "enrichment_only": enrichment_only,
+        "enrichment_remediation_strategy": enrichment_remediation_strategy,
+        "trigger_catalog": trigger_catalog,
+        "tags": tags,
+        "teams": teams,
+        "database": database,
+        "schema": schema,
+    }
+
+    # If connection_id is provided, use it to reference existing connection
+    if connection_id is not None:
+        payload["connection_id"] = int(connection_id)
+    # If cfg (connection config from YAML) is provided, build the connection object
+    elif cfg is not None:
+        params = cfg["parameters"]
+        # Base connection block (aligned to your schema)
+        connection: dict = {
+            "name": cfg["name"],
+            "type": cfg["type"],
+            "host": params["host"],
+            "port": params["port"],
+            "username": params["user"],
+            "password": params["password"],
+        }
+
+        payload["connection"] = connection
+    else:
+        raise ValueError("Either cfg or connection_id must be provided")
+    if enrichment_prefix is not None:
+        payload["enrichment_prefix"] = enrichment_prefix
+    if enrichment_source_record_limit is not None:
+        payload["enrichment_source_record_limit"] = int(enrichment_source_record_limit)
+    if high_count_rollup_threshold is not None:
+        payload["high_count_rollup_threshold"] = int(high_count_rollup_threshold)
+
+    return payload
+
 
 if __name__ == "__main__":
     app()

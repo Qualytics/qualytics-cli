@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qualytics-cli"
-version = "0.1.19"
+version = "0.2.0"
 description = "Qualytics CLI"
 readme = "README.md"
 license = "MIT"
@@ -31,6 +31,9 @@ dependencies = [
     "rich",
     "shellingham",
     "click",
+    "python-dotenv",
+    "pyyaml",
+    "urllib3",
 ]
 
 [project.optional-dependencies]
