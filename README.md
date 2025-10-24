@@ -223,9 +223,192 @@ qualytics operation check_status --ids "OPERATION_IDS"
 |---------|----------|---------------------------------------------------------------------------------------------------------------------------|----------|
 | `--ids` | TEXT     | Comma-separated list of Operation IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                           | Yes      |
 
+## Configuring Connections
+
+Before creating datastores, you need to define your database connections in a YAML configuration file. This allows you to:
+- Reuse connection configurations across multiple datastores
+- Manage connection credentials in a centralized location
+- Automatically create new connections or reference existing ones in Qualytics
+
+### Setting Up connections.yml
+
+Create a file at `~/.qualytics/config/connections.yml` with your connection configurations.
+
+**Important**: All connection values must be directly written in the `connections.yml` file. The CLI does not use `.env` files for connection configuration.
+
+#### Configuration Structure
+
+```yaml
+connections:
+  <connection_key>:                  # Identifier for this connection block
+    type: <connection_type>          # Required: Database type (postgresql, snowflake, mysql, etc.)
+    name: <connection_name>           # Required: Unique name to identify this connection
+    parameters:                       # Required: Connection-specific parameters
+      host: <hostname>
+      port: <port_number>
+      user: <username>
+      password: <password>
+      # Additional parameters vary by connection type
+```
+
+#### Supported Connection Types
+
+- `postgresql` - PostgreSQL databases
+- `snowflake` - Snowflake data warehouse
+- `mysql` - MySQL databases
+- `bigquery` - Google BigQuery
+- `redshift` - Amazon Redshift
+- `abfs` - Azure Blob File System
+- `sqlserver` - Microsoft SQL Server
+- And more...
+
+### Connection Examples
+
+#### PostgreSQL Connection
+
+```yaml
+connections:
+  my_postgres:
+    type: postgresql
+    name: production_postgres_db
+    parameters:
+      host: postgres.example.com
+      port: 5432
+      user: postgres_user
+      password: your_secure_password
+```
+
+#### Snowflake Connection (Username/Password)
+
+```yaml
+connections:
+  my_snowflake:
+    type: snowflake
+    name: prod_snowflake_connection
+    parameters:
+      host: account.snowflakecomputing.com
+      role: DATA_ANALYST
+      warehouse: COMPUTE_WH
+      user: snowflake_user
+      password: your_snowflake_password
+```
+
+#### Snowflake Connection (Key-Pair Authentication)
+
+```yaml
+connections:
+  my_snowflake_keypair:
+    type: snowflake
+    name: prod_snowflake_keypair
+    parameters:
+      host: account.snowflakecomputing.com
+      role: DATA_ANALYST
+      warehouse: COMPUTE_WH
+      database: ANALYTICS_DB
+      schema: PUBLIC
+      authentication:
+        method: keypair
+        user: snowflake_user
+        private_key_path: /path/to/private_key.pem
+```
+
+#### MySQL Connection
+
+```yaml
+connections:
+  my_mysql:
+    type: mysql
+    name: prod_mysql_db
+    parameters:
+      host: mysql.example.com
+      port: 3306
+      user: mysql_user
+      password: mysql_password
+```
+
+#### BigQuery Connection
+
+```yaml
+connections:
+  my_bigquery:
+    type: bigquery
+    name: prod_bigquery
+    parameters:
+      project_id: my-gcp-project-id
+      credentials_path: /path/to/service-account-key.json
+```
+
+#### Azure Blob File System (ABFS)
+
+```yaml
+connections:
+  my_abfs:
+    type: abfs
+    name: azure_data_lake
+    parameters:
+      storage_account: mystorageaccount
+      container: mycontainer
+      access_key: your_access_key
+```
+
+### Complete Example connections.yml
+
+```yaml
+connections:
+  # PostgreSQL for production analytics
+  prod_postgres:
+    type: postgresql
+    name: production_analytics
+    parameters:
+      host: analytics.postgres.example.com
+      port: 5432
+      user: analyst
+      password: secure_pass_123
+
+  # Snowflake data warehouse
+  snowflake_dw:
+    type: snowflake
+    name: data_warehouse
+    parameters:
+      host: mycompany.snowflakecomputing.com
+      role: ANALYST_ROLE
+      warehouse: ANALYTICS_WH
+      user: dw_user
+      password: snowflake_password
+
+  # Development MySQL database
+  dev_mysql:
+    type: mysql
+    name: dev_database
+    parameters:
+      host: localhost
+      port: 3306
+      user: dev_user
+      password: dev_password
+```
+
+### Security Notes
+
+- **File Permissions**: Ensure your `connections.yml` file has restricted permissions:
+  ```bash
+  chmod 600 ~/.qualytics/config/connections.yml
+  ```
+- **Sensitive Data**: Passwords, tokens, and keys are automatically redacted in CLI output
+- **Version Control**: Never commit `connections.yml` to version control. Add it to `.gitignore`
+
+### How Connections Work with Datastores
+
+When creating a datastore with `--connection-name`:
+
+1. **Check Existing**: The CLI checks if a connection with that name already exists in your Qualytics instance
+2. **Reuse Existing**: If found, the CLI uses the existing connection ID automatically
+3. **Create New**: If not found, the CLI creates a new connection using the configuration from `connections.yml`
+
+This means you can define your connection once and reuse it across multiple datastores!
+
 ### Add a New Datastore
 
-Allows you to create a new datastore in Qualytics. You can either reference an existing connection by ID or create a new connection from a YAML configuration file.
+Create a new datastore in Qualytics. You can either reference an existing connection by ID or specify a connection name from your `connections.yml` file.
 
 #### Example: Adding a Regular Datastore
 
@@ -280,11 +463,26 @@ qualytics datastore new \
 qualytics datastore list
 ```
 
-### Get a Datastore by ID
+### Get a Datastore
 
+Retrieve a datastore by either its ID or name.
+
+**By ID:**
 ```bash
 qualytics datastore get --id DATASTORE_ID
 ```
+
+**By Name:**
+```bash
+qualytics datastore get --name "My Datastore Name"
+```
+
+| Option   | Type    | Description                                      | Required |
+|----------|---------|--------------------------------------------------|----------|
+| `--id`   | INTEGER | Datastore ID (mutually exclusive with --name)    | No*      |
+| `--name` | TEXT    | Datastore name (mutually exclusive with --id)    | No*      |
+
+**Note**: You must provide either `--id` or `--name`, but not both.
 
 ### Remove a Datastore
 

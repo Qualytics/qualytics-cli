@@ -37,4 +37,10 @@ def remove_datastore(url: str, headers: dict) -> dict:
         resp.raise_for_status()
     except requests.HTTPError as e:
         raise RuntimeError(f"HTTP {resp.status_code} from {url}: {resp.text}") from e
+
+    # DELETE operations often return empty responses (204 No Content)
+    # Return a success indicator if response is empty
+    if not resp.content or resp.status_code == 204:
+        return {"success": True, "message": "Datastore deleted successfully"}
+
     return resp.json()

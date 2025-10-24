@@ -77,12 +77,6 @@ datastore_app = typer.Typer(
     name="datastore", help="Create, get, update or delete datastores"
 )
 
-# instance for enrichment datastores
-enrichment_datastore_app = typer.Typer(
-    name="enrichment_datastore",
-    help="Create, get, update or delete enrichment datastores",
-)
-
 # Add the checks_app as a subcommand to the main app
 app.add_typer(checks_app, name="checks")
 
@@ -95,8 +89,6 @@ app.add_typer(run_operation_app, name="run")
 app.add_typer(check_operation_app, name="operation")
 
 app.add_typer(datastore_app, name="datastore")
-
-app.add_typer(enrichment_datastore_app, name="e-dstore")
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -212,6 +204,157 @@ def get_connection(yaml_path: str, name: str, env_path: str = ".env"):
         f"Connection with name '{name}' not found in YAML. "
         f"Available connections: {[c.get('name') for c in connections.values()]}"
     )
+
+
+def get_connection_by(
+    base_url: str, token: str, connection_id: int = None, connection_name: str = None
+):
+    """
+    Get connection from Qualytics API by ID or name.
+    Handles pagination to search through all connections.
+
+    Args:
+        base_url: The Qualytics API base URL
+        token: The authentication token
+        connection_id: The ID of the connection to search for (optional)
+        connection_name: The name of the connection to search for (optional)
+
+    Returns:
+        dict: The connection object if found
+        None: If connection not found
+
+    Raises:
+        ValueError: If neither connection_id nor connection_name is provided
+        requests.RequestException: If API call fails
+    """
+    if connection_id is None and connection_name is None:
+        raise ValueError("Either connection_id or connection_name must be provided")
+
+    if connection_id is not None and connection_name is not None:
+        raise ValueError(
+            "Cannot specify both connection_id and connection_name. Please use only one."
+        )
+
+    endpoint = "connections"
+    headers = _get_default_headers(token)
+
+    # Pagination parameters
+    page = 1
+    size = 50  # Using 50 as the minimum size
+
+    try:
+        while True:
+            # Build URL with pagination params
+            url = f"{base_url}{endpoint}?page={page}&size={size}"
+            response = requests.get(url, headers=headers, verify=False)
+            response.raise_for_status()
+
+            data = response.json()
+
+            # Check if response has the expected structure
+            if "items" not in data:
+                raise ValueError(
+                    f"Unexpected API response format. Expected 'items' field but got: {list(data.keys())}"
+                )
+
+            connections = data["items"]
+
+            # Search for connection by ID or name in current page
+            for connection in connections:
+                if connection_id is not None and connection.get("id") == connection_id:
+                    return connection
+                if (
+                    connection_name is not None
+                    and connection.get("name") == connection_name
+                ):
+                    return connection
+
+            # Check if there are more pages
+            if len(connections) < size:
+                # Last page reached, connection not found
+                break
+
+            page += 1
+
+        # If not found after all pages, return None
+        return None
+
+    except requests.RequestException as e:
+        raise requests.RequestException(f"Failed to fetch connections from API: {e}")
+
+
+def get_datastore_by(
+    base_url: str, token: str, datastore_id: int = None, datastore_name: str = None
+):
+    """
+    Get datastore from Qualytics API by ID or name.
+    Uses the listing endpoint for consistent response format.
+    Handles pagination to search through all datastores.
+
+    Args:
+        base_url: The Qualytics API base URL
+        token: The authentication token
+        datastore_id: The ID of the datastore to search for (optional)
+        datastore_name: The name of the datastore to search for (optional)
+
+    Returns:
+        dict: The datastore object if found
+        None: If datastore not found
+
+    Raises:
+        ValueError: If neither datastore_id nor datastore_name is provided
+        requests.RequestException: If API call fails
+    """
+    if datastore_id is None and datastore_name is None:
+        raise ValueError("Either datastore_id or datastore_name must be provided")
+
+    if datastore_id is not None and datastore_name is not None:
+        raise ValueError(
+            "Cannot specify both datastore_id and datastore_name. Please use only one."
+        )
+
+    # Use listing endpoint for both ID and name searches for consistent format
+    endpoint = "datastores/listing"
+    headers = _get_default_headers(token)
+
+    # Pagination parameters
+    page = 1
+    size = 50
+
+    try:
+        while True:
+            # Build URL with pagination params
+            url = f"{base_url}{endpoint}?page={page}&size={size}"
+            response = requests.get(url, headers=headers, verify=False)
+            response.raise_for_status()
+
+            data = response.json()
+
+            # The listing endpoint returns an array directly (not wrapped in items)
+            datastores = data if isinstance(data, list) else data.get("items", [])
+
+            # Search for datastore by ID or name in current page
+            for datastore in datastores:
+                if datastore_id is not None and datastore.get("id") == datastore_id:
+                    return datastore
+                if (
+                    datastore_name is not None
+                    and datastore.get("name") == datastore_name
+                ):
+                    return datastore
+
+            # Check if there are more pages
+            if len(datastores) < size:
+                # Last page reached, datastore not found
+                break
+
+            page += 1
+
+        # If not found after all pages, return None
+        return None
+
+    except requests.RequestException as e:
+        raise requests.RequestException(f"Failed to fetch datastores from API: {e}")
 
 
 # def load_project_config(project_name: str, env_path: str = ".env"):
@@ -1831,17 +1974,13 @@ def new_datastore(
         False, "--dry-run", help="Print payload only; no HTTP"
     ),
 ):
-    base_url = os.getenv("QUALYTICS_DEV_API_URL")
-    base_url = validate_and_format_url(base_url)
-    api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
-    url = f"{base_url}datastores"
-
-    headers = {"Content-Type": "application/json"}
-    if api_token:
-        headers["Authorization"] = f"Bearer {api_token}"
-
     config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = "datastores"
+    url = f"{base_url}{endpoint}"
     token = is_token_valid(config["token"])
+    headers = _get_default_headers(token)
+
     if token:
         try:
             # Validation: require either connection_name or connection_id, but not both
@@ -1857,13 +1996,35 @@ def new_datastore(
                 )
                 raise typer.Exit(code=1)
 
-            # Only fetch connection config if connection_name is provided
-            connection = None
-            if connection_name:
-                connection = get_connection(CONNECTIONS_PATH, connection_name)
+            # Determine whether to use existing connection or create new one
+            connection_cfg = None
 
+            if connection_name:
+                # First, check if connection already exists in Qualytics
+                print(
+                    f"[cyan]Checking if connection '{connection_name}' exists in Qualytics...[/cyan]"
+                )
+                existing_connection = get_connection_by(
+                    base_url, token, connection_name=connection_name
+                )
+
+                if existing_connection:
+                    # Connection exists in Qualytics, use its ID
+                    connection_id = existing_connection["id"]
+                    print(
+                        f"[green]Found existing connection with ID: {connection_id}[/green]"
+                    )
+                else:
+                    # Connection doesn't exist, get config from YAML to create new one
+                    print(
+                        f"[yellow]Connection not found in Qualytics. Getting config from YAML to create new connection...[/yellow]"
+                    )
+                    connection_cfg = get_connection(CONNECTIONS_PATH, connection_name)
+                    connection_id = None
+
+            # Build the payload (either with connection_id or cfg)
             payload = build_new_datastore_payload(
-                cfg=connection,
+                cfg=connection_cfg,
                 name=name,
                 connection_id=connection_id,
                 tags=[t.strip() for t in tags.split(",")] if tags else None,
@@ -1878,20 +2039,57 @@ def new_datastore(
                 schema=schema,
             )
 
-            # Pretty preview (mask key if present)
+            # Pretty preview (mask sensitive fields)
             printable = json.loads(json.dumps(payload))
+
+            # List of sensitive field names to redact
+            sensitive_fields = [
+                "password",
+                "token",
+                "api_key",
+                "secret",
+                "private_key",
+                "private_key_der_b64",
+                "private_key_path",
+                "access_key",
+                "secret_key",
+                "credentials",
+                "auth_token",
+            ]
+
             try:
-                if (
-                    "parameters" in printable["connection"]
-                    and "private_key_der_b64" in printable["connection"]["parameters"]
-                ):
-                    printable["connection"]["parameters"]["private_key_der_b64"] = (
-                        "*** redacted ***"
-                    )
+                if "connection" in printable:
+                    # Redact sensitive fields in connection object
+                    for field in sensitive_fields:
+                        if field in printable["connection"]:
+                            printable["connection"][field] = "*** redacted ***"
+
+                    # Redact sensitive fields in parameters
+                    if "parameters" in printable["connection"]:
+                        for field in sensitive_fields:
+                            if field in printable["connection"]["parameters"]:
+                                printable["connection"]["parameters"][
+                                    field
+                                ] = "*** redacted ***"
+
+                        # Redact in nested authentication object
+                        if "authentication" in printable["connection"]["parameters"]:
+                            for field in sensitive_fields:
+                                if (
+                                    field
+                                    in printable["connection"]["parameters"][
+                                        "authentication"
+                                    ]
+                                ):
+                                    printable["connection"]["parameters"][
+                                        "authentication"
+                                    ][field] = "*** redacted ***"
             except Exception:
                 pass
 
-            print("[bold]Datastore Create Payload (derived):[/bold]")
+            print(
+                "[bold]Datastore Create Payload (preview with redacted secrets):[/bold]"
+            )
             print(json.dumps(printable, indent=2))
 
             if dry_run:
@@ -1900,8 +2098,13 @@ def new_datastore(
 
             print("[cyan]POSTing datastore to API...[/cyan]")
             result = datastore.create_datastore(payload, url, headers)
-            print("[green]Datastore created (API response):[/green]")
-            print(json.dumps(result, indent=2))
+            print("[green]Datastore created successfully![/green]")
+            print(f"[green]Datastore ID: {result.get('id')}[/green]")
+            print(f"[green]Datastore Name: {result.get('name')}[/green]")
+            if result.get("connection"):
+                print(
+                    f"[green]Connection ID: {result.get('connection', {}).get('id')}[/green]"
+                )
         except ConfigError as e:
             print(f"[red]Config error:[/red] {e}")
             raise typer.Exit(code=2)
@@ -1935,17 +2138,13 @@ def new_datastore(
 
 @datastore_app.command("list", help="List all datastores")
 def list_datastores():
-    base_url = os.getenv("QUALYTICS_DEV_API_URL")
-    validate_and_format_url(base_url)
-    api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
-    url = f"{base_url}/datastores"
-
-    headers = {"Content-Type": "application/json"}
-    if api_token:
-        headers["Authorization"] = f"Bearer {api_token}"
 
     config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = "datastores/listing"
+    url = f"{base_url}{endpoint}"
     token = is_token_valid(config["token"])
+    headers = _get_default_headers(token)
     if token:
         try:
             result = datastore.list_datastores(url, headers)
@@ -1967,28 +2166,41 @@ def list_datastores():
             raise typer.Exit(code=1)
 
 
-@datastore_app.command(
-    "get", help="Get a datastore. You need to pass the datastore id."
-)
-def get_datastore_by_id(
-    id: int = typer.Option(..., "--id", help="Datastore id"),
+@datastore_app.command("get", help="Get a datastore by ID or name.")
+def get_datastore(
+    id: int = typer.Option(None, "--id", help="Datastore ID"),
+    name: str = typer.Option(None, "--name", help="Datastore name"),
 ):
-    base_url = os.getenv("QUALYTICS_DEV_API_URL")
-    validate_and_format_url(base_url)
-    api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
-    url = f"{base_url}/datastores/{id}"
-
-    headers = {"Content-Type": "application/json"}
-    if api_token:
-        headers["Authorization"] = f"Bearer {api_token}"
-
     config = load_config()
+    base_url = validate_and_format_url(config["url"])
     token = is_token_valid(config["token"])
+
     if token:
         try:
-            result = datastore.get_datastore_by_id(url, headers)
-            print("[green]Datastores listed:[/green]")
+            # Validation: require either id or name, but not both
+            if id and name:
+                print(
+                    "[red]Error: Cannot specify both --id and --name. Please use only one.[/red]"
+                )
+                raise typer.Exit(code=1)
+
+            if not id and not name:
+                print("[red]Error: Must specify either --id or --name.[/red]")
+                raise typer.Exit(code=1)
+
+            # Fetch datastore using the helper function
+            result = get_datastore_by(
+                base_url=base_url, token=token, datastore_id=id, datastore_name=name
+            )
+
+            if result is None:
+                identifier = f"ID {id}" if id else f"name '{name}'"
+                print(f"[red]Datastore with {identifier} not found.[/red]")
+                raise typer.Exit(code=1)
+
+            print("[green]Datastore found:[/green]")
             print(json.dumps(result, indent=2))
+
         except ConfigError as e:
             print(f"[red]Config error:[/red] {e}")
             raise typer.Exit(code=2)
@@ -2009,22 +2221,19 @@ def get_datastore_by_id(
 def remove_datastore(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
-    base_url = os.getenv("QUALYTICS_DEV_API_URL")
-    validate_and_format_url(base_url)
-    api_token = os.getenv("QUALYTICS_DEV_API_TOKEN")
-    url = f"{base_url}/datastores/{id}"
-
-    headers = {"Content-Type": "application/json"}
-    if api_token:
-        headers["Authorization"] = f"Bearer {api_token}"
-
     config = load_config()
+    base_url = base_url = validate_and_format_url(config["url"])
+    endpoint = f"datastores/{id}"
+    url = f"{base_url}{endpoint}"
     token = is_token_valid(config["token"])
+    headers = _get_default_headers(token)
+
     if token:
         try:
             result = datastore.remove_datastore(url, headers)
-            print("[green]Datastore removed:[/green]")
-            print(json.dumps(result, indent=2))
+            print(f"[green]✓ Datastore with ID {id} removed successfully![/green]")
+            if result.get("message"):
+                print(f"[green]{result.get('message')}[/green]")
         except ConfigError as e:
             print(f"[red]Config error:[/red] {e}")
             raise typer.Exit(code=2)
