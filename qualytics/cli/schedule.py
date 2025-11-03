@@ -10,7 +10,7 @@ from ..setup import (
     BASE_PATH,
     CRONTAB_ERROR_PATH,
     CRONTAB_COMMANDS_PATH,
-    load_config,
+    get_config,
     is_token_valid,
 )
 from ..utils import validate_and_format_url
@@ -58,7 +58,13 @@ def schedule(
     else:
         options = [options]
 
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = validate_and_format_url(config["url"])
     token = is_token_valid(config["token"])
 

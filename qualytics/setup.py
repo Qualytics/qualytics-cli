@@ -19,9 +19,6 @@ home = Path.home()
 folder_name = ".qualytics"
 BASE_PATH = f"{home}/{folder_name}"
 
-# Get the qualytics package directory
-PACKAGE_DIR = Path(__file__).parent
-
 # Helper functions to get local project paths dynamically (at runtime)
 def get_local_base_path():
     """Get the current working directory at runtime."""

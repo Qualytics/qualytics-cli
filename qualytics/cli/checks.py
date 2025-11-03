@@ -8,7 +8,7 @@ from itertools import product
 from rich import print
 from rich.progress import track
 
-from ..setup import BASE_PATH, load_config, is_token_valid
+from ..setup import BASE_PATH, get_config, is_token_valid
 from ..utils import validate_and_format_url, distinct_file_content, log_error
 from ..services.quality_checks import (
     get_quality_checks,
@@ -54,7 +54,13 @@ def checks_export(
     """
     Export checks to a file.
     """
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = validate_and_format_url(config["url"])
     token = is_token_valid(config["token"])
 
@@ -112,7 +118,13 @@ def check_templates_export(
     """
     Export check templates to an enrichment or file.
     """
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = validate_and_format_url(config["url"])
     token = is_token_valid(config["token"])
 
@@ -189,7 +201,13 @@ def checks_import(
     """
     # Remove brackets if present and split by comma
     datastores = [int(x.strip()) for x in datastore.strip("[]").split(",")]
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = validate_and_format_url(config["url"])
     token = is_token_valid(config["token"])
     error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"
@@ -435,7 +453,13 @@ def check_templates_import(
     """
     Import check templates from a file. Only creates new templates, no updates.
     """
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = validate_and_format_url(config["url"])
     token = is_token_valid(config["token"])
     error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"

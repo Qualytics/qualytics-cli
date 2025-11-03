@@ -5,7 +5,7 @@ import requests
 import typing as t
 from rich import print
 
-from ..setup import ConfigError, load_config, is_token_valid, CONNECTIONS_PATH
+from ..setup import ConfigError, get_config, is_token_valid, CONNECTIONS_PATH
 from ..utils import validate_and_format_url, get_connection
 from ..services.datastores import (
     get_connection_by,
@@ -78,7 +78,13 @@ def new_datastore(
         False, "--dry-run", help="Print payload only; no HTTP"
     ),
 ):
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = base_url = validate_and_format_url(config["url"])
     endpoint = "datastores"
     url = f"{base_url}{endpoint}"
@@ -242,7 +248,13 @@ def new_datastore(
 
 @datastore_app.command("list", help="List all datastores")
 def list_datastores():
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = base_url = validate_and_format_url(config["url"])
     endpoint = "datastores/listing"
     url = f"{base_url}{endpoint}"
@@ -274,7 +286,13 @@ def get_datastore(
     id: int = typer.Option(None, "--id", help="Datastore ID"),
     name: str = typer.Option(None, "--name", help="Datastore name"),
 ):
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = validate_and_format_url(config["url"])
     token = is_token_valid(config["token"])
 
@@ -324,7 +342,13 @@ def get_datastore(
 def remove_datastore(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     base_url = base_url = validate_and_format_url(config["url"])
     endpoint = f"datastores/{id}"
     url = f"{base_url}{endpoint}"

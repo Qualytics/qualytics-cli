@@ -52,15 +52,21 @@ def init():
 
     # Create assets subfolders
     local_assets_dir = get_local_assets_dir()
+    assets_created = False
+    if not os.path.exists(local_assets_dir):
+        assets_created = True
     os.makedirs(os.path.join(local_assets_dir, "anomalies"), exist_ok=True)
     os.makedirs(os.path.join(local_assets_dir, "check_templates"), exist_ok=True)
     os.makedirs(os.path.join(local_assets_dir, "checks"), exist_ok=True)
-    print(f"[bold green] ✓ Created assets folder structure at: {local_assets_dir} [/bold green]")
+    if assets_created:
+        print(f"[bold green] ✓ Created assets folder structure at: {local_assets_dir} [/bold green]")
 
     # Create config folder
     local_config_dir = get_local_config_dir()
+    config_created = not os.path.exists(local_config_dir)
     os.makedirs(local_config_dir, exist_ok=True)
-    print(f"[bold green] ✓ Created config folder at: {local_config_dir} [/bold green]")
+    if config_created:
+        print(f"[bold green] ✓ Created config folder at: {local_config_dir} [/bold green]")
 
     # Create connections_example.yml
     connections_content = """# Example connections.yml file
@@ -199,16 +205,29 @@ instances:
         error_log: ${OPERATION_ERROR_PATH}
 """
 
-    # Write YAML files
-    with open(os.path.join(local_config_dir, "connections_example.yml"), "w") as f:
-        f.write(connections_content)
-    with open(os.path.join(local_config_dir, "instance.yml"), "w") as f:
-        f.write(instance_content)
-    print(f"[bold green] ✓ Created configuration files (connections_example.yml, instance.yml) [/bold green]")
+    # Write YAML files only if they don't exist
+    connections_file = os.path.join(local_config_dir, "connections_example.yml")
+    instance_file = os.path.join(local_config_dir, "instance.yml")
+
+    files_created = []
+    if not os.path.exists(connections_file):
+        with open(connections_file, "w") as f:
+            f.write(connections_content)
+        files_created.append("connections_example.yml")
+
+    if not os.path.exists(instance_file):
+        with open(instance_file, "w") as f:
+            f.write(instance_content)
+        files_created.append("instance.yml")
+
+    if files_created:
+        files_str = ", ".join(files_created)
+        print(f"[bold green] ✓ Created configuration files ({files_str}) [/bold green]")
 
     # Check if there's an existing JSON config file
     config = load_config()
     local_qualytics_dir = get_local_qualytics_dir()
+    qualytics_dir_existed = os.path.exists(local_qualytics_dir)
 
     if config:
         # Migration path: User has existing JSON config
@@ -221,7 +240,8 @@ instances:
 
         if token_valid:
             save_local_env_config(url, token)
-            print(f"[bold green] ✓ Created .qualytics folder at: {local_qualytics_dir} [/bold green]")
+            if not qualytics_dir_existed:
+                print(f"[bold green] ✓ Created .qualytics folder at: {local_qualytics_dir} [/bold green]")
             print(f"[bold green] ✓ Configuration migrated to .env file at: {local_qualytics_dir}/.env [/bold green]")
     else:
         # New user path: No existing config, prompt for input
@@ -237,7 +257,8 @@ instances:
 
         if token_valid:
             save_local_env_config(url, token)
-            print(f"[bold green] ✓ Created .qualytics folder at: {local_qualytics_dir} [/bold green]")
+            if not qualytics_dir_existed:
+                print(f"[bold green] ✓ Created .qualytics folder at: {local_qualytics_dir} [/bold green]")
             print(f"[bold green] ✓ Configuration saved to .env file at: {local_qualytics_dir}/.env [/bold green]")
 
     # Show final success message for both paths
