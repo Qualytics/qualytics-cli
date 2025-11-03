@@ -2,7 +2,7 @@
 import typer
 from datetime import datetime
 
-from ..config import load_config, is_token_valid
+from ..setup import get_config, is_token_valid, load_config
 from ..services.operations import (
     run_catalog,
     run_profile,
@@ -56,7 +56,14 @@ def catalog_operation(
 ):
     # Remove brackets if present and split by comma
     datastores = [int(x.strip()) for x in datastores.strip("[]").split(",")]
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        from rich import print
+        print("[bold red] Error: No configuration found. [/bold red]")
+        print("[bold yellow] Please run 'qualytics init' to set up your configuration. [/bold yellow]")
+        raise typer.Exit(code=1)
+
     token = is_token_valid(config["token"])
     if token:
         if include:
@@ -299,7 +306,3 @@ def operation_status(
     config = load_config()
     token = is_token_valid(config["token"])
     check_operation_status(ids, token=token)
-
-
-# ========================================== DATASTORE COMMANDS ============================================================================
-

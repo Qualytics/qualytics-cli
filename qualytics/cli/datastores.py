@@ -5,7 +5,7 @@ import requests
 import typing as t
 from rich import print
 
-from ..config import ConfigError, load_config, is_token_valid, CONNECTIONS_PATH
+from ..setup import ConfigError, load_config, is_token_valid, CONNECTIONS_PATH
 from ..utils import validate_and_format_url, get_connection
 from ..services.datastores import (
     get_connection_by,
@@ -17,7 +17,7 @@ from ..api import datastores as datastore
 
 # Create Typer instance for datastores
 datastore_app = typer.Typer(
-    name="datastore", help="Create, get, update or delete datastores"
+    name="datastore", help="Commands for handling datastores"
 )
 
 

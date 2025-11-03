@@ -8,7 +8,7 @@ from itertools import product
 from rich import print
 from rich.progress import track
 
-from ..config import BASE_PATH, load_config, is_token_valid
+from ..setup import BASE_PATH, load_config, is_token_valid
 from ..utils import validate_and_format_url, distinct_file_content, log_error
 from ..services.quality_checks import (
     get_quality_checks,

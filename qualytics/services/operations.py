@@ -5,7 +5,7 @@ from datetime import datetime
 from rich import print
 from rich.progress import track
 
-from ..config import load_config, OPERATION_ERROR_PATH
+from ..setup import get_config, OPERATION_ERROR_PATH
 from ..utils import validate_and_format_url
 from ..utils.file_ops import log_error
 
@@ -26,7 +26,12 @@ def wait_for_operation_finishes(operation: int, token: str):
     Returns:
     - The operation response object.
     """
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. Please run 'qualytics init' to set up your configuration. [/bold red]")
+        return None
+
     base_url = validate_and_format_url(config["url"])
     headers = get_default_headers(token)
     max_retries = 10
@@ -53,7 +58,12 @@ def wait_for_operation_finishes(operation: int, token: str):
 
 def check_operation_status(operation_ids: [int], token: str):
     """Check the status of one or more operations."""
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. Please run 'qualytics init' to set up your configuration. [/bold red]")
+        return
+
     base_url = validate_and_format_url(config["url"])
     headers = get_default_headers(token)
 
@@ -88,7 +98,12 @@ def run_catalog(
     background: bool,
 ):
     """Run catalog operation for specified datastores."""
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. Please run 'qualytics init' to set up your configuration. [/bold red]")
+        return
+
     base_url = validate_and_format_url(config["url"])
     endpoint = "operations/run"
     url = f"{base_url}{endpoint}"
@@ -139,15 +154,20 @@ def run_catalog(
                     current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
                     message = f"{current_datetime}: Error executing catalog operation: {message}\n\n"
                     log_error(message, OPERATION_ERROR_PATH)
-        except Exception:
+        except Exception as e:
             print(
                 f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
                 f"{OPERATION_ERROR_PATH}[/bold red]"
             )
-            message = response["detail"]
+            # Try to extract error details from response if it's a dict, otherwise use exception message
+            try:
+                error_detail = response["detail"] if isinstance(response, dict) else response.json().get("detail", str(e))
+            except Exception:
+                error_detail = str(e)
+
             current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
             message = (
-                f"{current_datetime}: Error executing catalog operation: {message}\n\n"
+                f"{current_datetime}: Error executing catalog operation: {error_detail}\n\n"
             )
             log_error(message, OPERATION_ERROR_PATH)
 
@@ -169,7 +189,12 @@ def run_profile(
     background: bool,
 ):
     """Run profile operation for specified datastores."""
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. Please run 'qualytics init' to set up your configuration. [/bold red]")
+        return
+
     base_url = validate_and_format_url(config["url"])
     endpoint = "operations/run"
     url = f"{base_url}{endpoint}"
@@ -255,7 +280,12 @@ def run_scan(
     background: bool,
 ):
     """Run scan operation for specified datastores."""
-    config = load_config()
+    config = get_config()
+
+    if not config:
+        print("[bold red] Error: No configuration found. Please run 'qualytics init' to set up your configuration. [/bold red]")
+        return
+
     base_url = validate_and_format_url(config["url"])
     endpoint = "operations/run"
     url = f"{base_url}{endpoint}"

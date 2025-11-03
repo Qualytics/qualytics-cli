@@ -6,7 +6,7 @@ from datetime import datetime
 from croniter import croniter
 from rich import print
 
-from ..config import (
+from ..setup import (
     BASE_PATH,
     CRONTAB_ERROR_PATH,
     CRONTAB_COMMANDS_PATH,
