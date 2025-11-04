@@ -10,9 +10,10 @@ from ..setup import (
     save_local_env_config,
     is_token_valid,
     CONFIG_PATH,
+    BASE_PATH,
+    DOTENV_PATH,
     get_local_config_dir,
     get_local_assets_dir,
-    get_local_qualytics_dir,
 )
 from ..utils import validate_and_format_url
 
@@ -226,8 +227,7 @@ instances:
 
     # Check if there's an existing JSON config file
     config = load_config()
-    local_qualytics_dir = get_local_qualytics_dir()
-    qualytics_dir_existed = os.path.exists(local_qualytics_dir)
+    qualytics_dir_existed = os.path.exists(BASE_PATH)
 
     if config:
         # Migration path: User has existing JSON config
@@ -241,8 +241,8 @@ instances:
         if token_valid:
             save_local_env_config(url, token)
             if not qualytics_dir_existed:
-                print(f"[bold green] ✓ Created .qualytics folder at: {local_qualytics_dir} [/bold green]")
-            print(f"[bold green] ✓ Configuration migrated to .env file at: {local_qualytics_dir}/.env [/bold green]")
+                print(f"[bold green] ✓ Created .qualytics folder at: {BASE_PATH} [/bold green]")
+            print(f"[bold green] ✓ Configuration migrated to .env file at: {DOTENV_PATH} [/bold green]")
     else:
         # New user path: No existing config, prompt for input
         # Prompt user for URL
@@ -258,18 +258,20 @@ instances:
         if token_valid:
             save_local_env_config(url, token)
             if not qualytics_dir_existed:
-                print(f"[bold green] ✓ Created .qualytics folder at: {local_qualytics_dir} [/bold green]")
-            print(f"[bold green] ✓ Configuration saved to .env file at: {local_qualytics_dir}/.env [/bold green]")
+                print(f"[bold green] ✓ Created .qualytics folder at: {BASE_PATH} [/bold green]")
+            print(f"[bold green] ✓ Configuration saved to .env file at: {DOTENV_PATH} [/bold green]")
 
     # Show final success message for both paths
+    current_dir = os.getcwd()
     print("\n[bold green] Project initialized successfully! [/bold green]")
-    print("[bold cyan] Your project structure: [/bold cyan]")
-    print("  ├── .qualytics/")
-    print("  │   └── .env")
-    print("  ├── assets/")
+    print("\n[bold cyan] Configuration (in home directory): [/bold cyan]")
+    print(f"  └── {BASE_PATH}/")
+    print(f"      └── .env")
+    print(f"\n[bold cyan] Project structure (in {current_dir}): [/bold cyan]")
+    print(f"  ├── assets/               ({local_assets_dir})")
     print("  │   ├── anomalies/")
     print("  │   ├── check_templates/")
     print("  │   └── checks/")
-    print("  └── config/")
+    print(f"  └── config/               ({local_config_dir})")
     print("      ├── connections_example.yml")
     print("      └── instance.yml")
