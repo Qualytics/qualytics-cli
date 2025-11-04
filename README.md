@@ -39,16 +39,38 @@ qualytics --help
 
 ### Initializing the Configuration
 
-You can set up your Qualytics URL and token using the `init` command:
+You can set up your Qualytics URL and token using the `init` command. This will create the following structure inside the folder where you run the command:
 
-```bash
-qualytics init --url "https://your-qualytics.qualytics.io/" --token "YOUR_TOKEN_HERE"
+```
+Your project structure:
+  ├── .qualytics/
+  │   └── .env
+  ├── assets/
+  │   ├── anomalies/
+  │   ├── check_templates/
+  │   └── checks/
+  └── config/
+      ├── connections_example.yml
+      └── instance.yml
 ```
 
-| Option  | Type | Description                                           | Default | Required |
-|---------|------|-------------------------------------------------------|---------|----------|
-| `--url` | TEXT | The URL to be set. Example: https://your-qualytics.qualytics.io/ | None    | Yes      |
-| `--token` | TEXT | The token to be set.                                 | None    | Yes      |
+You will be prompted to input your URL and token (note that your token won't appear when you type it):
+
+```
+Enter your Qualytics URL (e.g., https://your-qualytics.qualytics.io): <your_url>
+Enter your Qualytics API token: <your_token>
+```
+
+Your env file will be created at `./.qualytics/.env` in your current working directory.
+
+**Migration Note**: If you were previously using the old `~/.qualytics/config.json` file, simply run the `init` command again. It will automatically:
+- Migrate your configuration to the new `.env` format
+- Remove the old JSON config file
+- Set up the project structure in your current directory
+
+```bash
+qualytics init
+```
 
 ### Qualytics init help
 
