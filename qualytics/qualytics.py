@@ -16,7 +16,7 @@ from .cli.operations import run_operation_app, check_operation_app
 from .cli.datastores import datastore_app
 
 # Import config for environment setup
-from .config import DOTENV_PATH
+from .setup import DOTENV_PATH
 
 
 # Load environment variables
