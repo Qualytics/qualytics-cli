@@ -494,6 +494,415 @@ qualytics datastore remove --id DATASTORE_ID
 
 ---
 
+## Computed Tables
+
+The `computed-tables` command group allows you to import computed tables from files and automatically create quality checks for error detection queries.
+
+### Import Computed Tables
+
+Import computed tables from a file (Excel, CSV, or TXT) and optionally create satisfiesExpression checks.
+
+```bash
+qualytics computed-tables import --datastore DATASTORE_ID --input FILE_PATH [OPTIONS]
+```
+
+#### Input File Structure
+
+The input file must have **3 columns in positional order** (the first row is treated as a header and skipped):
+
+| Column | Name        | Required | Description                                           |
+|--------|-------------|----------|-------------------------------------------------------|
+| 1      | name        | **Yes**  | Unique identifier for the computed table              |
+| 2      | description | No       | Description stored in metadata and check              |
+| 3      | query       | **Yes**  | SQL query for the computed table                      |
+
+**Important**: Column names in the header row don't matter - only the position matters. You can name them anything (e.g., `check_id`, `check_description`, `check_query`).
+
+#### Excel File Example (.xlsx)
+
+| check_id    | check_description                     | check_query                                                        |
+|-------------|---------------------------------------|--------------------------------------------------------------------|
+| CHK001      | Detect orders with negative totals    | SELECT * FROM sales_orders WHERE total_amount < 0                  |
+| CHK002      | Find customers without email          | SELECT * FROM customer_master WHERE email IS NULL OR email = ''    |
+| CHK003      | Identify duplicate invoices           | SELECT invoice_no, COUNT(*) FROM invoices GROUP BY invoice_no HAVING COUNT(*) > 1 |
+
+#### CSV File Example (.csv)
+
+```csv
+check_id,check_description,check_query
+CHK001,Detect orders with negative totals,"SELECT * FROM sales_orders WHERE total_amount < 0"
+CHK002,Find customers without email,"SELECT * FROM customer_master WHERE email IS NULL OR email = ''"
+CHK003,Identify duplicate invoices,"SELECT invoice_no, COUNT(*) FROM invoices GROUP BY invoice_no HAVING COUNT(*) > 1"
+```
+
+**Note**: For multiline SQL queries in CSV, wrap the entire query in double quotes:
+
+```csv
+check_id,check_description,check_query
+CHK004,Complex order validation,"SELECT o.*
+FROM sales_orders o
+JOIN customer_master c ON o.customer_id = c.id
+WHERE o.status = 'SHIPPED'
+  AND c.country IS NULL"
+```
+
+#### Validation Rules
+
+The import process validates each row before processing:
+
+| Validation          | Behavior                                           |
+|---------------------|----------------------------------------------------|
+| Empty name          | Row is **skipped** with warning                    |
+| Empty query         | Row is **skipped** with warning                    |
+| Empty description   | Row is **processed** (description defaults to "")  |
+| Duplicate name      | Second occurrence is **skipped** with warning      |
+| Blank row           | Row is **skipped** silently                        |
+
+**Example validation output:**
+```
+Found 5 records in the file.
+Warnings during validation:
+  - Row 3: Empty name, skipping.
+  - Row 4: 'CHK001' has empty query, skipping.
+  - Row 7: Duplicate name 'CHK002' (first seen at row 2), skipping.
+3 valid records to import.
+```
+
+#### Options
+
+| Option                | Type    | Description                                                      | Default               |
+|-----------------------|---------|------------------------------------------------------------------|-----------------------|
+| `--datastore`         | INTEGER | Datastore ID to create computed tables in                        | Required              |
+| `--input`             | TEXT    | Input file path (.xlsx, .csv, or .txt)                           | Required              |
+| `--prefix`            | TEXT    | Prefix for computed table names                                  | `ct_`                 |
+| `--delimiter`         | TEXT    | Delimiter for CSV/TXT files                                      | `,` for CSV, `\t` for TXT |
+| `--as-draft`          | FLAG    | Create checks in Draft status (default)                          | True                  |
+| `--as-active`         | FLAG    | Create checks in Active status                                   | False                 |
+| `--skip-checks`       | FLAG    | Skip creating quality checks (only create computed tables)       | False                 |
+| `--skip-profile-wait` | FLAG    | Skip waiting for profile operation (**Warning**: checks may fail) | False                 |
+| `--tags`              | TEXT    | Tags for checks (comma-separated)                                | None                  |
+| `--dry-run`           | FLAG    | Preview what would be created without making changes             | False                 |
+| `--debug`             | FLAG    | Enable debug mode with API logging                               | False                 |
+
+#### Check Status: Draft vs Active
+
+The `--as-draft` and `--as-active` flags control the status of created quality checks:
+
+| Status   | Flag          | Behavior                                                    |
+|----------|---------------|-------------------------------------------------------------|
+| Draft    | `--as-draft`  | Check exists but won't run during scans. Review before activating. |
+| Active   | `--as-active` | Check runs immediately during scan operations.              |
+
+**Default**: Checks are created as **Draft** for safety.
+
+#### Use Cases
+
+Below are common use cases showing what happens with different option combinations:
+
+---
+
+**1. Basic Import (Default)**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx
+```
+| What happens |
+|--------------|
+| Creates computed tables with `ct_` prefix |
+| Waits for profile operation to complete |
+| Creates quality checks in **Draft** status |
+| Skips existing computed tables |
+| Skips check creation if check already exists |
+
+---
+
+**2. Import with Active Checks**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx --as-active
+```
+| What happens |
+|--------------|
+| Same as basic import |
+| Checks are created in **Active** status |
+| Checks will run during the next scan operation |
+
+**Use when**: Rules are tested and ready for production.
+
+---
+
+**3. Import Only Computed Tables (No Checks)**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx --skip-checks
+```
+| What happens |
+|--------------|
+| Creates computed tables only |
+| **No quality checks are created** |
+| Still waits for profile operations |
+
+**Use when**: You want to configure checks manually in the UI.
+
+---
+
+**4. Skip Profile Wait**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx --skip-profile-wait
+```
+| What happens |
+|--------------|
+| Creates computed tables without waiting for profile |
+| **⚠️ Checks will likely FAIL** - container has no fields until profile completes |
+| Faster for bulk imports |
+
+**Warning**: If profiling hasn't completed, check creation will fail with: `Container X has no fields. Cannot create check.`
+
+**Use when**: Only use with `--skip-checks` for bulk computed table creation. Add checks manually later after profiling completes.
+
+---
+
+**5. Import with Custom Prefix**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx --prefix "dq_"
+```
+| What happens |
+|--------------|
+| Computed tables use `dq_` prefix instead of `ct_` |
+| Example: `CHK001` → `dq_CHK001` |
+
+**Use when**: Organizing different types of rules with different prefixes.
+
+---
+
+**6. Import with Tags**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx --tags "production,finance"
+```
+| What happens |
+|--------------|
+| Checks are created with specified tags |
+| Multiple tags separated by commas |
+
+**Use when**: Organizing checks for filtering in the UI.
+
+---
+
+**7. Dry Run (Preview Only)**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx --dry-run
+```
+| What happens |
+|--------------|
+| **No changes are made** |
+| Shows preview table of what would be created |
+| Shows which tables would be skipped (already exist) |
+
+**Use when**: Validating input file before actual import.
+
+---
+
+**8. Debug Mode**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx --debug
+```
+| What happens |
+|--------------|
+| Shows API requests/responses in console |
+| Writes detailed logs to `~/.qualytics/logs/` |
+
+**Use when**: Troubleshooting import failures.
+
+---
+
+**9. CSV with Custom Delimiter**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.txt --delimiter ";"
+```
+| What happens |
+|--------------|
+| Reads file using semicolon as delimiter |
+
+**Use when**: Files exported from systems with non-standard delimiters.
+
+---
+
+**10. Production-Ready Import**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx \
+  --prefix "prod_" \
+  --tags "production,automated" \
+  --as-active \
+  --debug
+```
+| What happens |
+|--------------|
+| Computed tables with `prod_` prefix |
+| Checks in **Active** status |
+| Tags: `production`, `automated` |
+| Full API logging for audit trail |
+
+---
+
+**11. Fast Bulk Import (Minimal)**
+```bash
+qualytics computed-tables import --datastore 123 --input checks.xlsx \
+  --skip-checks \
+  --skip-profile-wait
+```
+| What happens |
+|--------------|
+| Fastest possible import |
+| No profile waiting, no checks created |
+| Computed tables only |
+
+**Use when**: Bulk setup of computed tables only. You must add checks manually after profiling completes.
+
+**Note**: This is the recommended way to use `--skip-profile-wait` - always combine it with `--skip-checks`.
+
+#### Computed Table Naming
+
+The final computed table name follows the pattern: `<prefix><name>`
+
+For example, with default prefix `ct_`:
+- Input name: `CHK001` → Computed table: `ct_CHK001`
+- Input name: `order_validation` → Computed table: `ct_order_validation`
+
+Common suffixes like `_SF`, `_DB`, `_BQ`, `_SNOWFLAKE` are automatically stripped from the `rule_id` stored in metadata:
+- Input name: `CHK001_SF` → `rule_id` in metadata: `CHK001`
+
+#### Check Behavior
+
+When checks are created (default behavior), a `satisfiesExpression` check is automatically generated where:
+
+- **Empty result set (no rows)** = PASS (all data is valid)
+- **Any rows returned** = FAIL (each row is flagged as an anomaly)
+
+This is ideal for error detection queries where returned results indicate data quality issues.
+
+The check expression wraps all field names with backticks for compatibility with special characters and functions:
+```sql
+`order_id` IS NULL AND `customer_name` IS NULL AND `coalesce(trim(status))` IS NULL
+```
+
+#### Metadata Storage
+
+Both the computed table and quality check store metadata for traceability:
+
+**Computed Table `additional_metadata`:**
+```json
+{
+  "description": "Detect orders with negative totals",
+  "rule_id": "CHK001",
+  "imported_from": "qualytics-cli",
+  "import_timestamp": "2026-01-28T12:00:00"
+}
+```
+
+**Quality Check `additional_metadata`:**
+```json
+{
+  "rule_id": "CHK001",
+  "computed_table_name": "ct_CHK001",
+  "original_description": "Detect orders with negative totals",
+  "imported_from": "qualytics-cli",
+  "import_timestamp": "2026-01-28T12:00:00"
+}
+```
+
+#### SQL Query Handling
+
+**Cross-catalog/schema references** are preserved as-is:
+
+```sql
+SELECT * FROM analytics_prod.sales_schema.orders o
+JOIN finance_db.accounting.invoices i ON o.invoice_id = i.id
+WHERE o.status = 'PENDING'
+```
+
+**Automatic alias addition**: Columns without aliases get unique aliases added automatically (`expr_1`, `expr_2`, etc.):
+
+```sql
+-- Original query (columns without aliases)
+SELECT coalesce(trim(name), 'Blank'), upper(status), id as order_id FROM orders
+
+-- After processing (aliases added)
+SELECT coalesce(trim(name), 'Blank') as expr_1, upper(status) as expr_2, id as order_id FROM orders
+```
+
+This ensures all fields have proper names for the quality check expression.
+
+If you need to test with all tables in the same catalog/schema, pre-process your input file to remove the prefixes before importing.
+
+### List Computed Tables
+
+List all computed tables in a datastore.
+
+```bash
+qualytics computed-tables list --datastore DATASTORE_ID
+```
+
+| Option        | Type    | Description                              | Required |
+|---------------|---------|------------------------------------------|----------|
+| `--datastore` | INTEGER | Datastore ID to list computed tables from | Yes      |
+
+**Example output:**
+```
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ ID   ┃ Name               ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ 101  │ ct_CHK001          │
+│ 102  │ ct_CHK002          │
+│ 103  │ ct_CHK003          │
+└──────┴────────────────────┘
+
+Total: 3 computed tables
+```
+
+### Preview File
+
+Preview computed table definitions from a file without importing. Useful for validating your input file before import.
+
+```bash
+qualytics computed-tables preview --input FILE_PATH [OPTIONS]
+```
+
+| Option        | Type    | Description                                      | Default |
+|---------------|---------|--------------------------------------------------|---------|
+| `--input`     | TEXT    | Input file path (.xlsx, .csv, or .txt)           | Required |
+| `--delimiter` | TEXT    | Delimiter for CSV/TXT files                      | `,` for CSV, `\t` for TXT |
+| `--limit`     | INTEGER | Number of records to preview                     | 5       |
+| `--prefix`    | TEXT    | Prefix to show for computed table names          | `ct_`   |
+
+**Example:**
+```bash
+qualytics computed-tables preview --input checks.xlsx --limit 3
+```
+
+**Example output:**
+```
+Reading definitions from: checks.xlsx
+Found 5 records in the file.
+
+Preview of first 3 records:
+
+Record 1:
+  Computed Table Name: ct_CHK001
+  Description: Detect orders with negative totals
+  Query: SELECT * FROM sales_orders WHERE total_amount < 0
+
+Record 2:
+  Computed Table Name: ct_CHK002
+  Description: Find customers without email
+  Query: SELECT * FROM customer_master WHERE email IS NULL...
+
+Record 3:
+  Computed Table Name: ct_CHK003
+  Description: Identify duplicate invoices
+  Query: SELECT invoice_no, COUNT(*) FROM invoices GROUP B...
+
+... and 2 more records
+```
+
+---
+
 ## Development
 
 This project uses modern Python tooling with [uv](https://docs.astral.sh/uv/) for dependency management and [ruff](https://docs.astral.sh/ruff/) for linting and formatting.
