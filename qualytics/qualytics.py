@@ -6,7 +6,7 @@ This is the new streamlined entry point that wires together all CLI modules.
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 import urllib3
 from dotenv import load_dotenv
