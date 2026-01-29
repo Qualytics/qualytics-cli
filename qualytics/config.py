@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from rich import print
 
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # Get the home directory
 home = Path.home()
