@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from rich import print
 
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # Get the home directory
 home = Path.home()
@@ -66,6 +66,10 @@ def is_token_valid(token: str):
                 return None
             else:
                 return token
+        else:
+            # Token has no expiration claim - still valid
+            return token
     except Exception as e:
         print("[bold red] WARNING: Your token is not valid [/bold red]")
         print(f"[bold red] {e} [/bold red]")
+        return None
