@@ -1,46 +1,27 @@
-import requests
-import json
+"""Datastore API operations using the centralized client."""
+
+from ..api.client import QualyticsClient
 
 
-def create_datastore(payload: dict, url: str, headers: dict) -> dict:
-    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
-    # Raise for non-2xx so our caller can handle nicely
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        # Attach body to the error for easier triage
-        raise RuntimeError(f"HTTP {resp.status_code} from {url}: {resp.text}") from e
-    return resp.json()
+def create_datastore(client: QualyticsClient, payload: dict) -> dict:
+    response = client.post("datastores", json=payload)
+    return response.json()
 
 
-def list_datastores(url: str, headers: dict) -> dict:
-    resp = requests.get(url, headers=headers, timeout=30)
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        raise RuntimeError(f"HTTP {resp.status_code} from {url}: {resp.text}") from e
-    return resp.json()
+def list_datastores(client: QualyticsClient) -> dict:
+    response = client.get("datastores/listing")
+    return response.json()
 
 
-def get_datastore_by_id(url: str, headers: dict) -> dict:
-    resp = requests.get(url, headers=headers, timeout=30)
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        raise RuntimeError(f"HTTP {resp.status_code} from {url}: {resp.text}") from e
-    return resp.json()
+def get_datastore_by_id(client: QualyticsClient, datastore_id: int) -> dict:
+    response = client.get(f"datastores/{datastore_id}")
+    return response.json()
 
 
-def remove_datastore(url: str, headers: dict) -> dict:
-    resp = requests.delete(url, headers=headers, timeout=30)
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        raise RuntimeError(f"HTTP {resp.status_code} from {url}: {resp.text}") from e
+def remove_datastore(client: QualyticsClient, datastore_id: int) -> dict:
+    response = client.delete(f"datastores/{datastore_id}")
 
-    # DELETE operations often return empty responses (204 No Content)
-    # Return a success indicator if response is empty
-    if not resp.content or resp.status_code == 204:
+    if not response.content or response.status_code == 204:
         return {"success": True, "message": "Datastore deleted successfully"}
 
-    return resp.json()
+    return response.json()

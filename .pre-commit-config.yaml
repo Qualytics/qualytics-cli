@@ -28,5 +28,5 @@ repos:
     rev: v3.21.2
     hooks:
       - id: pyupgrade
-        name: "Enforce Python 3.9+ idioms"
-        args: ["--py39-plus"]
+        name: "Enforce Python 3.10+ idioms"
+        args: ["--py310-plus"]

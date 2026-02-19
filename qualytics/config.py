@@ -1,7 +1,5 @@
 """Configuration management for Qualytics CLI."""
 
-from __future__ import annotations
-
 import json
 import os
 from importlib.metadata import version, PackageNotFoundError

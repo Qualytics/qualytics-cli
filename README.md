@@ -4,7 +4,7 @@ This is a CLI tool for working with the Qualytics API. With this tool, you can m
 
 ## Requirements
 
-- Python 3.9 or higher
+- Python 3.10 or higher
 
 ## Installation
 
@@ -45,10 +45,17 @@ You can set up your Qualytics URL and token using the `init` command:
 qualytics init --url "https://your-qualytics.qualytics.io/" --token "YOUR_TOKEN_HERE"
 ```
 
+To disable SSL certificate verification (e.g., for self-signed certificates in development):
+
+```bash
+qualytics init --url "https://your-qualytics.qualytics.io/" --token "YOUR_TOKEN_HERE" --no-verify-ssl
+```
+
 | Option  | Type | Description                                           | Default | Required |
 |---------|------|-------------------------------------------------------|---------|----------|
 | `--url` | TEXT | The URL to be set. Example: https://your-qualytics.qualytics.io/ | None    | Yes      |
 | `--token` | TEXT | The token to be set.                                 | None    | Yes      |
+| `--no-verify-ssl` | FLAG | Disable SSL certificate verification for API requests. | False | No |
 
 ### Qualytics init help
 
@@ -158,6 +165,8 @@ qualytics run catalog --datastore "DATASTORE_ID_LIST" --include "INCLUDE_LIST" -
 | `--prune`      | BOOL | Prune the operation. Do not include if you want prune == false                                      | No       |
 | `--recreate`   | BOOL | Recreate the operation. Do not include if you want recreate == false                                | No       |
 | `--background` | BOOL | Starts the catalog but does not wait for the operation to finish                                    | No       |
+| `--poll-interval` | INT | Seconds between status checks when waiting (default: 10)                                         | No       |
+| `--timeout`    | INT  | Maximum seconds to wait for completion (default: 1800 = 30 min)                                    | No       |
 
 ### Run a Profile Operation on a Datastore
 
@@ -186,6 +195,8 @@ qualytics run profile --datastore "DATASTORE_ID_LIST" --container_names "CONTAIN
 | `--greater_than_batch`                 | FLOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
 | `--histogram_max_distinct_values`      | INT      | Number of max distinct values in the histogram                                                                                                   | No       |
 | `--background`                         | BOOL     | Starts the profile operation but does not wait for the operation to finish                                                                       | No       |
+| `--poll-interval`                      | INT      | Seconds between status checks when waiting (default: 10)                                                                                         | No       |
+| `--timeout`                            | INT      | Maximum seconds to wait for completion (default: 1800 = 30 min)                                                                                  | No       |
 
 
 ### Run a Scan Operation on a Datastore
@@ -210,6 +221,8 @@ qualytics run scan --datastore "DATASTORE_ID_LIST" --container_names "CONTAINER_
 | `--greater_than_time`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
 | `--greater_than_batch`                 | FLOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
 | `--background`                         | BOOL     | Starts the scan operation but does not wait for the operation to finish                                                                          | No       |
+| `--poll-interval`                      | INT      | Seconds between status checks when waiting (default: 10)                                                                                         | No       |
+| `--timeout`                            | INT      | Maximum seconds to wait for completion (default: 1800 = 30 min)                                                                                  | No       |
 
 ### Check Operation Status
 
@@ -909,7 +922,7 @@ This project uses modern Python tooling with [uv](https://docs.astral.sh/uv/) fo
 
 ### Requirements
 
-- Python 3.9 or higher
+- Python 3.10 or higher
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
 ### Setting Up Development Environment
@@ -953,7 +966,7 @@ uv run ruff check qualytics/ --fix
 # Format code
 uv run ruff format qualytics/
 
-# Run all pre-commit hooks (includes linting, formatting, and Python 3.9+ upgrades)
+# Run all pre-commit hooks (includes linting, formatting, and Python 3.10+ upgrades)
 uv run pre-commit run --all-files
 
 # Build the package
@@ -985,7 +998,7 @@ Releases are triggered by the **Release** workflow in GitHub Actions (manual dis
 ### Code Quality Standards
 
 This project enforces:
-- **Python 3.9+** minimum version
+- **Python 3.10+** minimum version
 - **Ruff** for linting and formatting (88 character line length)
 - **pyupgrade** for automatic Python syntax modernization
 - **Pre-commit hooks** for automated quality checks
