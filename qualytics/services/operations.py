@@ -1,66 +1,73 @@
 """Operations service functions for catalog, profile, and scan."""
+
 import time
-import requests
 from datetime import datetime
+
 from rich import print
 from rich.progress import track
 
-from ..config import load_config, OPERATION_ERROR_PATH
-from ..utils import validate_and_format_url
+from ..api.client import QualyticsAPIError, QualyticsClient
+from ..config import OPERATION_ERROR_PATH
 from ..utils.file_ops import log_error
 
+# Default polling configuration
+DEFAULT_POLL_INTERVAL = 10  # seconds between polls
+DEFAULT_TIMEOUT = 1800  # 30 minutes max wait
 
-def get_default_headers(token):
-    """Get default authorization headers."""
-    return {"Authorization": f"Bearer {token}"}
 
-
-def wait_for_operation_finishes(operation: int, token: str):
+def wait_for_operation_finishes(
+    client: QualyticsClient,
+    operation: int,
+    poll_interval: int = DEFAULT_POLL_INTERVAL,
+    timeout: int = DEFAULT_TIMEOUT,
+):
     """
     Wait for an operation to finish executing.
 
+    Uses elapsed-time based timeout instead of fixed retry count.
+    Shows periodic status updates during long polls.
+
     Parameters:
-    - operation (int): The operation ID.
-    - token (str): Authentication token.
+    - client: API client instance
+    - operation: The operation ID.
+    - poll_interval: Seconds between status checks (default 10).
+    - timeout: Maximum seconds to wait (default 1800 = 30 min).
 
     Returns:
-    - The operation response object.
+    - The operation response dict, or None on timeout.
     """
-    config = load_config()
-    base_url = validate_and_format_url(config["url"])
-    headers = get_default_headers(token)
-    max_retries = 10
-    wait_time = 50
-    for attempt in range(max_retries):
-        end_scan = None
-        response = None
-        while not end_scan:
-            print(" Waiting for operation to finish")
-            response = requests.get(
-                base_url + f"operations/{operation}", headers=headers
-            ).json()
-            time.sleep(5)
-            if response["end_time"]:
-                end_scan = True
-        time.sleep(10)
-        if response["result"] == "success":
+    start_time = time.monotonic()
+    last_status_time = start_time
+
+    while True:
+        elapsed = time.monotonic() - start_time
+
+        if elapsed >= timeout:
+            print(
+                f"[bold red] Operation {operation} timed out after {int(elapsed)}s [/bold red]"
+            )
+            return None
+
+        response = client.get(f"operations/{operation}").json()
+
+        if response.get("end_time"):
             return response
-        if attempt == max_retries - 1:
-            return response
-        print(f"Attempt {attempt + 1} failed. Retrying in {wait_time} seconds...")
-        time.sleep(wait_time)
+
+        # Print elapsed time every 60 seconds
+        now = time.monotonic()
+        if now - last_status_time >= 60:
+            print(
+                f"  [dim]Operation {operation} still running... ({int(elapsed)}s elapsed)[/dim]"
+            )
+            last_status_time = now
+
+        time.sleep(poll_interval)
 
 
-def check_operation_status(operation_ids: [int], token: str):
+def check_operation_status(client: QualyticsClient, operation_ids: list[int]):
     """Check the status of one or more operations."""
-    config = load_config()
-    base_url = validate_and_format_url(config["url"])
-    headers = get_default_headers(token)
-
     for curr_id in track(operation_ids, description="Processing..."):
-        response = requests.get(
-            base_url + f"operations/{curr_id}", headers=headers
-        ).json()
+        response = client.get(f"operations/{curr_id}").json()
         if "result" not in response.keys():
             print(f"[bold red] Operation: {curr_id} Not Found")
         elif response["result"] == "success":
@@ -79,24 +86,51 @@ def check_operation_status(operation_ids: [int], token: str):
             print(f"[bold red] Operation: {curr_id} was aborted [/bold red]")
 
 
+def _handle_operation_result(response, op_type, op_id, datastore_id):
+    """Handle the result of a completed operation."""
+    if response is None:
+        print(
+            f"[bold red] {op_type} {op_id} for datastore: {datastore_id} timed out [/bold red]"
+        )
+    elif response["result"] == "success" and response["message"] is None:
+        print(
+            f"[bold green] Successfully Finished {op_type} operation {op_id} "
+            f"for datastore: {datastore_id} [/bold green]"
+        )
+    elif response["result"] == "success" and response["message"] is not None:
+        msg = response["message"]
+        print(
+            f"[bold yellow] Warning for {op_type.lower()} operation {op_id} on datastore {datastore_id}:"
+            f" {msg}[/bold yellow]"
+        )
+    else:
+        print(
+            f"[bold red] Failed {op_type} {op_id} for datastore: {datastore_id}, Please check the path: "
+            f"{OPERATION_ERROR_PATH}[/bold red]"
+        )
+        message = response.get("detail", response.get("message", "Unknown error"))
+        current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+        log_error(
+            f"{current_datetime}: Error executing {op_type.lower()} operation: {message}\n\n",
+            OPERATION_ERROR_PATH,
+        )
+
+
 def run_catalog(
-    datastore_ids: [int],
-    include: [str],
+    client: QualyticsClient,
+    datastore_ids: list[int],
+    include: list[str],
     prune: bool,
     recreate: bool,
-    token: str,
     background: bool,
+    poll_interval: int = DEFAULT_POLL_INTERVAL,
+    timeout: int = DEFAULT_TIMEOUT,
 ):
     """Run catalog operation for specified datastores."""
-    config = load_config()
-    base_url = validate_and_format_url(config["url"])
-    endpoint = "operations/run"
-    url = f"{base_url}{endpoint}"
     for datastore_id in track(datastore_ids, description="Processing..."):
         try:
-            response = requests.post(
-                f"{url}",
-                headers=get_default_headers(token),
+            response = client.post(
+                "operations/run",
                 json={
                     "datastore_id": datastore_id,
                     "type": "catalog",
@@ -105,55 +139,34 @@ def run_catalog(
                     "recreate": recreate,
                 },
             )
-            if not (
-                200 <= response.status_code <= 299
-            ):  # Operation fails before starting
-                response = response.json()
-                raise Exception
             catalog_id = response.json()["id"]
             print(
                 f"[bold green] Started Catalog operation {catalog_id} "
                 f"for datastore: {datastore_id} [/bold green]"
             )
             if background is False:
-                response = wait_for_operation_finishes(response.json()["id"], token)
-                if response["result"] == "success" and response["message"] is None:
-                    print(
-                        f"[bold green] Successfully Finished Catalog operation {catalog_id}"
-                        f"for datastore: {datastore_id} [/bold green]"
-                    )
-                elif (
-                    response["result"] == "success" and response["message"] is not None
-                ):  # Warning occurred
-                    msg = response["message"]
-                    print(
-                        f"[bold yellow] Warning for Catalog operation {catalog_id} on datastore {datastore_id}:"
-                        f" {msg}[/bold yellow]"
-                    )
-                else:
-                    print(
-                        f"[bold red] Failed Catalog {catalog_id} for datastore: {datastore_id}, Please check the path: "
-                        f"{OPERATION_ERROR_PATH}[/bold red]"
-                    )
-                    message = response["detail"]
-                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    message = f"{current_datetime}: Error executing catalog operation: {message}\n\n"
-                    log_error(message, OPERATION_ERROR_PATH)
-        except Exception:
+                result = wait_for_operation_finishes(
+                    client,
+                    catalog_id,
+                    poll_interval=poll_interval,
+                    timeout=timeout,
+                )
+                _handle_operation_result(result, "Catalog", catalog_id, datastore_id)
+        except QualyticsAPIError as e:
             print(
                 f"[bold red] Failed Catalog for datastore: {datastore_id}, Please check the path: "
                 f"{OPERATION_ERROR_PATH}[/bold red]"
             )
-            message = response["detail"]
             current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-            message = (
-                f"{current_datetime}: Error executing catalog operation: {message}\n\n"
+            log_error(
+                f"{current_datetime}: Error executing catalog operation: {e.message}\n\n",
+                OPERATION_ERROR_PATH,
             )
-            log_error(message, OPERATION_ERROR_PATH)
 
 
 def run_profile(
-    datastore_ids: [int],
+    client: QualyticsClient,
+    datastore_ids: list[int],
     container_names: list[str] | None,
     container_tags: list[str] | None,
     inference_threshold: int | None,
@@ -165,20 +178,15 @@ def run_profile(
     greater_than_time: datetime | None,
     greater_than_batch: float | None,
     histogram_max_distinct_values: int | None,
-    token: str,
     background: bool,
+    poll_interval: int = DEFAULT_POLL_INTERVAL,
+    timeout: int = DEFAULT_TIMEOUT,
 ):
     """Run profile operation for specified datastores."""
-    config = load_config()
-    base_url = validate_and_format_url(config["url"])
-    endpoint = "operations/run"
-    url = f"{base_url}{endpoint}"
-
     for datastore_id in track(datastore_ids, description="Processing..."):
         try:
-            response = requests.post(
-                f"{url}",
-                headers=get_default_headers(token),
+            response = client.post(
+                "operations/run",
                 json={
                     "datastore_id": datastore_id,
                     "type": "profile",
@@ -195,54 +203,33 @@ def run_profile(
                     "histogram_max_distinct_values": histogram_max_distinct_values,
                 },
             )
-            if not (
-                200 <= response.status_code <= 299
-            ):  # Operation fails before starting
-                response = response.json()
-                raise Exception
             profile_id = response.json()["id"]
             print(
                 f"[bold green] Successfully Started Profile {profile_id} for datastore: {datastore_id} [/bold green]"
             )
             if background is False:
-                response = wait_for_operation_finishes(response.json()["id"], token)
-                if response["result"] == "success" and response["message"] is None:
-                    print(
-                        f"[bold green] Successfully Finished Profile operation {profile_id} "
-                        f"for datastore: {datastore_id} [/bold green]"
-                    )
-                elif (
-                    response["result"] == "success" and response["message"] is not None
-                ):  # Warning occurred
-                    msg = response["message"]
-                    print(
-                        f"[bold yellow] Warning for profile operation {profile_id} on datastore {datastore_id}:"
-                        f" {msg}[/bold yellow]"
-                    )
-                else:
-                    print(
-                        f"[bold red] Failed Profile {profile_id} for datastore: {datastore_id}, Please check the path: "
-                        f"{OPERATION_ERROR_PATH}[/bold red]"
-                    )
-                    message = response["detail"]
-                    current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                    message = f"{current_datetime}: Error executing profile operation: {message}\n\n"
-                    log_error(message, OPERATION_ERROR_PATH)
-        except Exception:
+                result = wait_for_operation_finishes(
+                    client,
+                    profile_id,
+                    poll_interval=poll_interval,
+                    timeout=timeout,
+                )
+                _handle_operation_result(result, "Profile", profile_id, datastore_id)
+        except QualyticsAPIError as e:
             print(
                 f"[bold red] Failed Profile for datastore: {datastore_id}, Please check the path: "
                 f"{OPERATION_ERROR_PATH}[/bold red]"
             )
-            message = response["detail"]
             current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-            message = (
-                f"{current_datetime}: Error executing profile operation: {message}\n\n"
+            log_error(
+                f"{current_datetime}: Error executing profile operation: {e.message}\n\n",
+                OPERATION_ERROR_PATH,
             )
-            log_error(message, OPERATION_ERROR_PATH)
 
 
 def run_scan(
-    datastore_ids: [int],
+    client: QualyticsClient,
+    datastore_ids: list[int],
     container_names: list[str] | None,
     container_tags: list[str] | None,
     incremental: bool | None,
@@ -251,19 +238,15 @@ def run_scan(
     enrichment_source_record_limit: int | None,
     greater_than_time: datetime | None,
     greater_than_batch: float | None,
-    token: str,
     background: bool,
+    poll_interval: int = DEFAULT_POLL_INTERVAL,
+    timeout: int = DEFAULT_TIMEOUT,
 ):
     """Run scan operation for specified datastores."""
-    config = load_config()
-    base_url = validate_and_format_url(config["url"])
-    endpoint = "operations/run"
-    url = f"{base_url}{endpoint}"
     for datastore_id in track(datastore_ids, description="Processing..."):
         try:
-            response = requests.post(
-                f"{url}",
-                headers=get_default_headers(token),
+            response = client.post(
+                "operations/run",
                 json={
                     "datastore_id": datastore_id,
                     "type": "scan",
@@ -277,51 +260,25 @@ def run_scan(
                     "greater_than_batch": greater_than_batch,
                 },
             )
-            if not (
-                200 <= response.status_code <= 299
-            ):  # Operation fails before starting
-                response = response.json()
-                raise Exception
             scan_id = response.json()["id"]
             print(
                 f"[bold green] Successfully Started Scan {scan_id} for datastore: {datastore_id} [/bold green]"
             )
             if background is False:
-                response = wait_for_operation_finishes(response.json()["id"], token)
-                if response["result"] == "success" and response["message"] is None:
-                    print(
-                        f"[bold green] Successfully Finished Scan operation {scan_id} "
-                        f"for datastore: {datastore_id} [/bold green]"
-                    )
-                elif (
-                    response["result"] == "success" and response["message"] is not None
-                ):
-                    msg = response["message"]
-                    print(
-                        f"[bold yellow] Warning for scan operation {scan_id}on datastore {datastore_id}:"
-                        f" {msg}[/bold yellow]"
-                    )
-                else:
-                    print(
-                        f"[bold red] Failed Scan {scan_id} for datastore: {datastore_id}, Please check the path: "
-                        f"{OPERATION_ERROR_PATH}[/bold red]"
-                    )
-                    with open(OPERATION_ERROR_PATH, "a") as error_file:
-                        message = response["detail"]
-                        current_datetime = datetime.now().strftime(
-                            "[%m-%d-%Y %H:%M:%S]"
-                        )
-                        error_file.write(
-                            f"{current_datetime} : Error executing catalog operation: {message}\n\n"
-                        )
-        except Exception:
+                result = wait_for_operation_finishes(
+                    client,
+                    scan_id,
+                    poll_interval=poll_interval,
+                    timeout=timeout,
+                )
+                _handle_operation_result(result, "Scan", scan_id, datastore_id)
+        except QualyticsAPIError as e:
             print(
                 f"[bold red] Failed Scan for datastore: {datastore_id}, Please check the path: "
                 f"{OPERATION_ERROR_PATH}[/bold red]"
             )
-            with open(OPERATION_ERROR_PATH, "a") as error_file:
-                message = response["detail"]
-                current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
-                error_file.write(
-                    f"{current_datetime} : Error executing catalog operation: {message}\n\n"
-                )
+            current_datetime = datetime.now().strftime("[%m-%d-%Y %H:%M:%S]")
+            log_error(
+                f"{current_datetime}: Error executing scan operation: {e.message}\n\n",
+                OPERATION_ERROR_PATH,
+            )

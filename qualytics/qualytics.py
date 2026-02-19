@@ -4,11 +4,6 @@ Qualytics CLI - Main Entry Point (Refactored)
 This is the new streamlined entry point that wires together all CLI modules.
 """
 
-from __future__ import annotations
-
-__version__ = "0.4.0"
-
-import urllib3
 from dotenv import load_dotenv
 
 # Import main app and commands from cli modules
@@ -25,9 +20,6 @@ from .config import DOTENV_PATH
 
 # Load environment variables
 load_dotenv(DOTENV_PATH)
-
-# Disable SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 # Add all sub-apps to the main app

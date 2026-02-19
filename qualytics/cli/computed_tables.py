@@ -5,7 +5,6 @@ import json
 import re
 import time
 import typer
-import requests
 from datetime import datetime
 from pathlib import Path
 from rich import print
@@ -14,8 +13,9 @@ from rich.table import Table
 from rich.console import Console
 from rich.syntax import Syntax
 
-from ..config import BASE_PATH, load_config, is_token_valid
-from ..utils import validate_and_format_url, distinct_file_content, log_error
+from ..api.client import QualyticsClient, QualyticsAPIError, get_client
+from ..config import BASE_PATH
+from ..utils import distinct_file_content, log_error
 
 
 # Create Typer instance for computed tables
@@ -40,7 +40,7 @@ def _get_logs_dir() -> str:
     return logs_dir
 
 
-def _debug_log(message: str, payload: dict = None, response: requests.Response = None):
+def _debug_log(message: str, payload: dict = None, response=None):
     """Log debug information to console."""
     if not _debug_mode:
         return
@@ -76,7 +76,7 @@ def _write_debug_log(
     name: str,
     message: str,
     payload: dict = None,
-    response: requests.Response = None,
+    response=None,
 ):
     """Write debug log to a file in .qualytics/logs/."""
     if not _debug_logs_dir:
@@ -118,11 +118,6 @@ def _write_debug_log(
             f.write("\n")
 
     return log_file
-
-
-def _get_default_headers(token):
-    """Get default authorization headers."""
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _split_select_columns(select_clause: str) -> list[str]:
@@ -442,8 +437,7 @@ def _validate_records(
 
 
 def _create_computed_table(
-    base_url: str,
-    token: str,
+    client: QualyticsClient,
     datastore_id: int,
     name: str,
     query: str,
@@ -458,8 +452,6 @@ def _create_computed_table(
 
     Returns the created computed table response or None if failed.
     """
-    headers = _get_default_headers(token)
-
     # Add aliases to columns without them
     final_query, aliases_added = _add_aliases_to_query(query)
     if aliases_added > 0:
@@ -480,12 +472,22 @@ def _create_computed_table(
 
     _debug_log(f"Creating computed table: {name}", payload=payload)
 
-    response = requests.post(
-        f"{base_url}containers",
-        headers=headers,
-        json=payload,
-        verify=False,
-    )
+    try:
+        response = client.post("containers", json=payload)
+    except QualyticsAPIError as e:
+        _debug_log(f"Failed to create computed table '{name}': {e}")
+        log_message = f"Creating computed table: {name}\nDatastore ID: {datastore_id}\nAliases added: {aliases_added}\n\nOriginal Query:\n{query}\n\nFinal Query:\n{final_query}"
+        _write_debug_log(
+            log_type="computed_table",
+            name=name,
+            message=log_message,
+            payload=payload,
+        )
+        error_msg = (
+            f"Failed to create computed table '{name}': {e.status_code} - {e.message}"
+        )
+        log_error(error_msg, error_log_path)
+        return None
 
     _debug_log(f"Create computed table response for: {name}", response=response)
 
@@ -502,17 +504,11 @@ def _create_computed_table(
     if log_file:
         _debug_log(f"Log written to: {log_file}")
 
-    if response.status_code == 200:
-        return response.json()
-    else:
-        error_msg = f"Failed to create computed table '{name}': {response.status_code} - {response.text}"
-        log_error(error_msg, error_log_path)
-        return None
+    return response.json()
 
 
 def _wait_for_profile_operation(
-    base_url: str,
-    token: str,
+    client: QualyticsClient,
     container_id: int,
     datastore_id: int,
     max_retries: int = 10,
@@ -529,26 +525,22 @@ def _wait_for_profile_operation(
 
     Returns True if profile succeeded and container has fields, False otherwise.
     """
-    headers = _get_default_headers(token)
-
     _debug_log(f"Looking for profile operation for container {container_id}")
 
     # First, find the profile operation for this container
-    response = requests.get(
-        f"{base_url}operations",
-        headers=headers,
-        params={
-            "type": "profile",
-            "datastore_id": datastore_id,
-            "container_id": container_id,
-            "sort": "desc",
-            "size": 1,
-        },
-        verify=False,
-    )
-
-    if response.status_code != 200:
-        _debug_log(f"Failed to get operations: {response.status_code}")
+    try:
+        response = client.get(
+            "operations",
+            params={
+                "type": "profile",
+                "datastore_id": datastore_id,
+                "container_id": container_id,
+                "sort": "desc",
+                "size": 1,
+            },
+        )
+    except QualyticsAPIError as e:
+        _debug_log(f"Failed to get operations: {e.status_code}")
         return False
 
     data = response.json()
@@ -563,15 +555,12 @@ def _wait_for_profile_operation(
     for attempt in range(max_retries):
         # Poll until operation has end_time
         poll_count = 0
+        op_data = None
         while True:
-            op_response = requests.get(
-                f"{base_url}operations/{operation_id}",
-                headers=headers,
-                verify=False,
-            )
-
-            if op_response.status_code != 200:
-                _debug_log(f"Failed to get operation status: {op_response.status_code}")
+            try:
+                op_response = client.get(f"operations/{operation_id}")
+            except QualyticsAPIError as e:
+                _debug_log(f"Failed to get operation status: {e.status_code}")
                 break
 
             op_data = op_response.json()
@@ -589,25 +578,23 @@ def _wait_for_profile_operation(
             time.sleep(5)
 
         # Check result
-        if op_response.status_code == 200:
-            op_data = op_response.json()
+        if op_data:
             result = op_data.get("result")
 
             if result == "success":
                 # Verify container has field profiles
-                field_profiles_response = requests.get(
-                    f"{base_url}containers/{container_id}/field-profiles",
-                    headers=headers,
-                    verify=False,
-                )
-
-                if field_profiles_response.status_code == 200:
+                try:
+                    field_profiles_response = client.get(
+                        f"containers/{container_id}/field-profiles",
+                    )
                     fields = field_profiles_response.json().get("items", [])
                     _debug_log(
                         f"Container {container_id} has {len(fields)} field profiles after profile"
                     )
                     if fields and len(fields) > 0:
                         return True
+                except QualyticsAPIError:
+                    pass
 
             elif result == "failure":
                 _debug_log(
@@ -630,68 +617,52 @@ def _wait_for_profile_operation(
 
 
 def _get_existing_computed_tables(
-    base_url: str, token: str, datastore_id: int
+    client: QualyticsClient, datastore_id: int
 ) -> dict[str, int]:
     """
     Get existing computed tables in a datastore.
 
     Returns a dict mapping table name to container ID.
     """
-    headers = _get_default_headers(token)
-
-    response = requests.get(
-        f"{base_url}containers/listing",
-        headers=headers,
-        params={"datastore": datastore_id, "type": "computed_table"},
-        verify=False,
-    )
-
-    if response.status_code == 200:
+    try:
+        response = client.get(
+            "containers/listing",
+            params={"datastore": datastore_id, "type": "computed_table"},
+        )
         tables = response.json()
         return {t["name"]: t["id"] for t in tables}
-
-    return {}
+    except QualyticsAPIError:
+        return {}
 
 
 def _get_existing_checks_for_container(
-    base_url: str, token: str, container_id: int
+    client: QualyticsClient, container_id: int
 ) -> list[dict]:
     """
     Get existing quality checks for a container.
 
     Returns list of checks.
     """
-    headers = _get_default_headers(token)
-
-    response = requests.get(
-        f"{base_url}quality-checks",
-        headers=headers,
-        params={"container": container_id, "size": 100},
-        verify=False,
-    )
-
-    if response.status_code == 200:
+    try:
+        response = client.get(
+            "quality-checks",
+            params={"container": container_id, "size": 100},
+        )
         data = response.json()
         return data.get("items", [])
-
-    return []
+    except QualyticsAPIError:
+        return []
 
 
 def _get_container_fields(
-    base_url: str, token: str, container_id: int
+    client: QualyticsClient, container_id: int
 ) -> list[dict] | None:
     """Get field profiles for a container after profiling."""
-    headers = _get_default_headers(token)
-
-    response = requests.get(
-        f"{base_url}containers/{container_id}/field-profiles",
-        headers=headers,
-        verify=False,
-    )
-
-    if response.status_code == 200:
+    try:
+        response = client.get(f"containers/{container_id}/field-profiles")
         return response.json().get("items", [])
-    return None
+    except QualyticsAPIError:
+        return None
 
 
 def _build_satisfies_expression(fields: list[dict]) -> tuple[str, list[str]]:
@@ -716,8 +687,7 @@ def _build_satisfies_expression(fields: list[dict]) -> tuple[str, list[str]]:
 
 
 def _create_satisfies_expression_check(
-    base_url: str,
-    token: str,
+    client: QualyticsClient,
     container_id: int,
     description: str,
     name: str,
@@ -734,10 +704,8 @@ def _create_satisfies_expression_check(
 
     Returns the created check response or None if failed.
     """
-    headers = _get_default_headers(token)
-
     _debug_log(f"Getting fields for container {container_id}")
-    fields = _get_container_fields(base_url, token, container_id)
+    fields = _get_container_fields(client, container_id)
 
     if not fields:
         error_msg = f"Container {container_id} has no fields. Cannot create check."
@@ -771,12 +739,21 @@ def _create_satisfies_expression_check(
 
     _debug_log(f"Creating check for container {container_id}", payload=payload)
 
-    response = requests.post(
-        f"{base_url}quality-checks",
-        headers=headers,
-        json=payload,
-        verify=False,
-    )
+    try:
+        response = client.post("quality-checks", json=payload)
+    except QualyticsAPIError as e:
+        _debug_log(f"Failed to create check for '{name}': {e}")
+        _write_debug_log(
+            log_type="check",
+            name=name,
+            message=f"Creating satisfiesExpression check for: {name}\nContainer ID: {container_id}\nExpression: {expression}",
+            payload=payload,
+        )
+        error_msg = (
+            f"Failed to create check for '{name}': {e.status_code} - {e.message}"
+        )
+        log_error(error_msg, error_log_path)
+        return None
 
     _debug_log(f"Create check response for container {container_id}", response=response)
 
@@ -791,12 +768,7 @@ def _create_satisfies_expression_check(
     if log_file:
         _debug_log(f"Log written to: {log_file}")
 
-    if response.status_code == 200:
-        return response.json()
-    else:
-        error_msg = f"Failed to create check for '{name}': {response.status_code} - {response.text}"
-        log_error(error_msg, error_log_path)
-        return None
+    return response.json()
 
 
 def _parse_tags(tags_str: str) -> list[str]:
@@ -917,20 +889,8 @@ def import_computed_tables(
         print("[bold cyan]Debug mode enabled[/bold cyan]")
         print(f"[dim]Debug logs will be written to: {_debug_logs_dir}/[/dim]")
 
-    config = load_config()
-    if not config:
-        print(
-            "[bold red]Configuration not found. Please run 'qualytics init' first.[/bold red]"
-        )
-        raise typer.Exit(code=1)
+    client = get_client()
 
-    base_url = validate_and_format_url(config["url"])
-    token = is_token_valid(config["token"])
-
-    if not token:
-        raise typer.Exit(code=1)
-
-    _debug_log(f"Base URL: {base_url}")
     _debug_log(f"Datastore ID: {datastore}")
 
     error_log_path = f"{BASE_PATH}/computed-table-import-errors-{datetime.now().strftime('%Y-%m-%d')}.log"
@@ -953,7 +913,7 @@ def import_computed_tables(
     valid_records, warnings = _validate_records(records, error_log_path)
 
     if warnings:
-        print(f"[bold yellow]Warnings during validation:[/bold yellow]")
+        print("[bold yellow]Warnings during validation:[/bold yellow]")
         for warning in warnings[:5]:
             print(f"  [yellow]- {warning}[/yellow]")
         if len(warnings) > 5:
@@ -966,8 +926,8 @@ def import_computed_tables(
     print(f"[bold green]{len(valid_records)} valid records to import.[/bold green]")
 
     # Get existing computed tables
-    print(f"[dim]Checking for existing computed tables...[/dim]")
-    existing_tables = _get_existing_computed_tables(base_url, token, datastore)
+    print("[dim]Checking for existing computed tables...[/dim]")
+    existing_tables = _get_existing_computed_tables(client, datastore)
     if existing_tables:
         print(
             f"[dim]Found {len(existing_tables)} existing computed tables in datastore.[/dim]"
@@ -1037,8 +997,7 @@ def import_computed_tables(
         else:
             # Create new computed table
             computed_table = _create_computed_table(
-                base_url=base_url,
-                token=token,
+                client=client,
                 datastore_id=datastore,
                 name=table_name,
                 query=query,
@@ -1054,15 +1013,14 @@ def import_computed_tables(
                 )
 
                 if not skip_profile_wait:
-                    print(f"  [dim]Waiting for profile operation to complete...[/dim]")
+                    print("  [dim]Waiting for profile operation to complete...[/dim]")
                     profile_success = _wait_for_profile_operation(
-                        base_url=base_url,
-                        token=token,
+                        client=client,
                         container_id=container_id,
                         datastore_id=datastore,
                     )
                     if profile_success:
-                        print(f"  [green]Profile completed successfully[/green]")
+                        print("  [green]Profile completed successfully[/green]")
                     else:
                         print(
                             f"  [yellow]Warning: Profile may not have completed for {table_name}[/yellow]"
@@ -1074,9 +1032,7 @@ def import_computed_tables(
         # Create check if we have a container ID
         if container_id and not skip_checks:
             # Check if check already exists for this container
-            existing_checks = _get_existing_checks_for_container(
-                base_url, token, container_id
-            )
+            existing_checks = _get_existing_checks_for_container(client, container_id)
 
             if existing_checks:
                 print(
@@ -1085,8 +1041,7 @@ def import_computed_tables(
                 skipped_checks += 1
             else:
                 check = _create_satisfies_expression_check(
-                    base_url=base_url,
-                    token=token,
+                    client=client,
                     container_id=container_id,
                     description=description,
                     name=name,
@@ -1135,31 +1090,16 @@ def list_computed_tables(
     """
     List all computed tables in a datastore.
     """
-    config = load_config()
-    if not config:
-        print(
-            "[bold red]Configuration not found. Please run 'qualytics init' first.[/bold red]"
+    client = get_client()
+
+    try:
+        response = client.get(
+            "containers/listing",
+            params={"datastore": datastore, "type": "computed_table"},
         )
-        raise typer.Exit(code=1)
-
-    base_url = validate_and_format_url(config["url"])
-    token = is_token_valid(config["token"])
-
-    if not token:
-        raise typer.Exit(code=1)
-
-    headers = _get_default_headers(token)
-
-    response = requests.get(
-        f"{base_url}containers/listing",
-        headers=headers,
-        params={"datastore": datastore, "type": "computed_table"},
-        verify=False,
-    )
-
-    if response.status_code != 200:
+    except QualyticsAPIError as e:
         print(
-            f"[bold red]Failed to list computed tables: {response.status_code} - {response.text}[/bold red]"
+            f"[bold red]Failed to list computed tables: {e.status_code} - {e.message}[/bold red]"
         )
         raise typer.Exit(code=1)
 

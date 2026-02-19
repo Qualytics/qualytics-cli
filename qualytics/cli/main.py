@@ -1,4 +1,5 @@
 """Main CLI commands for Qualytics CLI."""
+
 import typer
 from typing import Annotated
 from rich import print
@@ -31,9 +32,13 @@ def show_config():
     """Display the saved configuration."""
     config = load_config()
     if config:
+        ssl_status = config.get("ssl_verify", True)
+        ssl_label = "[green]enabled[/green]" if ssl_status else "[red]disabled[/red]"
+
         print(f"[bold yellow] Config file located in: {CONFIG_PATH} [/bold yellow]")
         print(f"[bold yellow] URL: {config['url']} [/bold yellow]")
         print(f"[bold yellow] Token: {config['token']} [/bold yellow]")
+        print(f"[bold yellow] SSL Verification: {ssl_label} [/bold yellow]")
 
         # Verify token expiration using the separate function
         is_token_valid(config["token"])
@@ -47,11 +52,16 @@ def init(
         ..., help="The URL to be set. Example: https://your-qualytics.qualytics.io/"
     ),
     token: str = typer.Option(..., help="The token to be set."),
+    no_verify_ssl: bool = typer.Option(
+        False,
+        "--no-verify-ssl",
+        help="Disable SSL certificate verification for API requests.",
+    ),
 ):
     """Initialize Qualytics CLI configuration."""
     url = validate_and_format_url(url)
 
-    config = {"url": url, "token": token}
+    config = {"url": url, "token": token, "ssl_verify": not no_verify_ssl}
 
     # Verify token expiration using the separate function
     token_valid = is_token_valid(token)
@@ -59,3 +69,7 @@ def init(
     if token_valid:
         save_config(config)
         print("[bold green] Configuration saved! [/bold green]")
+        if no_verify_ssl:
+            print(
+                "[bold yellow] SSL verification is disabled. Use with caution. [/bold yellow]"
+            )
