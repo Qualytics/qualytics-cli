@@ -1,4 +1,5 @@
 """Quality checks service functions."""
+
 import requests
 import typer
 from rich import print

@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 
 import jwt
 from datetime import datetime, timezone
 from rich import print
 
-
-__version__ = "0.4.0"
+try:
+    __version__ = version("qualytics-cli")
+except PackageNotFoundError:
+    __version__ = "0.4.0"
 
 # Get the home directory
 home = Path.home()

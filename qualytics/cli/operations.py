@@ -1,4 +1,5 @@
 """CLI commands for datastore operations (catalog, profile, scan)."""
+
 import typer
 from datetime import datetime
 
@@ -302,4 +303,3 @@ def operation_status(
 
 
 # ========================================== DATASTORE COMMANDS ============================================================================
-

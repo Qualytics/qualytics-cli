@@ -1,4 +1,5 @@
 """CLI commands for datastore management."""
+
 import json
 import typer
 import requests
@@ -351,4 +352,3 @@ def remove_datastore(
         except Exception as e:
             print(f"[red]Unexpected error:[/red] {e}")
             raise typer.Exit(code=1)
-

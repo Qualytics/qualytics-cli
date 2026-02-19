@@ -1,4 +1,5 @@
 """Operations service functions for catalog, profile, and scan."""
+
 import time
 import requests
 from datetime import datetime

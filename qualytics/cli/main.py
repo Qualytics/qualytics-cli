@@ -1,4 +1,5 @@
 """Main CLI commands for Qualytics CLI."""
+
 import typer
 from typing import Annotated
 from rich import print

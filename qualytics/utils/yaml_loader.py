@@ -1,4 +1,5 @@
 """YAML configuration loader utilities."""
+
 import os
 import yaml
 from dotenv import load_dotenv

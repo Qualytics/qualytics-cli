@@ -959,14 +959,28 @@ uv run pre-commit run --all-files
 # Build the package
 uv build
 
-# Run tests (if available)
+# Run tests
 uv run pytest
 
-# Bump version (patch/minor/major)
-bump2version patch   # 0.1.19 -> 0.1.20
-bump2version minor   # 0.1.19 -> 0.2.0
-bump2version major   # 0.1.19 -> 1.0.0
+# Run tests with coverage
+uv run pytest --cov --cov-report=term-missing
 ```
+
+### Versioning & Releases
+
+Version bumping is managed via `uv version` and automated through GitHub Actions:
+
+```bash
+# Check current version
+uv version
+
+# Bump version locally (patch/minor/major)
+uv version patch   # 0.4.0 -> 0.4.1
+uv version minor   # 0.4.0 -> 0.5.0
+uv version major   # 0.4.0 -> 1.0.0
+```
+
+Releases are triggered by the **Release** workflow in GitHub Actions (manual dispatch), which bumps the version, creates a git tag, and triggers the **Publish** workflow to build and publish to PyPI via trusted publishing (OIDC).
 
 ### Code Quality Standards
 
@@ -980,21 +994,27 @@ This project enforces:
 
 ```
 qualytics-cli/
-├── qualytics/           # Main package
-│   ├── __init__.py
-│   └── qualytics.py     # CLI implementation
-├── pyproject.toml       # Project configuration & dependencies
-└── .pre-commit-config.yaml  # Pre-commit hooks configuration
+├── qualytics/               # Main package
+│   ├── qualytics.py         # Entry point — registers all Typer sub-apps
+│   ├── config.py            # Configuration management
+│   ├── cli/                 # CLI commands layer (Typer sub-applications)
+│   ├── services/            # Business logic & orchestration
+│   ├── api/                 # Thin HTTP wrappers over the Qualytics API
+│   └── utils/               # Validation, file ops, YAML loading
+├── tests/                   # Test suite (pytest)
+├── pyproject.toml           # Project configuration & dependencies
+├── .pre-commit-config.yaml  # Pre-commit hooks configuration
+└── .github/workflows/       # CI/CD (lint, test, publish, release)
 ```
 
 ### Contributing
 
 1. Create a new branch for your feature/fix
 2. Make your changes
-3. Run `uv run ruff check qualytics/` and `uv run ruff format qualytics/`
-4. Run `uv run pre-commit run --all-files` to ensure all checks pass
+3. Run `uv run pytest` to ensure tests pass
+4. Run `uv run pre-commit run --all-files` to ensure all quality checks pass
 5. Commit your changes (pre-commit hooks will run automatically if installed)
-6. Submit a pull request
+6. Submit a pull request — CI will run lint, tests, and pre-commit checks automatically
 
 ---
 

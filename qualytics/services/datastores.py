@@ -1,4 +1,5 @@
 """Datastore service functions."""
+
 import requests
 import typing as t
 

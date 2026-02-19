@@ -1,4 +1,5 @@
 """CLI commands for scheduling operations."""
+
 import platform
 import subprocess
 import typer
@@ -148,4 +149,3 @@ def schedule(
 
 
 # ========================================== RUN_OPERATION_APP COMMANDS =================================================================
-

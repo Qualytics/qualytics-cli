@@ -1,4 +1,5 @@
 """CLI commands for quality checks."""
+
 import json
 import re
 import typer
@@ -509,4 +510,3 @@ def check_templates_import(
             # Print summary of created templates
             print(f"Created a total of {total_created_templates} check templates.")
             distinct_file_content(BASE_PATH + error_log_path)
-
