@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from ..api.client import QualyticsClient, QualyticsAPIError, get_client
+from ..api.operations import get_operation, list_operations
 from ..config import BASE_PATH
 from ..utils import distinct_file_content, log_error
 
@@ -514,36 +515,28 @@ def _wait_for_profile_operation(
     max_retries: int = 10,
     wait_time: int = 30,
 ) -> bool:
-    """
-    Wait for the profile operation triggered by computed table creation.
+    """Wait for the profile operation triggered by computed table creation.
 
-    Polls the operation endpoint until it finishes, then verifies container has fields.
-
-    Parameters:
-    - max_retries: Number of retry attempts if operation doesn't succeed
-    - wait_time: Seconds to wait between retry attempts
+    Uses the shared API layer to find and poll the operation, then verifies
+    the container has fields.
 
     Returns True if profile succeeded and container has fields, False otherwise.
     """
     _debug_log(f"Looking for profile operation for container {container_id}")
 
-    # First, find the profile operation for this container
+    # Find the profile operation for this container
     try:
-        response = client.get(
-            "operations",
-            params={
-                "type": "profile",
-                "datastore_id": datastore_id,
-                "container_id": container_id,
-                "sort": "desc",
-                "size": 1,
-            },
+        data = list_operations(
+            client,
+            datastore=[datastore_id],
+            operation_type="profile",
+            sort_created="desc",
+            size=1,
         )
     except QualyticsAPIError as e:
         _debug_log(f"Failed to get operations: {e.status_code}")
         return False
 
-    data = response.json()
     if not data.get("items") or len(data["items"]) == 0:
         _debug_log("No profile operation found for container")
         return False
@@ -551,19 +544,17 @@ def _wait_for_profile_operation(
     operation_id = data["items"][0]["id"]
     _debug_log(f"Found profile operation ID: {operation_id}")
 
-    # Now wait for the operation to finish
+    # Wait for the operation to finish
     for attempt in range(max_retries):
-        # Poll until operation has end_time
         poll_count = 0
         op_data = None
         while True:
             try:
-                op_response = client.get(f"operations/{operation_id}")
+                op_data = get_operation(client, operation_id)
             except QualyticsAPIError as e:
                 _debug_log(f"Failed to get operation status: {e.status_code}")
                 break
 
-            op_data = op_response.json()
             if op_data.get("end_time"):
                 _debug_log(
                     f"Operation {operation_id} finished with result: {op_data.get('result')}"
@@ -571,7 +562,7 @@ def _wait_for_profile_operation(
                 break
 
             poll_count += 1
-            if poll_count % 3 == 0:  # Log every 3rd poll
+            if poll_count % 3 == 0:
                 _debug_log(
                     f"Operation {operation_id} still running... (poll #{poll_count})"
                 )
@@ -602,12 +593,10 @@ def _wait_for_profile_operation(
                 )
                 return False
 
-        # If we're on last attempt, return what we have
         if attempt == max_retries - 1:
             _debug_log(f"Max retries ({max_retries}) reached, giving up")
             return False
 
-        # Wait before retrying
         print(
             f"  [dim]Attempt {attempt + 1} - profile not ready, retrying in {wait_time}s...[/dim]"
         )

@@ -370,91 +370,148 @@ qualytics schedule export-metadata --crontab "CRONTAB_EXPRESSION" --datastore "D
 | `--containers`| TEXT | Comma-separated list of container IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]" | No       |
 | `--options`  | TEXT | Comma-separated list of options to export or "all". Example: "anomalies, checks, field-profiles" | Yes      |
 
-### Run a Catalog Operation on a Datastore
+### Operations
 
-Allows you to trigger a catalog operation on any current datastore (requires admin permissions on the datastore).
+The `operations` command group provides full lifecycle management for datastore operations: trigger, monitor, list, and abort.
 
-```bash
-qualytics run catalog --datastore "DATASTORE_ID_LIST" --include "INCLUDE_LIST" --prune --recreate --background
-```
-
-| Option         | Type | Description                                                                                         | Required |
-|----------------|------|-----------------------------------------------------------------------------------------------------|----------|
-| `--datastore`  | TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"     | Yes      |
-| `--include`    | TEXT | Comma-separated list of include types or array-like format. Example: "table,view" or "[table,view]" | No       |
-| `--prune`      | BOOL | Prune the operation. Do not include if you want prune == false                                      | No       |
-| `--recreate`   | BOOL | Recreate the operation. Do not include if you want recreate == false                                | No       |
-| `--background` | BOOL | Starts the catalog but does not wait for the operation to finish                                    | No       |
-| `--poll-interval` | INT | Seconds between status checks when waiting (default: 10)                                         | No       |
-| `--timeout`    | INT  | Maximum seconds to wait for completion (default: 1800 = 30 min)                                    | No       |
-
-### Run a Profile Operation on a Datastore
-
-Allows you to trigger a profile operation on any current datastore (requires admin permissions on the datastore).
+#### Run a Catalog Operation
 
 ```bash
-qualytics run profile --datastore "DATASTORE_ID_LIST" --container_names "CONTAINER_NAMES_LIST" --container_tags "CONTAINER_TAGS_LIST"
---inference_threshold "INFERENCE_THRESHOLD" --infer_as_draft --max_records_analyzed_per_partition "MAX_RECORDS_ANALYZED_PER_PARTITION"
---max_count_testing_sample "MAX_COUNT_TESTING_SAMPLE" --percent_testing_threshold "PERCENT_TESTING_THRESHOLD" --high_correlation_threshold
-"HIGH_CORRELATION_THRESHOLD" --greater_than_time "GREATER_THAN_TIME" --greater_than_batch "GREATER_THAN_BATCH" --histogram_max_distinct_values
-"HISTOGRAM_MAX_DISTINCT_VALUES" --background
+qualytics operations catalog --datastore-id 42
+qualytics operations catalog --datastore-id "1,2,3" --include "table,view" --prune --recreate --background
 ```
 
-| Option                                 | Type     | Description                                                                                                                                      | Required |
-|----------------------------------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------|----------|
-| `--datastore`                          | TEXT     | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                                                  | Yes      |
-| `--container_names`                    | TEXT     | Comma-separated list of container names or array-like format. Example: "container1,container2" or "[container1,container2]"                      | No       |
-| `--container_tags`                     | TEXT     | Comma-separated list of container tags or array-like format. Example: "tag1,tag2" or "[tag1,tag2]"                                               | No       |
-| `--inference_threshold`                | INT      | Inference quality checks threshold in profile from 0 to 5. Do not include if inference_threshold == 0                                             | No       |
-| `--infer_as_draft`                     | BOOL     | Infer all quality checks in profile as DRAFT. Do not include if you want infer_as_draft == False                                                 | No       |
-| `--max_records_analyzed_per_partition` | INT      | Number of max records analyzed per partition                                                                                                     | No       |
-| `--max_count_testing_sample`           | INT      | The number of records accumulated during profiling for validation of inferred checks. Capped at 100,000                                           | No       |
-| `--percent_testing_threshold`          | FLOAT    | Percent of testing threshold                                                                                                                     | No       |
-| `--high_correlation_threshold`         | FLOAT    | Number of correlation threshold                                                                                                                  | No       |
-| `--greater_than_time`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
-| `--greater_than_batch`                 | FLOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
-| `--histogram_max_distinct_values`      | INT      | Number of max distinct values in the histogram                                                                                                   | No       |
-| `--background`                         | BOOL     | Starts the profile operation but does not wait for the operation to finish                                                                       | No       |
-| `--poll-interval`                      | INT      | Seconds between status checks when waiting (default: 10)                                                                                         | No       |
-| `--timeout`                            | INT      | Maximum seconds to wait for completion (default: 1800 = 30 min)                                                                                  | No       |
+| Option             | Type    | Description                                      | Required |
+|--------------------|---------|--------------------------------------------------|----------|
+| `--datastore-id`   | TEXT    | Comma-separated Datastore IDs                    | Yes      |
+| `--include`        | TEXT    | Include types: "table,view"                      | No       |
+| `--prune`          | FLAG    | Remove containers not found in catalog           | No       |
+| `--recreate`       | FLAG    | Drop and recreate all containers                 | No       |
+| `--background`     | FLAG    | Start without waiting for completion             | No       |
+| `--poll-interval`  | INT     | Seconds between status checks (default: 10)      | No       |
+| `--timeout`        | INT     | Max seconds to wait (default: 1800 = 30 min)     | No       |
 
-
-### Run a Scan Operation on a Datastore
-
-Allows you to trigger a scan operation on a datastore (requires admin permissions on the datastore).
+#### Run a Profile Operation
 
 ```bash
-qualytics run scan --datastore "DATASTORE_ID_LIST" --container_names "CONTAINER_NAMES_LIST" --container_tags "CONTAINER_TAGS_LIST"
---incremental --remediation --max_records_analyzed_per_partition "MAX_RECORDS_ANALYZED_PER_PARTITION" --enrichment_source_record_limit
---greater_than_time "GREATER_THAN_TIME" --greater_than_batch "GREATER_THAN_BATCH" --background
+qualytics operations profile --datastore-id 42
+qualytics operations profile --datastore-id 42 --container-names "orders,customers" --inference-threshold 3 --infer-as-draft
 ```
 
-| Option                                 | Type     | Description                                                                                                                                      | Required |
-|----------------------------------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------|----------|
-| `--datastore`                          | TEXT     | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                                                  | Yes      |
-| `--container_names`                    | TEXT     | Comma-separated list of container names or array-like format. Example: "container1,container2" or "[container1,container2]"                      | No       |
-| `--container_tags`                     | TEXT     | Comma-separated list of container tags or array-like format. Example: "tag1,tag2" or "[tag1,tag2]"                                                | No       |
-| `--incremental`                        | BOOL     | Process only new or updated records since the last incremental scan                                                                              | No       |
-| `--remediation`                        | TEXT     | Replication strategy for source tables in the enrichment datastore. Either 'append', 'overwrite', or 'none'                                      | No       |
-| `--max_records_analyzed_per_partition` | INT      | Number of max records analyzed per partition. Value must be greater than or equal to 0                                                           | No       |
-| `--enrichment_source_record_limit`     | INT      | Limit of enrichment source records per run. Value must be greater than or equal to -1                                                            | No       |
-| `--greater_than_time`                  | DATETIME | Only include rows where the incremental field's value is greater than this time. Use one of these formats %Y-%m-%dT%H:%M:%S or %Y-%m-%d %H:%M:%S | No       |
-| `--greater_than_batch`                 | FLOAT    | Only include rows where the incremental field's value is greater than this number                                                                | No       |
-| `--background`                         | BOOL     | Starts the scan operation but does not wait for the operation to finish                                                                          | No       |
-| `--poll-interval`                      | INT      | Seconds between status checks when waiting (default: 10)                                                                                         | No       |
-| `--timeout`                            | INT      | Maximum seconds to wait for completion (default: 1800 = 30 min)                                                                                  | No       |
+| Option                                  | Type     | Description                                          | Required |
+|-----------------------------------------|----------|------------------------------------------------------|----------|
+| `--datastore-id`                        | TEXT     | Comma-separated Datastore IDs                        | Yes      |
+| `--container-names`                     | TEXT     | Comma-separated container names                      | No       |
+| `--container-tags`                      | TEXT     | Comma-separated container tags                       | No       |
+| `--inference-threshold`                 | INT      | Check inference threshold (0 to 5)                   | No       |
+| `--infer-as-draft`                      | FLAG     | Infer checks as Draft                                | No       |
+| `--max-records-analyzed-per-partition`  | INT      | Max records per partition (-1 for unlimited)         | No       |
+| `--max-count-testing-sample`            | INT      | Records for validation (max 100000)                  | No       |
+| `--percent-testing-threshold`           | FLOAT    | Testing threshold percentage                         | No       |
+| `--high-correlation-threshold`          | FLOAT    | Correlation threshold                                | No       |
+| `--greater-than-time`                   | DATETIME | Incremental start time (YYYY-MM-DDTHH:MM:SS)        | No       |
+| `--greater-than-batch`                  | FLOAT    | Incremental batch number threshold                   | No       |
+| `--histogram-max-distinct-values`       | INT      | Max distinct values for histogram                    | No       |
+| `--background`                          | FLAG     | Start without waiting for completion                 | No       |
+| `--poll-interval`                       | INT      | Seconds between status checks (default: 10)          | No       |
+| `--timeout`                             | INT      | Max seconds to wait (default: 1800 = 30 min)         | No       |
 
-### Check Operation Status
-
-Allows a user to check an operation's status. Useful if a user triggered an operation but had it running in the background.
+#### Run a Scan Operation
 
 ```bash
-qualytics operation check_status --ids "OPERATION_IDS"
+qualytics operations scan --datastore-id 42
+qualytics operations scan --datastore-id 42 --container-names "orders" --incremental --remediation append
 ```
 
-| Option  | Type     | Description                                                                                                               | Required |
-|---------|----------|---------------------------------------------------------------------------------------------------------------------------|----------|
-| `--ids` | TEXT     | Comma-separated list of Operation IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]"                           | Yes      |
+| Option                                  | Type     | Description                                          | Required |
+|-----------------------------------------|----------|------------------------------------------------------|----------|
+| `--datastore-id`                        | TEXT     | Comma-separated Datastore IDs                        | Yes      |
+| `--container-names`                     | TEXT     | Comma-separated container names                      | No       |
+| `--container-tags`                      | TEXT     | Comma-separated container tags                       | No       |
+| `--incremental`                         | FLAG     | Process only new/updated records since last scan     | No       |
+| `--remediation`                         | TEXT     | Replication strategy: append, overwrite, or none     | No       |
+| `--max-records-analyzed-per-partition`  | INT      | Max records per partition (-1 for unlimited)         | No       |
+| `--enrichment-source-record-limit`      | INT      | Enrichment source records limit (>= 1)               | No       |
+| `--greater-than-time`                   | DATETIME | Incremental start time (YYYY-MM-DDTHH:MM:SS)        | No       |
+| `--greater-than-batch`                  | FLOAT    | Incremental batch number threshold                   | No       |
+| `--background`                          | FLAG     | Start without waiting for completion                 | No       |
+| `--poll-interval`                       | INT      | Seconds between status checks (default: 10)          | No       |
+| `--timeout`                             | INT      | Max seconds to wait (default: 1800 = 30 min)         | No       |
+
+#### Run a Materialize Operation
+
+```bash
+qualytics operations materialize --datastore-id 42
+qualytics operations materialize --datastore-id 42 --container-names "ct_orders" --max-records-per-partition 5000
+```
+
+| Option                        | Type | Description                                      | Required |
+|-------------------------------|------|--------------------------------------------------|----------|
+| `--datastore-id`              | TEXT | Comma-separated Datastore IDs                    | Yes      |
+| `--container-names`           | TEXT | Comma-separated container names                  | No       |
+| `--container-tags`            | TEXT | Comma-separated container tags                   | No       |
+| `--max-records-per-partition` | INT  | Max records per partition (-1 for unlimited)     | No       |
+| `--background`                | FLAG | Start without waiting for completion             | No       |
+| `--poll-interval`             | INT  | Seconds between status checks (default: 10)      | No       |
+| `--timeout`                   | INT  | Max seconds to wait (default: 1800 = 30 min)     | No       |
+
+#### Run an Export Operation
+
+```bash
+qualytics operations export --datastore-id 42 --asset-type anomalies
+qualytics operations export --datastore-id 42 --asset-type checks --container-ids "1,2,3" --include-deleted
+```
+
+| Option             | Type | Description                                      | Required |
+|--------------------|------|--------------------------------------------------|----------|
+| `--datastore-id`   | TEXT | Comma-separated Datastore IDs                    | Yes      |
+| `--asset-type`     | TEXT | Asset type: anomalies, checks, or profiles       | Yes      |
+| `--container-ids`  | TEXT | Comma-separated container IDs                    | No       |
+| `--container-tags` | TEXT | Comma-separated container tags                   | No       |
+| `--include-deleted`| FLAG | Include deleted items in export                  | No       |
+| `--background`     | FLAG | Start without waiting for completion             | No       |
+| `--poll-interval`  | INT  | Seconds between status checks (default: 10)      | No       |
+| `--timeout`        | INT  | Max seconds to wait (default: 1800 = 30 min)     | No       |
+
+#### Get Operation Details
+
+```bash
+qualytics operations get --id 123
+qualytics operations get --id 123 --format json
+```
+
+| Option     | Type    | Description                                      | Required |
+|------------|---------|--------------------------------------------------|----------|
+| `--id`     | INTEGER | Operation ID                                     | Yes      |
+| `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
+
+#### List Operations
+
+```bash
+qualytics operations list
+qualytics operations list --datastore-id 42 --type scan --status "running,success" --format json
+```
+
+| Option           | Type | Description                                              | Required |
+|------------------|------|----------------------------------------------------------|----------|
+| `--datastore-id` | TEXT | Comma-separated Datastore IDs to filter by               | No       |
+| `--type`         | TEXT | Operation type: catalog, profile, scan, materialize, export | No    |
+| `--status`       | TEXT | Comma-separated result statuses: running, success, failure, aborted | No |
+| `--start-date`   | TEXT | Start date filter (YYYY-MM-DD)                           | No       |
+| `--end-date`     | TEXT | End date filter (YYYY-MM-DD)                             | No       |
+| `--format`       | TEXT | Output format: `yaml` or `json` (default: `yaml`)       | No       |
+
+#### Abort a Running Operation
+
+```bash
+qualytics operations abort --id 123
+```
+
+| Option | Type    | Description                  | Required |
+|--------|---------|------------------------------|----------|
+| `--id` | INTEGER | Operation ID to abort        | Yes      |
+
+**Note**: Abort is best-effort. If the operation has already finished, it's a no-op.
 
 ## Configuring Connections
 
@@ -639,14 +696,15 @@ When creating a datastore with `--connection-name`:
 
 This means you can define your connection once and reuse it across multiple datastores!
 
-### Create a Datastore
+### Datastores
 
-Create a new datastore in Qualytics. You can either reference an existing connection by ID or specify a connection name from your `connections.yml` file.
+The `datastores` command group provides full CRUD operations plus connection verification and enrichment management.
 
-#### Example: Creating a Regular Datastore
+#### Create a Datastore
 
 ```bash
-qualytics datastore create \
+# With connection name from connections.yml
+qualytics datastores create \
   --name "Production Analytics" \
   --connection-name "prod_snowflake_connection" \
   --database "ANALYTICS_DB" \
@@ -654,79 +712,143 @@ qualytics datastore create \
   --tags "production,analytics" \
   --teams "data-team,engineering" \
   --trigger-catalog
+
+# With existing connection ID
+qualytics datastores create \
+  --name "Dev Analytics" \
+  --connection-id 5 \
+  --database "DEV_DB" \
+  --schema "PUBLIC"
+
+# Preview payload without creating
+qualytics datastores create --name "test" --connection-id 5 --database "db" --schema "sc" --dry-run
 ```
 
-#### Example: Creating an Enrichment Datastore
+| Option                                 | Type    | Description                                                                 | Required |
+|----------------------------------------|---------|-----------------------------------------------------------------------------|----------|
+| `--name`                               | TEXT    | Datastore name                                                              | Yes      |
+| `--connection-name`                    | TEXT    | Connection name from connections.yml (mutually exclusive with --connection-id) | No*    |
+| `--connection-id`                      | INTEGER | Existing connection ID (mutually exclusive with --connection-name)           | No*      |
+| `--database`                           | TEXT    | Database name                                                               | Yes      |
+| `--schema`                             | TEXT    | Schema name                                                                 | Yes      |
+| `--tags`                               | TEXT    | Comma-separated tags                                                        | No       |
+| `--teams`                              | TEXT    | Comma-separated team names                                                  | No       |
+| `--enrichment-only/--no-enrichment-only` | FLAG | Set datastore as enrichment-only                                            | No       |
+| `--enrichment-prefix`                  | TEXT    | Prefix for enrichment artifacts                                             | No       |
+| `--enrichment-source-record-limit`     | INTEGER | Enrichment source records limit (min: 1)                                    | No       |
+| `--enrichment-remediation-strategy`    | TEXT    | Strategy: none, append, or overwrite (default: none)                        | No       |
+| `--high-count-rollup-threshold`        | INTEGER | High count rollup threshold (min: 1)                                        | No       |
+| `--trigger-catalog/--no-trigger-catalog` | FLAG | Trigger catalog after creation (default: True)                              | No       |
+| `--dry-run`                            | FLAG    | Print payload without making HTTP request                                   | No       |
+| `--format`                             | TEXT    | Output format: `yaml` or `json` (default: `yaml`)                          | No       |
+
+**Note**: You must provide either `--connection-name` or `--connection-id`, but not both.
+
+#### Update a Datastore
 
 ```bash
-qualytics datastore create \
-  --name "Data Quality Enrichment" \
-  --connection-name "enrichment_db_connection" \
-  --database "DQ_ENRICHMENT" \
-  --schema "QUALITY" \
-  --enrichment-only \
-  --enrichment-prefix "dq_" \
-  --enrichment-source-record-limit 1000 \
-  --enrichment-remediation-strategy "append" \
-  --trigger-catalog
+# Rename
+qualytics datastores update --id 42 --name "New Name"
+
+# Update multiple fields
+qualytics datastores update --id 42 --database "new_db" --schema "new_schema" --tags "updated,v2"
+
+# Change enrichment settings
+qualytics datastores update --id 42 --enrichment-remediation-strategy append --enrichment-source-record-limit 500
 ```
 
-| Option                                 | Type    | Description                                                                                      | Required |
-|----------------------------------------|---------|--------------------------------------------------------------------------------------------------|----------|
-| `--name`                               | TEXT    | Name for the datastore                                                                           | Yes      |
-| `--connection-name`                    | TEXT    | Connection name from the 'name' field in connections.yml (mutually exclusive with connection-id)| No       |
-| `--connection-id`                      | INTEGER | Existing connection ID to reference (mutually exclusive with connection-name)                    | No       |
-| `--database`                           | TEXT    | The database name from the connection being used                                                 | Yes      |
-| `--schema`                             | TEXT    | The schema name from the connection being used                                                   | Yes      |
-| `--tags`                               | TEXT    | Comma-separated list of tags                                                                     | No       |
-| `--teams`                              | TEXT    | Comma-separated list of team names                                                               | No       |
-| `--enrichment-only`                    | BOOL    | Set if datastore will be an enrichment one (use flag to enable)                                  | No       |
-| `--enrichment-prefix`                  | TEXT    | Prefix for enrichment artifacts                                                                  | No       |
-| `--enrichment-source-record-limit`     | INTEGER | Limit of enrichment source records (min: 1)                                                      | No       |
-| `--enrichment-remediation-strategy`    | TEXT    | Strategy for enrichment: 'append', 'overwrite', or 'none' (default: 'none')                     | No       |
-| `--high-count-rollup-threshold`        | INTEGER | High count rollup threshold (min: 1)                                                             | No       |
-| `--trigger-catalog`/`--no-trigger-catalog` | BOOL | Whether to trigger catalog after creation (default: True)                                     | No       |
-| `--dry-run`                            | BOOL    | Print payload only without making HTTP request                                                   | No       |
-| `--format`                             | TEXT    | Output format for payload preview: `yaml` or `json` (default: `yaml`)                           | No       |
+| Option                                 | Type    | Description                                      | Required |
+|----------------------------------------|---------|--------------------------------------------------|----------|
+| `--id`                                 | INTEGER | Datastore ID to update                           | Yes      |
+| `--name`                               | TEXT    | New datastore name                               | No       |
+| `--connection-id`                      | INTEGER | New connection ID                                | No       |
+| `--database`                           | TEXT    | New database                                     | No       |
+| `--schema`                             | TEXT    | New schema                                       | No       |
+| `--tags`                               | TEXT    | Comma-separated tags                             | No       |
+| `--teams`                              | TEXT    | Comma-separated team names                       | No       |
+| `--enrichment-only/--no-enrichment-only` | FLAG | Enrichment-only flag                             | No       |
+| `--enrichment-prefix`                  | TEXT    | Prefix for enrichment artifacts                  | No       |
+| `--enrichment-source-record-limit`     | INTEGER | Enrichment source records limit                  | No       |
+| `--enrichment-remediation-strategy`    | TEXT    | Strategy: none, append, or overwrite             | No       |
+| `--high-count-rollup-threshold`        | INTEGER | High count rollup threshold                      | No       |
+| `--format`                             | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
 
-**Note**: You must provide either `--connection-name` or `--connection-id`, but not both. Use `--connection-name` to create a new connection from your YAML config, or `--connection-id` to reference an existing connection.
-
-### List All Datastores
+#### Get a Datastore
 
 ```bash
-qualytics datastore list
-qualytics datastore list --format json   # JSON output for scripting
+qualytics datastores get --id 42
+qualytics datastores get --name "Production Analytics" --format json
 ```
 
-### Get a Datastore
-
-Retrieve a datastore by either its ID or name.
-
-**By ID:**
-```bash
-qualytics datastore get --id DATASTORE_ID
-```
-
-**By Name:**
-```bash
-qualytics datastore get --name "My Datastore Name"
-```
-
-| Option   | Type    | Description                                      | Required |
-|----------|---------|--------------------------------------------------|----------|
+| Option     | Type    | Description                                      | Required |
+|------------|---------|--------------------------------------------------|----------|
 | `--id`     | INTEGER | Datastore ID (mutually exclusive with --name)    | No*      |
 | `--name`   | TEXT    | Datastore name (mutually exclusive with --id)    | No*      |
 | `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
 
 **Note**: You must provide either `--id` or `--name`, but not both.
 
-### Delete a Datastore
+#### List Datastores
 
 ```bash
-qualytics datastore delete --id DATASTORE_ID
+qualytics datastores list
+qualytics datastores list --name "prod" --type "postgresql,snowflake" --tag "production"
+qualytics datastores list --enrichment-only --format json
 ```
 
-**Warning**: Use with caution as this will permanently delete the datastore.
+| Option                                 | Type | Description                                              | Required |
+|----------------------------------------|------|----------------------------------------------------------|----------|
+| `--name`                               | TEXT | Filter by name (search)                                  | No       |
+| `--type`                               | TEXT | Comma-separated connection types (e.g. postgresql,snowflake) | No   |
+| `--tag`                                | TEXT | Tag name to filter by                                    | No       |
+| `--enrichment-only/--no-enrichment-only` | FLAG | Filter enrichment-only datastores                      | No       |
+| `--format`                             | TEXT | Output format: `yaml` or `json` (default: `yaml`)       | No       |
+
+#### Delete a Datastore
+
+```bash
+qualytics datastores delete --id 42
+```
+
+| Option | Type    | Description           | Required |
+|--------|---------|-----------------------|----------|
+| `--id` | INTEGER | Datastore ID to delete | Yes      |
+
+**Warning**: Use with caution — this permanently deletes the datastore.
+
+#### Verify Connection
+
+Test the connection for an existing datastore. Useful for CI health checks.
+
+```bash
+qualytics datastores verify --id 42
+qualytics datastores verify --id 42 --format json
+```
+
+| Option     | Type    | Description                                      | Required |
+|------------|---------|--------------------------------------------------|----------|
+| `--id`     | INTEGER | Datastore ID to verify                           | Yes      |
+| `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
+
+#### Manage Enrichment Links
+
+Link or unlink an enrichment datastore to/from a source datastore.
+
+```bash
+# Link enrichment datastore 5 to source datastore 1
+qualytics datastores enrichment --id 1 --link 5
+
+# Unlink enrichment from datastore 1
+qualytics datastores enrichment --id 1 --unlink
+```
+
+| Option     | Type    | Description                                          | Required |
+|------------|---------|------------------------------------------------------|----------|
+| `--id`     | INTEGER | Source datastore ID                                  | Yes      |
+| `--link`   | INTEGER | Enrichment datastore ID to link                      | No*      |
+| `--unlink` | FLAG    | Unlink enrichment datastore                          | No*      |
+
+**Note**: You must provide either `--link` or `--unlink`, but not both.
 
 ---
 

@@ -25,27 +25,30 @@ def test_checks_command_registered(cli_runner):
     assert "checks" in result.output.lower() or "export" in result.output.lower()
 
 
-def test_datastore_command_registered(cli_runner):
-    """Test that the 'datastore' command group is registered."""
-    result = cli_runner.invoke(app, ["datastore", "--help"])
+def test_datastores_command_registered(cli_runner):
+    """Test that the 'datastores' command group is registered."""
+    result = cli_runner.invoke(app, ["datastores", "--help"])
     assert result.exit_code == 0
-    assert "datastore" in result.output.lower() or "list" in result.output.lower()
+    assert "create" in result.output.lower()
+    assert "update" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "delete" in result.output.lower()
+    assert "verify" in result.output.lower()
+    assert "enrichment" in result.output.lower()
 
 
-def test_run_command_registered(cli_runner):
-    """Test that the 'run' command group is registered."""
-    result = cli_runner.invoke(app, ["run", "--help"])
+def test_operations_command_registered(cli_runner):
+    """Test that the 'operations' command group is registered."""
+    result = cli_runner.invoke(app, ["operations", "--help"])
     assert result.exit_code == 0
-    assert "catalog" in result.output.lower() or "profile" in result.output.lower()
-
-
-def test_operation_command_registered(cli_runner):
-    """Test that the 'operation' command group is registered."""
-    result = cli_runner.invoke(app, ["operation", "--help"])
-    assert result.exit_code == 0
-    assert (
-        "operation" in result.output.lower() or "check_status" in result.output.lower()
-    )
+    assert "catalog" in result.output.lower()
+    assert "profile" in result.output.lower()
+    assert "scan" in result.output.lower()
+    assert "materialize" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "abort" in result.output.lower()
 
 
 def test_schedule_command_registered(cli_runner):

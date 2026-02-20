@@ -26,20 +26,21 @@ qualytics-cli/
 │   ├── api/
 │   │   ├── client.py         # Centralized API client (QualyticsClient)
 │   │   ├── anomalies.py      # Anomaly API operations (CRUD + bulk)
-│   │   ├── datastores.py     # Datastore API operations
+│   │   ├── datastores.py     # Datastore API operations (CRUD + verify + enrichment)
+│   │   ├── operations.py     # Operation API operations (run, get, list, abort)
 │   │   └── quality_checks.py # Quality checks API operations (CRUD + bulk)
 │   ├── cli/
 │   │   ├── main.py           # init, show-config commands
 │   │   ├── anomalies.py      # anomalies get/list/update/archive/delete commands
 │   │   ├── checks.py         # checks CRUD + git-friendly export/import
-│   │   ├── datastores.py     # datastore create/list/get/delete commands
-│   │   ├── operations.py     # run catalog/profile/scan commands
+│   │   ├── datastores.py     # datastores create/update/get/list/delete/verify/enrichment commands
+│   │   ├── operations.py     # operations catalog/profile/scan/materialize/export/get/list/abort commands
 │   │   ├── computed_tables.py # computed-tables import/list/preview commands
 │   │   └── schedule.py       # schedule export-metadata command
 │   ├── services/
 │   │   ├── quality_checks.py # Quality check business logic
 │   │   ├── containers.py     # Container/table ID resolution
-│   │   ├── datastores.py     # Datastore lookup and payload building
+│   │   ├── datastores.py     # Datastore lookup, payload building, name resolution
 │   │   └── operations.py     # Operation execution and polling
 │   └── utils/
 │       ├── validation.py     # URL normalization
@@ -50,6 +51,8 @@ qualytics-cli/
 │   ├── conftest.py           # Shared fixtures (cli_runner)
 │   ├── test_anomalies.py     # Anomaly API + CLI tests
 │   ├── test_cli.py           # CLI smoke tests (command registration)
+│   ├── test_datastores.py    # Datastore API + service + CLI tests
+│   ├── test_operations.py    # Operation API + service + CLI tests
 │   ├── test_client.py        # API client unit tests
 │   ├── test_config.py        # Configuration and token validation tests
 │   ├── test_quality_checks.py # Quality checks API + CLI + service tests
@@ -123,16 +126,24 @@ SSL verification is **secure by default** (`True`) and configurable per installa
 - `InsecureRequestWarning` is suppressed only when SSL is explicitly disabled
 - `qualytics show-config` displays the current SSL status
 
-### Operation Polling
+### Operations (`api/operations.py`, `services/operations.py`, `cli/operations.py`)
 
-Operations (catalog, profile, scan) use time-based polling instead of fixed retry counts:
+Full operation lifecycle management — trigger, monitor, list, and abort operations.
 
+**Supported operation types:** `catalog`, `profile`, `scan`, `materialize`, `export`
+
+**Architecture:**
+- `api/operations.py` — 5 thin HTTP wrappers: `run_operation`, `get_operation`, `list_operations`, `list_all_operations`, `abort_operation`
+- `services/operations.py` — business logic: `run_catalog`, `run_profile`, `run_scan`, `run_materialize`, `run_export`, `wait_for_operation`, `_handle_operation_result`
+- `cli/operations.py` — 8 CLI commands under `qualytics operations`
+
+**Polling behavior:**
 | Setting | Default | CLI Flag |
 |---------|---------|----------|
 | Poll interval | 10 seconds | `--poll-interval` |
 | Timeout | 1800 seconds (30 min) | `--timeout` |
 
-- Periodic status updates print every 60 seconds during long waits
+- Shows progress counters (containers analyzed, records processed) every 60s for profile/scan
 - Returns `None` on timeout, allowing callers to handle gracefully
 - Background mode (`--background`) skips polling entirely
 
@@ -189,6 +200,24 @@ COUNT=$(echo "$ANOMALIES" | python -c "import sys,json; print(len(json.load(sys.
 if [ "$COUNT" -gt "0" ]; then echo "FAIL: $COUNT active anomalies"; exit 1; fi
 ```
 
+### Datastores (`api/datastores.py`, `services/datastores.py`, `cli/datastores.py`)
+
+Full datastore lifecycle management — create, update, get, list, delete, verify connections, and manage enrichment links.
+
+**Architecture:**
+- `api/datastores.py` — 10 thin HTTP wrappers: `create_datastore`, `update_datastore`, `get_datastore`, `list_datastores`, `list_all_datastores`, `delete_datastore`, `verify_connection`, `validate_connection`, `connect_enrichment`, `disconnect_enrichment`
+- `services/datastores.py` — business logic: `get_connection_by`, `get_datastore_by`, `get_datastore_by_name`, `build_create_datastore_payload`, `build_update_datastore_payload`
+- `cli/datastores.py` — 7 CLI commands under `qualytics datastores`
+
+**CLI commands:**
+- `create` — create with `--connection-name` (YAML lookup + auto-create) or `--connection-id`, `--dry-run` support
+- `update` — partial update: name, connection, database, schema, tags, teams, enrichment settings
+- `get` — by `--id` or `--name` with `--format yaml|json`
+- `list` — paginated with `--name`, `--type`, `--tag`, `--enrichment-only` filters
+- `delete` — by `--id`
+- `verify` — test connection for an existing datastore (CI health checks)
+- `enrichment` — `--link <id>` to connect or `--unlink` to disconnect enrichment datastore
+
 ### Serialization (`utils/serialization.py`)
 
 YAML is the default format for all CLI input/output. JSON is supported via `--format json`.
@@ -239,9 +268,8 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | `show-config` | — | Display current configuration |
 | `anomalies` | `get`, `list`, `update`, `archive`, `delete` | Anomaly management (status updates, archiving, deletion) |
 | `checks` | `create`, `get`, `list`, `update`, `delete`, `export`, `import`, `export-templates`, `import-templates` | Quality check CRUD + git-friendly export/import |
-| `datastore` | `create`, `list`, `get`, `delete` | Datastore CRUD |
-| `run` | `catalog`, `profile`, `scan` | Trigger datastore operations |
-| `operation` | `check_status` | Check operation status |
+| `datastores` | `create`, `update`, `get`, `list`, `delete`, `verify`, `enrichment` | Datastore CRUD + connection verification + enrichment linking |
+| `operations` | `catalog`, `profile`, `scan`, `materialize`, `export`, `get`, `list`, `abort` | Operation lifecycle (trigger, monitor, abort) |
 | `computed-tables` | `import`, `list`, `preview` | Computed table management |
 | `schedule` | `export-metadata` | Cron-based export scheduling |
 
@@ -331,6 +359,8 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 | `test_client.py` | QualyticsClient: URL building, SSL config, exception hierarchy, get_client factory |
 | `test_config.py` | Config loading, saving, token validation, legacy JSON migration |
 | `test_anomalies.py` | API layer (list, get, update, bulk update, delete, bulk delete), CLI commands (get, list, update, archive, delete), status validation, bulk operations |
+| `test_datastores.py` | API layer (create, update, get, list, list_all, delete, verify, validate, enrichment connect/disconnect), service layer (get_datastore_by, build payloads), CLI commands (create, update, get, list, delete, verify, enrichment), validation |
+| `test_operations.py` | API layer (run, get, list, list_all, abort), service layer (polling, multi-datastore, background mode, payload construction), CLI commands (catalog, profile, scan, materialize, export, get, list, abort), validation |
 | `test_quality_checks.py` | API layer (endpoints, params, pagination), CLI commands (all 9), service import (upsert, dry-run, multi-datastore), promotion workflow, edge cases |
 | `test_serialization.py` | Format detection, YAML/JSON load/dump, datetime preservation, display formatting |
 
@@ -433,13 +463,20 @@ uv version --short                   # Show current version
 | GET | `/containers/listing` | Get container/table IDs |
 | POST | `/containers` | Create computed tables |
 | GET | `/containers/{id}/field-profiles` | Get field profiles |
-| POST | `/operations/run` | Trigger operations |
-| GET | `/operations/{id}` | Check operation status |
-| GET | `/operations` | List operations (with filters) |
+| POST | `/operations/run` | Trigger operations (catalog, profile, scan, materialize, export) |
+| GET | `/operations/{id}` | Get operation detail with progress counters |
+| GET | `/operations` | List operations (paginated, with filters) |
+| PUT | `/operations/abort/{id}` | Abort a running operation (best-effort) |
 | GET | `/connections` | List connections (paginated) |
 | POST | `/datastores` | Create datastores |
-| GET | `/datastores/listing` | List datastores |
+| PUT | `/datastores/{id}` | Update datastores |
+| GET | `/datastores/{id}` | Get datastore by ID |
+| GET | `/datastores` | List datastores (paginated, with filters) |
 | DELETE | `/datastores/{id}` | Delete datastores |
+| POST | `/datastores/{id}/connection` | Verify datastore connection |
+| POST | `/datastores/connection` | Validate connection pre-creation |
+| PATCH | `/datastores/{id}/enrichment/{eid}` | Link enrichment datastore |
+| DELETE | `/datastores/{id}/enrichment` | Unlink enrichment datastore |
 | POST | `/export/check-templates` | Export templates to enrichment |
 
 ### Authentication
