@@ -355,6 +355,109 @@ fi
 qualytics anomalies update --ids "1,2,3" --status Acknowledged --description "Acknowledged by CI pipeline"
 ```
 
+### Config Export/Import (Config-as-Code)
+
+The `config` command group enables config-as-code workflows — export your entire Qualytics configuration to a hierarchical YAML folder structure, track it in git, and import it into any environment. This is the foundation for cross-environment deployment (Dev → Test → Prod) via CI/CD.
+
+#### Export Configuration
+
+Export connections, datastores, computed containers, and quality checks for one or more datastores:
+
+```bash
+# Export a single datastore
+qualytics config export --datastore-id 42
+
+# Export multiple datastores
+qualytics config export --datastore-id 42 --datastore-id 43
+
+# Custom output directory
+qualytics config export --datastore-id 42 --output ./my-config
+
+# Export only specific resource types
+qualytics config export --datastore-id 42 --include connections,datastores
+```
+
+This creates a hierarchical folder structure:
+```
+qualytics-export/
+  connections/
+    prod_pg.yaml                      # Connection with ${ENV_VAR} secrets
+  datastores/
+    prod_warehouse/
+      _datastore.yaml                 # Datastore config (references connection by name)
+      containers/
+        filtered_orders/
+          _container.yaml             # Computed container definition
+      checks/
+        orders/
+          notnull__order_id.yaml      # Quality check (one file per check)
+          between__total_amount.yaml
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--datastore-id` | INTEGER (repeatable) | Datastore ID(s) to export | Yes |
+| `--output` | TEXT | Root output directory (default: `./qualytics-export`) | No |
+| `--include` | TEXT | Comma-separated resource types: `connections,datastores,containers,checks` (default: all) | No |
+
+**Key behaviors:**
+- Secrets (passwords, keys) are replaced with `${ENV_VAR}` placeholders — never exported in plaintext
+- Connections are deduplicated across datastores (each exported once by name)
+- Only computed containers are exported (table/view/file are created by catalog operations)
+- Re-running export on the same directory produces zero git diff when nothing has changed
+- ID references are replaced with name references for cross-environment portability
+
+#### Import Configuration
+
+Import configuration from a YAML folder structure into any Qualytics instance:
+
+```bash
+# Import everything
+qualytics config import --input ./qualytics-export
+
+# Preview what would change without making changes
+qualytics config import --input ./qualytics-export --dry-run
+
+# Import only specific resource types
+qualytics config import --input ./qualytics-export --include connections,datastores
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--input` | TEXT | Root input directory (default: `./qualytics-export`) | No |
+| `--dry-run` | FLAG | Preview changes without executing | No |
+| `--include` | TEXT | Comma-separated resource types: `connections,datastores,containers,checks` (default: all) | No |
+
+**Import order (dependency-safe):**
+1. **Connections** — matched by `name` (create or update)
+2. **Datastores** — matched by `name`, `connection_name` resolved to ID
+3. **Containers** — matched by `name` within datastore, name references resolved to IDs
+4. **Quality checks** — matched by `_qualytics_check_uid` in `additional_metadata`
+
+**Secrets handling:** Connection YAML files use `${ENV_VAR}` placeholders for sensitive fields. These are resolved from environment variables (or `.env` file) at import time. Set them before running import:
+
+```bash
+export PROD_PG_PASSWORD=mysecret
+export PROD_PG_SECRET_KEY=mykey
+qualytics config import --input ./qualytics-export
+```
+
+#### CI/CD Promotion Workflow
+
+```bash
+# In your CI pipeline:
+# 1. Export from source environment
+qualytics config export --datastore-id $SOURCE_DS --output ./config
+
+# 2. Commit to git (secrets are ${ENV_VAR} placeholders)
+git add ./config && git commit -m "Export config from dev"
+
+# 3. Import to target environment (secrets from CI env vars)
+qualytics config import --input ./config
+```
+
+---
+
 ### Schedule Metadata Export
 
 Allows you to schedule exports of metadata from your datastores using a specified crontab expression.

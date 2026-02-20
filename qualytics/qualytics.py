@@ -16,6 +16,7 @@ from .cli.connections import connections_app
 from .cli.containers import containers_app
 from .cli.computed_tables import computed_tables_app
 from .cli.anomalies import anomalies_app
+from .cli.export_import import export_import_app
 
 # Import config for environment setup
 from .config import DOTENV_PATH
@@ -34,6 +35,7 @@ app.add_typer(connections_app, name="connections")
 app.add_typer(containers_app, name="containers")
 app.add_typer(computed_tables_app, name="computed-tables")
 app.add_typer(anomalies_app, name="anomalies")
+app.add_typer(export_import_app, name="config")
 
 
 if __name__ == "__main__":

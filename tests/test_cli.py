@@ -100,6 +100,14 @@ def test_anomalies_command_registered(cli_runner):
     assert "delete" in result.output.lower()
 
 
+def test_config_command_registered(cli_runner):
+    """Test that the 'config' command group is registered."""
+    result = cli_runner.invoke(app, ["config", "--help"])
+    assert result.exit_code == 0
+    assert "export" in result.output.lower()
+    assert "import" in result.output.lower()
+
+
 def test_version_is_semver():
     """Test that the version follows semver format."""
     parts = __version__.split(".")

@@ -38,6 +38,7 @@ qualytics-cli/
 │   │   ├── connections.py    # connections create/update/get/list/delete/test commands
 │   │   ├── containers.py     # containers create/update/get/list/delete/validate commands
 │   │   ├── datastores.py     # datastores create/update/get/list/delete/verify/enrichment commands
+│   │   ├── export_import.py  # config export/import (config-as-code)
 │   │   ├── operations.py     # operations catalog/profile/scan/materialize/export/get/list/abort commands
 │   │   ├── computed_tables.py # computed-tables import/list/preview commands
 │   │   └── schedule.py       # schedule export-metadata command
@@ -46,6 +47,7 @@ qualytics-cli/
 │   │   ├── connections.py    # Connection lookup, payload building, name resolution
 │   │   ├── containers.py     # Container business logic (name resolution, payload building)
 │   │   ├── datastores.py     # Datastore lookup, payload building, name resolution
+│   │   ├── export_import.py  # Config-as-code export/import orchestration
 │   │   └── operations.py     # Operation execution and polling
 │   └── utils/
 │       ├── validation.py     # URL normalization
@@ -60,6 +62,7 @@ qualytics-cli/
 │   ├── test_connections.py   # Connection API + service + secrets + CLI tests
 │   ├── test_containers.py    # Container API + service + CLI tests
 │   ├── test_datastores.py    # Datastore API + service + CLI tests
+│   ├── test_export_import.py # Config export/import service + CLI tests
 │   ├── test_operations.py    # Operation API + service + CLI tests
 │   ├── test_client.py        # API client unit tests
 │   ├── test_config.py        # Configuration and token validation tests
@@ -237,6 +240,52 @@ Full connection lifecycle management — create, update, get, list, delete, and 
 - `delete` — by `--id`, handles 409 when datastores still reference it
 - `test` — test existing or with override credentials (`--host`, `--username`, `--password`)
 
+### Config Export/Import (`services/export_import.py`, `cli/export_import.py`)
+
+Config-as-code: export and import Qualytics configuration as a hierarchical YAML folder structure for git-tracked, cross-environment deployment.
+
+**Folder structure:**
+```
+qualytics-export/
+  connections/
+    prod_pg.yaml
+  datastores/
+    prod_warehouse/
+      _datastore.yaml
+      containers/
+        filtered_orders/
+          _container.yaml
+      checks/
+        orders/
+          notnull__order_id.yaml
+```
+
+**Export behavior:**
+- `export_config()` fetches connections, datastores, computed containers, and quality checks for given datastore IDs
+- Connections are deduplicated across datastores (exported once by name)
+- Secret fields (password, secret_key, etc.) are replaced with `${ENV_VAR}` placeholders
+- Only computed containers are exported (table/view/file are created by catalog operations)
+- `_write_yaml()` only writes when content changes — re-export produces zero git diff
+- ID references are replaced with name references for portability
+
+**Import behavior (dependency order):**
+1. **Connections** — upsert by `name`, resolve `${ENV_VAR}` from environment
+2. **Datastores** — upsert by `name`, resolve `connection_name` → `connection_id`, link enrichment
+3. **Containers** — upsert computed containers by `name` within datastore, resolve name references to IDs
+4. **Quality checks** — reuses existing `import_checks_to_datastore()` with `_qualytics_check_uid` upsert
+
+**Natural keys for upsert:**
+- Connection: `name` (globally unique)
+- Datastore: `name` (globally unique)
+- Container: `name` within datastore
+- Quality check: `_qualytics_check_uid` in `additional_metadata`
+
+**CLI commands:**
+- `config export --datastore-id <id> [--output <dir>] [--include <types>]`
+- `config import --input <dir> [--dry-run] [--include <types>]`
+
+**`--include` filter:** Comma-separated resource types to include: `connections,datastores,containers,checks`. Defaults to all.
+
 ### Datastores (`api/datastores.py`, `services/datastores.py`, `cli/datastores.py`)
 
 Full datastore lifecycle management — create, update, get, list, delete, verify connections, and manage enrichment links.
@@ -333,6 +382,7 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | `show-config` | — | Display current configuration |
 | `anomalies` | `get`, `list`, `update`, `archive`, `delete` | Anomaly management (status updates, archiving, deletion) |
 | `checks` | `create`, `get`, `list`, `update`, `delete`, `export`, `import`, `export-templates`, `import-templates` | Quality check CRUD + git-friendly export/import |
+| `config` | `export`, `import` | Config-as-code: export/import connections, datastores, containers, and checks as hierarchical YAML |
 | `connections` | `create`, `update`, `get`, `list`, `delete`, `test` | Connection CRUD with secrets management + connectivity testing |
 | `containers` | `create`, `update`, `get`, `list`, `delete`, `validate` | Container CRUD for computed types + validation |
 | `datastores` | `create`, `update`, `get`, `list`, `delete`, `verify`, `enrichment` | Datastore CRUD + connection verification + enrichment linking |
@@ -427,6 +477,7 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 | `test_config.py` | Config loading, saving, token validation, legacy JSON migration |
 | `test_anomalies.py` | API layer (list, get, update, bulk update, delete, bulk delete), CLI commands (get, list, update, archive, delete), status validation, bulk operations |
 | `test_connections.py` | API layer (create, update, get, list, list_all, delete, test), service layer (get_connection_by, build payloads), secrets (env var resolution, redaction), CLI commands (create, update, get, list, delete, test), from-YAML creation, 409 handling |
+| `test_export_import.py` | Helpers (slugify, write_yaml, env var names), strip functions (connections, datastores, containers), import functions (connections, datastores, containers with upsert), export orchestrator (full, filtered, deduplication), import orchestrator (full, filtered), CLI commands (export, import, dry-run, error display) |
 | `test_containers.py` | API layer (create, update, get, list, list_all, delete, validate, field_profiles, listing), service layer (get_container_by_name, build payloads), CLI commands (create, update, get, list, delete, validate), polymorphic create, 409 handling |
 | `test_datastores.py` | API layer (create, update, get, list, list_all, delete, verify, validate, enrichment connect/disconnect), service layer (get_datastore_by, build payloads), CLI commands (create, update, get, list, delete, verify, enrichment), validation |
 | `test_operations.py` | API layer (run, get, list, list_all, abort), service layer (polling, multi-datastore, background mode, payload construction), CLI commands (catalog, profile, scan, materialize, export, get, list, abort), validation |
