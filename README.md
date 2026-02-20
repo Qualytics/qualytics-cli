@@ -1,1778 +1,333 @@
 # Qualytics CLI
 
-This is a CLI tool for working with the Qualytics API. With this tool, you can manage your configurations, export checks, import checks, and more. It's built on top of the Typer CLI framework and uses the Rich library for enhanced terminal outputs.
+Command-line interface for the [Qualytics](https://www.qualytics.ai/) data quality platform.
 
-## Requirements
+[![PyPI](https://img.shields.io/pypi/v/qualytics-cli)](https://pypi.org/project/qualytics-cli/)
+[![Python](https://img.shields.io/pypi/pyversions/qualytics-cli)](https://pypi.org/project/qualytics-cli/)
+[![Tests](https://github.com/Qualytics/qualytics-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Qualytics/qualytics-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-- Python 3.10 or higher
+Manage connections, datastores, containers, quality checks, anomalies, and operations as code. Export your entire Qualytics configuration to git-tracked YAML files and deploy across environments (Dev, Test, Prod) through CI/CD pipelines.
 
 ## Installation
-
-### From PyPI (recommended)
 
 ```bash
 pip install qualytics-cli
 ```
 
-### Using uv (faster)
+Or with [uv](https://docs.astral.sh/uv/) (faster):
 
 ```bash
 uv pip install qualytics-cli
 ```
 
-### From source
+**Requirements:** Python 3.10 or higher.
+
+## Quick Start
 
 ```bash
-git clone https://github.com/Qualytics/qualytics-cli.git
-cd qualytics-cli
-uv sync
-uv pip install -e .
+# 1. Configure your Qualytics instance
+qualytics init --url "https://your-instance.qualytics.io/" --token "YOUR_TOKEN"
+
+# 2. Create a connection (credentials from environment variables)
+qualytics connections create \
+  --type postgresql --name prod-pg \
+  --host db.example.com --port 5432 \
+  --username '${PG_USER}' --password '${PG_PASS}'
+
+# 3. Create a datastore referencing that connection
+qualytics datastores create \
+  --name "Order Analytics" \
+  --connection-name prod-pg \
+  --database analytics --schema public
+
+# 4. Export your configuration to YAML
+qualytics config export --datastore-id 1 --output ./qualytics-config
+
+# 5. Preview what an import would do (without making changes)
+qualytics config import --input ./qualytics-config --dry-run
 ```
 
-## Usage
+## Configuration
 
-### Help
+### Initialize
 
 ```bash
-qualytics --help
+qualytics init --url "https://your-instance.qualytics.io/" --token "YOUR_TOKEN"
+
+# For self-signed certificates
+qualytics init --url "https://..." --token "..." --no-verify-ssl
 ```
 
-### Initializing the Configuration
-
-You can set up your Qualytics URL and token using the `init` command:
-
-```bash
-qualytics init --url "https://your-qualytics.qualytics.io/" --token "YOUR_TOKEN_HERE"
-```
-
-To disable SSL certificate verification (e.g., for self-signed certificates in development):
-
-```bash
-qualytics init --url "https://your-qualytics.qualytics.io/" --token "YOUR_TOKEN_HERE" --no-verify-ssl
-```
-
-| Option  | Type | Description                                           | Default | Required |
-|---------|------|-------------------------------------------------------|---------|----------|
-| `--url` | TEXT | The URL to be set. Example: https://your-qualytics.qualytics.io/ | None    | Yes      |
-| `--token` | TEXT | The token to be set.                                 | None    | Yes      |
-| `--no-verify-ssl` | FLAG | Disable SSL certificate verification for API requests. | False | No |
-
-### Qualytics init help
-
-```bash
-qualytics init --help
-```
-
-### Display Configuration
-
-To view the currently saved configuration:
+Configuration is saved to `~/.qualytics/config.yaml`. View it with:
 
 ```bash
 qualytics show-config
 ```
 
+### Environment Variables
+
+The CLI loads environment variables from a `.env` file in your working directory (via `python-dotenv`). You can use `${ENV_VAR}` syntax in any CLI flag that accepts sensitive values:
+
+```bash
+export QUALYTICS_URL="https://your-instance.qualytics.io/"
+export QUALYTICS_TOKEN="your-jwt-token"
+qualytics init --url '${QUALYTICS_URL}' --token '${QUALYTICS_TOKEN}'
+```
+
+## Command Reference
+
+Run `qualytics <command> --help` for full flag details on any command.
+
+### Setup
+
+| Command | Description |
+|---------|-------------|
+| `init` | Configure Qualytics URL, API token, and SSL settings |
+| `show-config` | Display the current saved configuration |
+
+### Connections
+
+| Command | Description |
+|---------|-------------|
+| `connections create` | Create a connection with inline flags and `${ENV_VAR}` support |
+| `connections update` | Update connection fields (partial update) |
+| `connections get` | Get a connection by `--id` or `--name` |
+| `connections list` | List connections, filterable by `--type` and `--name` |
+| `connections delete` | Delete a connection by `--id` |
+| `connections test` | Test connectivity, optionally with override credentials |
+
+### Datastores
+
+| Command | Description |
+|---------|-------------|
+| `datastores create` | Create a datastore with `--connection-name` or `--connection-id` |
+| `datastores update` | Update datastore fields (partial update) |
+| `datastores get` | Get a datastore by `--id` or `--name` |
+| `datastores list` | List datastores, filterable by `--type`, `--tag`, `--name` |
+| `datastores delete` | Delete a datastore by `--id` |
+| `datastores verify` | Test the connection for an existing datastore |
+| `datastores enrichment` | Link (`--link`) or unlink (`--unlink`) an enrichment datastore |
+
+### Containers
+
+| Command | Description |
+|---------|-------------|
+| `containers create` | Create a computed container (`computed_table`, `computed_file`, `computed_join`) |
+| `containers update` | Update a container (GET-merge-PUT pattern) |
+| `containers get` | Get a container by `--id`, optionally with `--profiles` |
+| `containers list` | List containers for a `--datastore-id`, filterable by `--type`, `--tag` |
+| `containers delete` | Delete a container by `--id` (cascades to fields, checks, anomalies) |
+| `containers validate` | Dry-run validation of a computed container definition |
+
 ### Quality Checks
 
-The `checks` command group provides full CRUD operations and git-friendly export/import for quality checks.
-
-#### Create Checks
-
-Create quality checks from a YAML or JSON file:
-
-```bash
-# Create from a single-check file
-qualytics checks create --datastore-id 42 --file check.yaml
-
-# Create from a file containing a list of checks (bulk)
-qualytics checks create --datastore-id 42 --file checks.yaml
-```
-
-| Option           | Type    | Description                              | Required |
-|------------------|---------|------------------------------------------|----------|
-| `--datastore-id` | INTEGER | Target datastore ID                      | Yes      |
-| `--file`         | TEXT    | Path to YAML/JSON file with check definitions | Yes  |
-
-#### Get a Check
-
-```bash
-qualytics checks get --check-id 123
-qualytics checks get --check-id 123 --format json
-```
-
-| Option       | Type    | Description                               | Required |
-|--------------|---------|-------------------------------------------|----------|
-| `--check-id` | INTEGER | Quality check ID                          | Yes      |
-| `--format`   | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-#### List Checks
-
-```bash
-qualytics checks list --datastore-id 42
-qualytics checks list --datastore-id 42 --containers "1,2,3" --tags "production" --status Active
-```
-
-| Option           | Type    | Description                                      | Required |
-|------------------|---------|--------------------------------------------------|----------|
-| `--datastore-id` | INTEGER | Datastore ID                                     | Yes      |
-| `--containers`   | TEXT    | Comma-separated container IDs                    | No       |
-| `--tags`         | TEXT    | Comma-separated tag names                        | No       |
-| `--status`       | TEXT    | Filter by status: `Active`, `Draft`, `Archived`  | No       |
-| `--format`       | TEXT    | Output format: `yaml` or `json` (default: `yaml`)| No      |
-
-#### Update a Check
-
-```bash
-qualytics checks update --check-id 123 --file updated_check.yaml
-```
-
-| Option       | Type    | Description                              | Required |
-|--------------|---------|------------------------------------------|----------|
-| `--check-id` | INTEGER | Quality check ID to update               | Yes      |
-| `--file`     | TEXT    | Path to YAML/JSON file with updated fields | Yes    |
-
-#### Delete Checks
-
-```bash
-# Delete a single check
-qualytics checks delete --check-id 123
-
-# Bulk delete
-qualytics checks delete --ids "1,2,3,4,5"
-
-# Hard delete (permanent, no archival)
-qualytics checks delete --check-id 123 --no-archive
-```
-
-| Option       | Type    | Description                                          | Required |
-|--------------|---------|------------------------------------------------------|----------|
-| `--check-id` | INTEGER | Single check ID to delete                            | No*      |
-| `--ids`      | TEXT    | Comma-separated list of check IDs for bulk delete    | No*      |
-| `--archive`/`--no-archive` | FLAG | Archive on delete (default: `--archive`) | No       |
-
-**Note**: You must provide either `--check-id` or `--ids`, but not both.
-
-#### Export Checks (Git-Friendly)
-
-Export checks to a directory structure with one YAML file per check, organized by container:
-
-```bash
-qualytics checks export --datastore-id 42 --output ./checks/
-```
-
-This creates:
-```
-checks/
-  orders/
-    notnull__order_id.yaml
-    between__total_amount.yaml
-  customers/
-    matchespattern__email.yaml
-    isunique__customer_id.yaml
-```
-
-Each file is a portable check definition that references containers and fields by name (not ID), so the same files can be imported to any datastore that has matching containers.
-
-| Option           | Type    | Description                                      | Required |
-|------------------|---------|--------------------------------------------------|----------|
-| `--datastore-id` | INTEGER | Datastore ID to export from                      | Yes      |
-| `--output`       | TEXT    | Output directory path (default: `./checks`)      | No       |
-| `--containers`   | TEXT    | Comma-separated container IDs to filter          | No       |
-| `--tags`         | TEXT    | Comma-separated tag names to filter              | No       |
-| `--status`       | TEXT    | Filter by status: `Active`, `Draft`, `Archived`  | No       |
-
-#### Import Checks (Multi-Datastore + Upsert)
-
-Import checks from a directory to one or more datastores. Uses upsert logic — existing checks are updated, new ones are created.
-
-```bash
-# Import to a single datastore
-qualytics checks import --datastore-id 42 --input ./checks/
-
-# Import to multiple datastores (Dev → Test → Prod promotion)
-qualytics checks import --datastore-id 42 --datastore-id 43 --datastore-id 44 --input ./checks/
-
-# Preview what would change without making changes
-qualytics checks import --datastore-id 42 --input ./checks/ --dry-run
-```
-
-| Option           | Type         | Description                                      | Required |
-|------------------|--------------|--------------------------------------------------|----------|
-| `--datastore-id` | INTEGER (repeatable) | Target datastore ID(s)                   | Yes      |
-| `--input`        | TEXT         | Input directory path (default: `./checks`)       | No       |
-| `--dry-run`      | FLAG         | Preview changes without executing                | No       |
-
-**Upsert behavior:** Each check has a stable `_qualytics_check_uid` in its `additional_metadata`. On import, UIDs are matched against existing checks in the target datastore — matches update, new UIDs create. This makes repeated imports safe and idempotent.
-
-For a complete CI/CD promotion workflow with GitHub Actions, see [docs/examples/github-actions-promotion.md](docs/examples/github-actions-promotion.md).
-
-#### Export Check Templates
-
-Export check templates to the `_export_check_templates` table in an enrichment datastore.
-
-```bash
-qualytics checks export-templates --enrichment_datastore_id ENRICHMENT_DATASTORE_ID [--check_templates CHECK_TEMPLATE_IDS]
-```
-
-| Option                      | Type    | Description                                                                | Required |
-|-----------------------------|---------|----------------------------------------------------------------------------|----------|
-| `--enrichment_datastore_id` | INTEGER | The ID of the enrichment datastore where templates will be exported        | Yes      |
-| `--check_templates`         | TEXT    | Comma-separated list of template IDs. Example: "1, 2, 3" or "[1,2,3]"     | No       |
-
-#### Import Check Templates
-
-Import check templates from a file:
-
-```bash
-qualytics checks import-templates [--input LOCATION_OF_CHECK_TEMPLATES]
-```
-
-| Option    | Type | Description                                         | Default                                | Required |
-|-----------|------|-----------------------------------------------------|----------------------------------------|----------|
-| `--input` | TEXT | Input file path (format auto-detected by extension) | ~/.qualytics/data_checks_template.yaml | No       |
+| Command | Description |
+|---------|-------------|
+| `checks create` | Create checks from a YAML/JSON file (single or bulk) |
+| `checks update` | Update a check from a YAML/JSON file |
+| `checks get` | Get a single check by `--check-id` |
+| `checks list` | List checks for a `--datastore-id`, filterable by container, tag, status |
+| `checks delete` | Delete check(s) by `--check-id` or `--ids` (bulk) |
+| `checks export` | Export checks to a directory (one YAML file per check, by container) |
+| `checks import` | Import checks with upsert to one or more `--datastore-id` targets |
+| `checks export-templates` | Export check templates to an enrichment datastore |
+| `checks import-templates` | Import check templates from a file |
 
 ### Anomalies
 
-The `anomalies` command group provides tools for managing anomalies created by failed quality checks during scan operations. This is especially useful for CI/CD pipelines that gate deployments on data quality.
+| Command | Description |
+|---------|-------------|
+| `anomalies get` | Get an anomaly by `--id` |
+| `anomalies list` | List anomalies for a `--datastore-id`, filterable by status, type, date |
+| `anomalies update` | Update status to `Active` or `Acknowledged` (single or bulk) |
+| `anomalies archive` | Soft-delete with status: `Resolved`, `Invalid`, `Duplicate`, `Discarded` |
+| `anomalies delete` | Hard-delete anomalies (single or bulk) |
 
-#### Get an Anomaly
+### Operations
+
+| Command | Description |
+|---------|-------------|
+| `operations catalog` | Trigger a catalog operation (discover containers) |
+| `operations profile` | Trigger a profile operation (infer quality checks) |
+| `operations scan` | Trigger a scan operation (detect anomalies) |
+| `operations materialize` | Trigger a materialize operation (computed containers) |
+| `operations export` | Trigger an export operation (anomalies, checks, profiles) |
+| `operations get` | Get operation details by `--id` |
+| `operations list` | List operations, filterable by `--datastore-id`, `--type`, `--status` |
+| `operations abort` | Abort a running operation by `--id` |
+
+### Config (Export/Import)
+
+| Command | Description |
+|---------|-------------|
+| `config export` | Export configuration as hierarchical YAML (connections, datastores, containers, checks) |
+| `config import` | Import configuration with dependency-ordered upsert and `--dry-run` support |
+
+### Computed Tables
+
+| Command | Description |
+|---------|-------------|
+| `computed-tables import` | Bulk import computed tables from Excel, CSV, or TXT files |
+| `computed-tables list` | List computed tables in a datastore |
+| `computed-tables preview` | Preview file contents before importing |
+
+### Schedule
+
+| Command | Description |
+|---------|-------------|
+| `schedule export-metadata` | Schedule cron-based metadata exports |
+
+## Secrets Management
+
+The CLI never stores credentials in plaintext. Sensitive flags support `${ENV_VAR}` syntax, resolved from environment variables at runtime.
+
+**Supported on these flags:** `--host`, `--username`, `--password`, `--access-key`, `--secret-key`, `--uri`, `--token`
 
 ```bash
-qualytics anomalies get --id 42
-qualytics anomalies get --id 42 --format json
+# Set credentials as environment variables
+export PG_USER=analyst
+export PG_PASS=s3cret
+
+# Reference them in CLI commands
+qualytics connections create --type postgresql --name prod-pg \
+  --host db.example.com --username '${PG_USER}' --password '${PG_PASS}'
 ```
 
-| Option     | Type    | Description                                      | Required |
-|------------|---------|--------------------------------------------------|----------|
-| `--id`     | INTEGER | Anomaly ID                                       | Yes      |
-| `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
-
-#### List Anomalies
+**In CI/CD pipelines:**
 
 ```bash
-# List all anomalies for a datastore
-qualytics anomalies list --datastore-id 42
-
-# Filter by status, type, date range
-qualytics anomalies list --datastore-id 42 --status Active --type record --start-date 2024-01-01
-
-# JSON output for CI scripting
-qualytics anomalies list --datastore-id 42 --status Active --format json
+# GitHub Actions — use repository secrets
+qualytics connections create --type postgresql --name prod-pg \
+  --host "${{ secrets.PG_HOST }}" --password "${{ secrets.PG_PASS }}"
 ```
 
-| Option           | Type    | Description                                          | Required |
-|------------------|---------|------------------------------------------------------|----------|
-| `--datastore-id` | INTEGER | Datastore ID to list anomalies from                  | Yes      |
-| `--container`    | INTEGER | Container ID to filter by                            | No       |
-| `--check-id`     | INTEGER | Quality check ID to filter by                        | No       |
-| `--status`       | TEXT    | Comma-separated statuses: Active, Acknowledged, Resolved, etc. | No |
-| `--type`         | TEXT    | Anomaly type: `shape` or `record`                    | No       |
-| `--tag`          | TEXT    | Tag name to filter by                                | No       |
-| `--start-date`   | TEXT    | Start date (YYYY-MM-DD)                              | No       |
-| `--end-date`     | TEXT    | End date (YYYY-MM-DD)                                | No       |
-| `--format`       | TEXT    | Output format: `yaml` or `json` (default: `yaml`)   | No       |
+**In exported YAML files:**
 
-#### Update Anomaly Status
+Secrets are replaced with `${ENV_VAR}` placeholders on export. On import, the CLI resolves them from the environment:
 
-Update anomalies to open statuses (`Active` or `Acknowledged`):
-
-```bash
-# Single update
-qualytics anomalies update --id 42 --status Acknowledged
-
-# With description and tags
-qualytics anomalies update --id 42 --status Acknowledged --description "Known issue" --tags "reviewed,ci"
-
-# Bulk update
-qualytics anomalies update --ids "1,2,3" --status Acknowledged
+```yaml
+# connections/prod_pg.yaml (exported)
+name: prod_pg
+type: postgresql
+host: ${PROD_PG_HOST}
+username: ${PROD_PG_USERNAME}
+password: ${PROD_PG_PASSWORD}
 ```
 
-| Option          | Type    | Description                                          | Required |
-|-----------------|---------|------------------------------------------------------|----------|
-| `--id`          | INTEGER | Single anomaly ID to update                          | No*      |
-| `--ids`         | TEXT    | Comma-separated anomaly IDs for bulk update          | No*      |
-| `--status`      | TEXT    | New status: `Active` or `Acknowledged`               | Yes      |
-| `--description` | TEXT    | Update description                                   | No       |
-| `--tags`        | TEXT    | Comma-separated tag names                            | No       |
-
-**Note**: You must provide either `--id` or `--ids`. For archived statuses (`Resolved`, `Invalid`, etc.), use `anomalies archive`.
-
-#### Archive Anomalies
-
-Soft-delete anomalies with an archived status:
-
 ```bash
-# Archive with default status (Resolved)
-qualytics anomalies archive --id 42
-
-# Archive with specific status
-qualytics anomalies archive --id 42 --status Invalid
-
-# Bulk archive
-qualytics anomalies archive --ids "1,2,3" --status Duplicate
+# Set env vars before import
+export PROD_PG_HOST=db.example.com
+export PROD_PG_USERNAME=analyst
+export PROD_PG_PASSWORD=s3cret
+qualytics config import --input ./qualytics-config
 ```
 
-| Option     | Type    | Description                                              | Required |
-|------------|---------|----------------------------------------------------------|----------|
-| `--id`     | INTEGER | Single anomaly ID to archive                             | No*      |
-| `--ids`    | TEXT    | Comma-separated anomaly IDs for bulk archive             | No*      |
-| `--status` | TEXT    | Archive status: `Resolved`, `Invalid`, `Duplicate`, or `Discarded` (default: `Resolved`) | No |
+All CLI output automatically redacts sensitive fields.
 
-**Note**: You must provide either `--id` or `--ids`.
+## Config Export/Import
 
-#### Delete Anomalies
+The `config` command group enables config-as-code workflows. Export your Qualytics configuration to a hierarchical YAML folder structure, track it in git, and import it into any environment.
 
-Permanently delete anomalies (hard-delete):
+### Export
 
 ```bash
-# Single delete
-qualytics anomalies delete --id 42
-
-# Bulk delete
-qualytics anomalies delete --ids "1,2,3"
-```
-
-| Option | Type    | Description                                          | Required |
-|--------|---------|------------------------------------------------------|----------|
-| `--id` | INTEGER | Single anomaly ID to delete                          | No*      |
-| `--ids`| TEXT    | Comma-separated anomaly IDs for bulk delete          | No*      |
-
-**Warning**: Hard-delete is permanent. Use `anomalies archive` for soft-delete.
-
-#### CI/CD Anomaly Gating
-
-Use anomalies to gate CI/CD pipelines based on data quality:
-
-```bash
-# Check for active anomalies and fail the pipeline if any exist
-ANOMALY_COUNT=$(qualytics anomalies list --datastore-id $DS_ID --status Active --format json | python -c "import sys,json; print(len(json.load(sys.stdin)))")
-
-if [ "$ANOMALY_COUNT" -gt "0" ]; then
-  echo "FAIL: $ANOMALY_COUNT active anomalies found"
-  exit 1
-fi
-
-# Acknowledge known anomalies in CI
-qualytics anomalies update --ids "1,2,3" --status Acknowledged --description "Acknowledged by CI pipeline"
-```
-
-### Config Export/Import (Config-as-Code)
-
-The `config` command group enables config-as-code workflows — export your entire Qualytics configuration to a hierarchical YAML folder structure, track it in git, and import it into any environment. This is the foundation for cross-environment deployment (Dev → Test → Prod) via CI/CD.
-
-#### Export Configuration
-
-Export connections, datastores, computed containers, and quality checks for one or more datastores:
-
-```bash
-# Export a single datastore
-qualytics config export --datastore-id 42
-
-# Export multiple datastores
-qualytics config export --datastore-id 42 --datastore-id 43
-
-# Custom output directory
-qualytics config export --datastore-id 42 --output ./my-config
+# Export one or more datastores
+qualytics config export --datastore-id 42 --datastore-id 43 --output ./qualytics-config
 
 # Export only specific resource types
 qualytics config export --datastore-id 42 --include connections,datastores
 ```
 
-This creates a hierarchical folder structure:
+This produces:
+
 ```
-qualytics-export/
+qualytics-config/
   connections/
-    prod_pg.yaml                      # Connection with ${ENV_VAR} secrets
+    prod_pg.yaml                        # ${ENV_VAR} placeholders for secrets
   datastores/
-    prod_warehouse/
-      _datastore.yaml                 # Datastore config (references connection by name)
+    order_analytics/
+      _datastore.yaml                   # References connection by name
       containers/
         filtered_orders/
-          _container.yaml             # Computed container definition
+          _container.yaml               # Computed container definition
       checks/
         orders/
-          notnull__order_id.yaml      # Quality check (one file per check)
+          notnull__order_id.yaml        # One file per quality check
           between__total_amount.yaml
 ```
 
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--datastore-id` | INTEGER (repeatable) | Datastore ID(s) to export | Yes |
-| `--output` | TEXT | Root output directory (default: `./qualytics-export`) | No |
-| `--include` | TEXT | Comma-separated resource types: `connections,datastores,containers,checks` (default: all) | No |
-
-**Key behaviors:**
-- Secrets (passwords, keys) are replaced with `${ENV_VAR}` placeholders — never exported in plaintext
-- Connections are deduplicated across datastores (each exported once by name)
-- Only computed containers are exported (table/view/file are created by catalog operations)
-- Re-running export on the same directory produces zero git diff when nothing has changed
+Key behaviors:
+- Secrets are replaced with `${ENV_VAR}` placeholders (never exported in plaintext)
+- Connections are deduplicated across datastores (exported once by name)
+- Only computed containers are exported (tables/views/files are created by catalog)
+- Re-export produces zero git diff when nothing has changed
 - ID references are replaced with name references for cross-environment portability
 
-#### Import Configuration
-
-Import configuration from a YAML folder structure into any Qualytics instance:
+### Import
 
 ```bash
 # Import everything
-qualytics config import --input ./qualytics-export
+qualytics config import --input ./qualytics-config
 
-# Preview what would change without making changes
-qualytics config import --input ./qualytics-export --dry-run
+# Preview what would change
+qualytics config import --input ./qualytics-config --dry-run
 
 # Import only specific resource types
-qualytics config import --input ./qualytics-export --include connections,datastores
+qualytics config import --input ./qualytics-config --include connections,datastores
 ```
 
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--input` | TEXT | Root input directory (default: `./qualytics-export`) | No |
-| `--dry-run` | FLAG | Preview changes without executing | No |
-| `--include` | TEXT | Comma-separated resource types: `connections,datastores,containers,checks` (default: all) | No |
+Import follows dependency order:
+1. **Connections** -- matched by `name` (create or update)
+2. **Datastores** -- matched by `name`, resolves `connection_name` to ID
+3. **Containers** -- matched by `name` within datastore, resolves references
+4. **Quality checks** -- matched by `_qualytics_check_uid` (upsert)
 
-**Import order (dependency-safe):**
-1. **Connections** — matched by `name` (create or update)
-2. **Datastores** — matched by `name`, `connection_name` resolved to ID
-3. **Containers** — matched by `name` within datastore, name references resolved to IDs
-4. **Quality checks** — matched by `_qualytics_check_uid` in `additional_metadata`
-
-**Secrets handling:** Connection YAML files use `${ENV_VAR}` placeholders for sensitive fields. These are resolved from environment variables (or `.env` file) at import time. Set them before running import:
+### CI/CD Promotion
 
 ```bash
-export PROD_PG_PASSWORD=mysecret
-export PROD_PG_SECRET_KEY=mykey
-qualytics config import --input ./qualytics-export
-```
+# Export from Dev
+qualytics config export --datastore-id $DEV_DS --output ./config
 
-#### CI/CD Promotion Workflow
+# Commit (secrets are placeholders)
+git add ./config && git commit -m "Export from dev"
 
-```bash
-# In your CI pipeline:
-# 1. Export from source environment
-qualytics config export --datastore-id $SOURCE_DS --output ./config
-
-# 2. Commit to git (secrets are ${ENV_VAR} placeholders)
-git add ./config && git commit -m "Export config from dev"
-
-# 3. Import to target environment (secrets from CI env vars)
+# Import to Prod (secrets from CI env vars)
 qualytics config import --input ./config
 ```
 
----
-
-### Schedule Metadata Export
-
-Allows you to schedule exports of metadata from your datastores using a specified crontab expression.
-
-```bash
-qualytics schedule export-metadata --crontab "CRONTAB_EXPRESSION" --datastore "DATASTORE_ID" [--containers "CONTAINER_IDS"] --options "EXPORT_OPTIONS"
-```
-
-| Option       | Type | Description                                                          | Required |
-|--------------|------|----------------------------------------------------------------------|----------|
-| `--crontab`  | TEXT | Crontab expression inside quotes, specifying when the task should run. Example: "0 * * * *" | Yes      |
-| `--datastore`| TEXT | The datastore ID                                                     | Yes      |
-| `--containers`| TEXT | Comma-separated list of container IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]" | No       |
-| `--options`  | TEXT | Comma-separated list of options to export or "all". Example: "anomalies, checks, field-profiles" | Yes      |
-
-### Operations
-
-The `operations` command group provides full lifecycle management for datastore operations: trigger, monitor, list, and abort.
-
-#### Run a Catalog Operation
-
-```bash
-qualytics operations catalog --datastore-id 42
-qualytics operations catalog --datastore-id "1,2,3" --include "table,view" --prune --recreate --background
-```
-
-| Option             | Type    | Description                                      | Required |
-|--------------------|---------|--------------------------------------------------|----------|
-| `--datastore-id`   | TEXT    | Comma-separated Datastore IDs                    | Yes      |
-| `--include`        | TEXT    | Include types: "table,view"                      | No       |
-| `--prune`          | FLAG    | Remove containers not found in catalog           | No       |
-| `--recreate`       | FLAG    | Drop and recreate all containers                 | No       |
-| `--background`     | FLAG    | Start without waiting for completion             | No       |
-| `--poll-interval`  | INT     | Seconds between status checks (default: 10)      | No       |
-| `--timeout`        | INT     | Max seconds to wait (default: 1800 = 30 min)     | No       |
-
-#### Run a Profile Operation
-
-```bash
-qualytics operations profile --datastore-id 42
-qualytics operations profile --datastore-id 42 --container-names "orders,customers" --inference-threshold 3 --infer-as-draft
-```
-
-| Option                                  | Type     | Description                                          | Required |
-|-----------------------------------------|----------|------------------------------------------------------|----------|
-| `--datastore-id`                        | TEXT     | Comma-separated Datastore IDs                        | Yes      |
-| `--container-names`                     | TEXT     | Comma-separated container names                      | No       |
-| `--container-tags`                      | TEXT     | Comma-separated container tags                       | No       |
-| `--inference-threshold`                 | INT      | Check inference threshold (0 to 5)                   | No       |
-| `--infer-as-draft`                      | FLAG     | Infer checks as Draft                                | No       |
-| `--max-records-analyzed-per-partition`  | INT      | Max records per partition (-1 for unlimited)         | No       |
-| `--max-count-testing-sample`            | INT      | Records for validation (max 100000)                  | No       |
-| `--percent-testing-threshold`           | FLOAT    | Testing threshold percentage                         | No       |
-| `--high-correlation-threshold`          | FLOAT    | Correlation threshold                                | No       |
-| `--greater-than-time`                   | DATETIME | Incremental start time (YYYY-MM-DDTHH:MM:SS)        | No       |
-| `--greater-than-batch`                  | FLOAT    | Incremental batch number threshold                   | No       |
-| `--histogram-max-distinct-values`       | INT      | Max distinct values for histogram                    | No       |
-| `--background`                          | FLAG     | Start without waiting for completion                 | No       |
-| `--poll-interval`                       | INT      | Seconds between status checks (default: 10)          | No       |
-| `--timeout`                             | INT      | Max seconds to wait (default: 1800 = 30 min)         | No       |
-
-#### Run a Scan Operation
-
-```bash
-qualytics operations scan --datastore-id 42
-qualytics operations scan --datastore-id 42 --container-names "orders" --incremental --remediation append
-```
-
-| Option                                  | Type     | Description                                          | Required |
-|-----------------------------------------|----------|------------------------------------------------------|----------|
-| `--datastore-id`                        | TEXT     | Comma-separated Datastore IDs                        | Yes      |
-| `--container-names`                     | TEXT     | Comma-separated container names                      | No       |
-| `--container-tags`                      | TEXT     | Comma-separated container tags                       | No       |
-| `--incremental`                         | FLAG     | Process only new/updated records since last scan     | No       |
-| `--remediation`                         | TEXT     | Replication strategy: append, overwrite, or none     | No       |
-| `--max-records-analyzed-per-partition`  | INT      | Max records per partition (-1 for unlimited)         | No       |
-| `--enrichment-source-record-limit`      | INT      | Enrichment source records limit (>= 1)               | No       |
-| `--greater-than-time`                   | DATETIME | Incremental start time (YYYY-MM-DDTHH:MM:SS)        | No       |
-| `--greater-than-batch`                  | FLOAT    | Incremental batch number threshold                   | No       |
-| `--background`                          | FLAG     | Start without waiting for completion                 | No       |
-| `--poll-interval`                       | INT      | Seconds between status checks (default: 10)          | No       |
-| `--timeout`                             | INT      | Max seconds to wait (default: 1800 = 30 min)         | No       |
-
-#### Run a Materialize Operation
-
-```bash
-qualytics operations materialize --datastore-id 42
-qualytics operations materialize --datastore-id 42 --container-names "ct_orders" --max-records-per-partition 5000
-```
-
-| Option                        | Type | Description                                      | Required |
-|-------------------------------|------|--------------------------------------------------|----------|
-| `--datastore-id`              | TEXT | Comma-separated Datastore IDs                    | Yes      |
-| `--container-names`           | TEXT | Comma-separated container names                  | No       |
-| `--container-tags`            | TEXT | Comma-separated container tags                   | No       |
-| `--max-records-per-partition` | INT  | Max records per partition (-1 for unlimited)     | No       |
-| `--background`                | FLAG | Start without waiting for completion             | No       |
-| `--poll-interval`             | INT  | Seconds between status checks (default: 10)      | No       |
-| `--timeout`                   | INT  | Max seconds to wait (default: 1800 = 30 min)     | No       |
-
-#### Run an Export Operation
-
-```bash
-qualytics operations export --datastore-id 42 --asset-type anomalies
-qualytics operations export --datastore-id 42 --asset-type checks --container-ids "1,2,3" --include-deleted
-```
-
-| Option             | Type | Description                                      | Required |
-|--------------------|------|--------------------------------------------------|----------|
-| `--datastore-id`   | TEXT | Comma-separated Datastore IDs                    | Yes      |
-| `--asset-type`     | TEXT | Asset type: anomalies, checks, or profiles       | Yes      |
-| `--container-ids`  | TEXT | Comma-separated container IDs                    | No       |
-| `--container-tags` | TEXT | Comma-separated container tags                   | No       |
-| `--include-deleted`| FLAG | Include deleted items in export                  | No       |
-| `--background`     | FLAG | Start without waiting for completion             | No       |
-| `--poll-interval`  | INT  | Seconds between status checks (default: 10)      | No       |
-| `--timeout`        | INT  | Max seconds to wait (default: 1800 = 30 min)     | No       |
-
-#### Get Operation Details
-
-```bash
-qualytics operations get --id 123
-qualytics operations get --id 123 --format json
-```
-
-| Option     | Type    | Description                                      | Required |
-|------------|---------|--------------------------------------------------|----------|
-| `--id`     | INTEGER | Operation ID                                     | Yes      |
-| `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
-
-#### List Operations
-
-```bash
-qualytics operations list
-qualytics operations list --datastore-id 42 --type scan --status "running,success" --format json
-```
-
-| Option           | Type | Description                                              | Required |
-|------------------|------|----------------------------------------------------------|----------|
-| `--datastore-id` | TEXT | Comma-separated Datastore IDs to filter by               | No       |
-| `--type`         | TEXT | Operation type: catalog, profile, scan, materialize, export | No    |
-| `--status`       | TEXT | Comma-separated result statuses: running, success, failure, aborted | No |
-| `--start-date`   | TEXT | Start date filter (YYYY-MM-DD)                           | No       |
-| `--end-date`     | TEXT | End date filter (YYYY-MM-DD)                             | No       |
-| `--format`       | TEXT | Output format: `yaml` or `json` (default: `yaml`)       | No       |
-
-#### Abort a Running Operation
-
-```bash
-qualytics operations abort --id 123
-```
-
-| Option | Type    | Description                  | Required |
-|--------|---------|------------------------------|----------|
-| `--id` | INTEGER | Operation ID to abort        | Yes      |
-
-**Note**: Abort is best-effort. If the operation has already finished, it's a no-op.
-
-### Connections
-
-The `connections` command group provides full CRUD operations for database connections with built-in secrets management. Connections hold sensitive database credentials and are referenced by datastores.
-
-**Secrets handling:** Sensitive flags (`--host`, `--username`, `--password`, `--access-key`, `--secret-key`, `--uri`) support `${ENV_VAR}` syntax. Values are resolved from environment variables (or `.env` file) at runtime — credentials never touch disk in plaintext. All CLI output automatically redacts sensitive fields.
-
-#### Create a Connection
-
-Two modes: inline flags or from a YAML file.
-
-```bash
-# Mode 1: Inline flags with ${ENV_VAR} syntax
-qualytics connections create \
-  --type postgresql \
-  --name "prod-pg" \
-  --host db.example.com \
-  --port 5432 \
-  --username '${DB_USER}' \
-  --password '${DB_PASSWORD}'
-
-# With type-specific parameters via JSON catch-all
-qualytics connections create \
-  --type snowflake \
-  --name "sf-warehouse" \
-  --host account.snowflakecomputing.com \
-  --username '${SF_USER}' \
-  --password '${SF_PASSWORD}' \
-  --parameters '{"role": "ANALYST", "warehouse": "COMPUTE_WH"}'
-
-# Mode 2: From YAML file
-qualytics connections create --from-yaml ~/.qualytics/config/connections.yml --connection-key prod_postgres
-
-# Preview without creating
-qualytics connections create --type postgresql --name test --host localhost --dry-run
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--type` | TEXT | Connection type: postgresql, snowflake, mysql, bigquery, etc. | Yes* |
-| `--name` | TEXT | Connection name | No |
-| `--host` | TEXT | Host (supports `${ENV_VAR}`) | No |
-| `--port` | INTEGER | Port number | No |
-| `--username` | TEXT | Username (supports `${ENV_VAR}`) | No |
-| `--password` | TEXT | Password (supports `${ENV_VAR}`) | No |
-| `--uri` | TEXT | URI for DFS connections (supports `${ENV_VAR}`) | No |
-| `--access-key` | TEXT | Access key for DFS connections (supports `${ENV_VAR}`) | No |
-| `--secret-key` | TEXT | Secret key for DFS connections (supports `${ENV_VAR}`) | No |
-| `--catalog` | TEXT | Catalog for native connections | No |
-| `--jdbc-fetch-size` | INTEGER | JDBC fetch size | No |
-| `--max-parallelization` | INTEGER | Max parallelization level | No |
-| `--parameters` | TEXT | JSON string for type-specific params | No |
-| `--from-yaml` | TEXT | Path to connections YAML file | No* |
-| `--connection-key` | TEXT | Connection key in the YAML file | No* |
-| `--dry-run` | FLAG | Print payload without making HTTP request | No |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-**Note**: Use either `--type` (inline mode) or `--from-yaml`/`--connection-key` (YAML mode), not both.
-
-#### Update a Connection
-
-```bash
-# Update name
-qualytics connections update --id 42 --name "new-name"
-
-# Update credentials with env vars
-qualytics connections update --id 42 --password '${NEW_DB_PASSWORD}'
-
-# Update type-specific params
-qualytics connections update --id 42 --parameters '{"warehouse": "NEW_WH"}'
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--id` | INTEGER | Connection ID to update | Yes |
-| `--name` | TEXT | New connection name | No |
-| `--host` | TEXT | New host (supports `${ENV_VAR}`) | No |
-| `--port` | INTEGER | New port | No |
-| `--username` | TEXT | New username (supports `${ENV_VAR}`) | No |
-| `--password` | TEXT | New password (supports `${ENV_VAR}`) | No |
-| `--uri` | TEXT | New URI (supports `${ENV_VAR}`) | No |
-| `--access-key` | TEXT | New access key (supports `${ENV_VAR}`) | No |
-| `--secret-key` | TEXT | New secret key (supports `${ENV_VAR}`) | No |
-| `--parameters` | TEXT | JSON string for type-specific params | No |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-#### Get a Connection
-
-```bash
-qualytics connections get --id 42
-qualytics connections get --name "prod-pg" --format json
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--id` | INTEGER | Connection ID (mutually exclusive with `--name`) | No* |
-| `--name` | TEXT | Connection name (mutually exclusive with `--id`) | No* |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-**Note**: Sensitive fields are automatically redacted in the output.
-
-#### List Connections
-
-```bash
-qualytics connections list
-qualytics connections list --type "postgresql,snowflake" --name "prod"
-qualytics connections list --format json
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--name` | TEXT | Filter by name (search) | No |
-| `--type` | TEXT | Comma-separated connection types (e.g. `postgresql,snowflake`) | No |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-#### Delete a Connection
-
-```bash
-qualytics connections delete --id 42
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--id` | INTEGER | Connection ID to delete | Yes |
-
-**Note**: Fails with 409 if datastores still reference this connection. Remove or reassign those datastores first.
-
-#### Test a Connection
-
-Test an existing connection, optionally with override credentials:
-
-```bash
-# Test with saved credentials
-qualytics connections test --id 42
-
-# Test with override credentials (not persisted)
-qualytics connections test --id 42 --host new-host.com --password '${TEST_PASSWORD}'
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--id` | INTEGER | Connection ID to test | Yes |
-| `--host` | TEXT | Override host (supports `${ENV_VAR}`) | No |
-| `--username` | TEXT | Override username (supports `${ENV_VAR}`) | No |
-| `--password` | TEXT | Override password (supports `${ENV_VAR}`) | No |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
----
-
-## Configuring Connections via YAML
-
-In addition to the `connections` CLI commands above, you can define database connections in a YAML configuration file for use with `qualytics connections create --from-yaml` or `qualytics datastores create --connection-name`. This allows you to:
-- Reuse connection configurations across multiple datastores
-- Manage connection credentials in a centralized location
-- Automatically create new connections or reference existing ones in Qualytics
-
-### Setting Up connections.yml
-
-Create a file at `~/.qualytics/config/connections.yml` with your connection configurations.
-
-#### Configuration Structure
-
-```yaml
-connections:
-  <connection_key>:                  # Identifier for this connection block
-    type: <connection_type>          # Required: Database type (postgresql, snowflake, mysql, etc.)
-    name: <connection_name>           # Required: Unique name to identify this connection
-    parameters:                       # Required: Connection-specific parameters
-      host: <hostname>
-      port: <port_number>
-      user: <username>
-      password: <password>
-      # Additional parameters vary by connection type
-```
-
-#### Supported Connection Types
-
-- `postgresql` - PostgreSQL databases
-- `snowflake` - Snowflake data warehouse
-- `mysql` - MySQL databases
-- `bigquery` - Google BigQuery
-- `redshift` - Amazon Redshift
-- `abfs` - Azure Blob File System
-- `sqlserver` - Microsoft SQL Server
-- And more...
-
-### Connection Examples
-
-#### PostgreSQL Connection
-
-```yaml
-connections:
-  my_postgres:
-    type: postgresql
-    name: production_postgres_db
-    parameters:
-      host: postgres.example.com
-      port: 5432
-      user: postgres_user
-      password: your_secure_password
-```
-
-#### Snowflake Connection (Username/Password)
-
-```yaml
-connections:
-  my_snowflake:
-    type: snowflake
-    name: prod_snowflake_connection
-    parameters:
-      host: account.snowflakecomputing.com
-      role: DATA_ANALYST
-      warehouse: COMPUTE_WH
-      user: snowflake_user
-      password: your_snowflake_password
-```
-
-#### Snowflake Connection (Key-Pair Authentication)
-
-```yaml
-connections:
-  my_snowflake_keypair:
-    type: snowflake
-    name: prod_snowflake_keypair
-    parameters:
-      host: account.snowflakecomputing.com
-      role: DATA_ANALYST
-      warehouse: COMPUTE_WH
-      database: ANALYTICS_DB
-      schema: PUBLIC
-      authentication:
-        method: keypair
-        user: snowflake_user
-        private_key_path: /path/to/private_key.pem
-```
-
-#### MySQL Connection
-
-```yaml
-connections:
-  my_mysql:
-    type: mysql
-    name: prod_mysql_db
-    parameters:
-      host: mysql.example.com
-      port: 3306
-      user: mysql_user
-      password: mysql_password
-```
-
-#### BigQuery Connection
-
-```yaml
-connections:
-  my_bigquery:
-    type: bigquery
-    name: prod_bigquery
-    parameters:
-      project_id: my-gcp-project-id
-      credentials_path: /path/to/service-account-key.json
-```
-
-#### Azure Blob File System (ABFS)
-
-```yaml
-connections:
-  my_abfs:
-    type: abfs
-    name: azure_data_lake
-    parameters:
-      storage_account: mystorageaccount
-      container: mycontainer
-      access_key: your_access_key
-```
-
-### Complete Example connections.yml
-
-```yaml
-connections:
-  # PostgreSQL for production analytics
-  prod_postgres:
-    type: postgresql
-    name: production_analytics
-    parameters:
-      host: analytics.postgres.example.com
-      port: 5432
-      user: analyst
-      password: secure_pass_123
-
-  # Snowflake data warehouse
-  snowflake_dw:
-    type: snowflake
-    name: data_warehouse
-    parameters:
-      host: mycompany.snowflakecomputing.com
-      role: ANALYST_ROLE
-      warehouse: ANALYTICS_WH
-      user: dw_user
-      password: snowflake_password
-
-  # Development MySQL database
-  dev_mysql:
-    type: mysql
-    name: dev_database
-    parameters:
-      host: localhost
-      port: 3306
-      user: dev_user
-      password: dev_password
-```
-
-### Security Notes
-
-- **File Permissions**: Ensure your `connections.yml` file has restricted permissions:
-  ```bash
-  chmod 600 ~/.qualytics/config/connections.yml
-  ```
-- **Sensitive Data**: Passwords, tokens, and keys are automatically redacted in CLI output
-- **Version Control**: Never commit `connections.yml` to version control. Add it to `.gitignore`
-
-### How Connections Work with Datastores
-
-When creating a datastore with `--connection-name`:
-
-1. **Check Existing**: The CLI checks if a connection with that name already exists in your Qualytics instance
-2. **Reuse Existing**: If found, the CLI uses the existing connection ID automatically
-3. **Create New**: If not found, the CLI creates a new connection using the configuration from `connections.yml`
-
-This means you can define your connection once and reuse it across multiple datastores!
-
-### Datastores
-
-The `datastores` command group provides full CRUD operations plus connection verification and enrichment management.
-
-#### Create a Datastore
-
-```bash
-# With connection name from connections.yml
-qualytics datastores create \
-  --name "Production Analytics" \
-  --connection-name "prod_snowflake_connection" \
-  --database "ANALYTICS_DB" \
-  --schema "PUBLIC" \
-  --tags "production,analytics" \
-  --teams "data-team,engineering" \
-  --trigger-catalog
-
-# With existing connection ID
-qualytics datastores create \
-  --name "Dev Analytics" \
-  --connection-id 5 \
-  --database "DEV_DB" \
-  --schema "PUBLIC"
-
-# Preview payload without creating
-qualytics datastores create --name "test" --connection-id 5 --database "db" --schema "sc" --dry-run
-```
-
-| Option                                 | Type    | Description                                                                 | Required |
-|----------------------------------------|---------|-----------------------------------------------------------------------------|----------|
-| `--name`                               | TEXT    | Datastore name                                                              | Yes      |
-| `--connection-name`                    | TEXT    | Connection name from connections.yml (mutually exclusive with --connection-id) | No*    |
-| `--connection-id`                      | INTEGER | Existing connection ID (mutually exclusive with --connection-name)           | No*      |
-| `--database`                           | TEXT    | Database name                                                               | Yes      |
-| `--schema`                             | TEXT    | Schema name                                                                 | Yes      |
-| `--tags`                               | TEXT    | Comma-separated tags                                                        | No       |
-| `--teams`                              | TEXT    | Comma-separated team names                                                  | No       |
-| `--enrichment-only/--no-enrichment-only` | FLAG | Set datastore as enrichment-only                                            | No       |
-| `--enrichment-prefix`                  | TEXT    | Prefix for enrichment artifacts                                             | No       |
-| `--enrichment-source-record-limit`     | INTEGER | Enrichment source records limit (min: 1)                                    | No       |
-| `--enrichment-remediation-strategy`    | TEXT    | Strategy: none, append, or overwrite (default: none)                        | No       |
-| `--high-count-rollup-threshold`        | INTEGER | High count rollup threshold (min: 1)                                        | No       |
-| `--trigger-catalog/--no-trigger-catalog` | FLAG | Trigger catalog after creation (default: True)                              | No       |
-| `--dry-run`                            | FLAG    | Print payload without making HTTP request                                   | No       |
-| `--format`                             | TEXT    | Output format: `yaml` or `json` (default: `yaml`)                          | No       |
-
-**Note**: You must provide either `--connection-name` or `--connection-id`, but not both.
-
-#### Update a Datastore
-
-```bash
-# Rename
-qualytics datastores update --id 42 --name "New Name"
-
-# Update multiple fields
-qualytics datastores update --id 42 --database "new_db" --schema "new_schema" --tags "updated,v2"
-
-# Change enrichment settings
-qualytics datastores update --id 42 --enrichment-remediation-strategy append --enrichment-source-record-limit 500
-```
-
-| Option                                 | Type    | Description                                      | Required |
-|----------------------------------------|---------|--------------------------------------------------|----------|
-| `--id`                                 | INTEGER | Datastore ID to update                           | Yes      |
-| `--name`                               | TEXT    | New datastore name                               | No       |
-| `--connection-id`                      | INTEGER | New connection ID                                | No       |
-| `--database`                           | TEXT    | New database                                     | No       |
-| `--schema`                             | TEXT    | New schema                                       | No       |
-| `--tags`                               | TEXT    | Comma-separated tags                             | No       |
-| `--teams`                              | TEXT    | Comma-separated team names                       | No       |
-| `--enrichment-only/--no-enrichment-only` | FLAG | Enrichment-only flag                             | No       |
-| `--enrichment-prefix`                  | TEXT    | Prefix for enrichment artifacts                  | No       |
-| `--enrichment-source-record-limit`     | INTEGER | Enrichment source records limit                  | No       |
-| `--enrichment-remediation-strategy`    | TEXT    | Strategy: none, append, or overwrite             | No       |
-| `--high-count-rollup-threshold`        | INTEGER | High count rollup threshold                      | No       |
-| `--format`                             | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
-
-#### Get a Datastore
-
-```bash
-qualytics datastores get --id 42
-qualytics datastores get --name "Production Analytics" --format json
-```
-
-| Option     | Type    | Description                                      | Required |
-|------------|---------|--------------------------------------------------|----------|
-| `--id`     | INTEGER | Datastore ID (mutually exclusive with --name)    | No*      |
-| `--name`   | TEXT    | Datastore name (mutually exclusive with --id)    | No*      |
-| `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
-
-**Note**: You must provide either `--id` or `--name`, but not both.
-
-#### List Datastores
-
-```bash
-qualytics datastores list
-qualytics datastores list --name "prod" --type "postgresql,snowflake" --tag "production"
-qualytics datastores list --enrichment-only --format json
-```
-
-| Option                                 | Type | Description                                              | Required |
-|----------------------------------------|------|----------------------------------------------------------|----------|
-| `--name`                               | TEXT | Filter by name (search)                                  | No       |
-| `--type`                               | TEXT | Comma-separated connection types (e.g. postgresql,snowflake) | No   |
-| `--tag`                                | TEXT | Tag name to filter by                                    | No       |
-| `--enrichment-only/--no-enrichment-only` | FLAG | Filter enrichment-only datastores                      | No       |
-| `--format`                             | TEXT | Output format: `yaml` or `json` (default: `yaml`)       | No       |
-
-#### Delete a Datastore
-
-```bash
-qualytics datastores delete --id 42
-```
-
-| Option | Type    | Description           | Required |
-|--------|---------|-----------------------|----------|
-| `--id` | INTEGER | Datastore ID to delete | Yes      |
-
-**Warning**: Use with caution — this permanently deletes the datastore.
-
-#### Verify Connection
-
-Test the connection for an existing datastore. Useful for CI health checks.
-
-```bash
-qualytics datastores verify --id 42
-qualytics datastores verify --id 42 --format json
-```
-
-| Option     | Type    | Description                                      | Required |
-|------------|---------|--------------------------------------------------|----------|
-| `--id`     | INTEGER | Datastore ID to verify                           | Yes      |
-| `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
-
-#### Manage Enrichment Links
-
-Link or unlink an enrichment datastore to/from a source datastore.
-
-```bash
-# Link enrichment datastore 5 to source datastore 1
-qualytics datastores enrichment --id 1 --link 5
-
-# Unlink enrichment from datastore 1
-qualytics datastores enrichment --id 1 --unlink
-```
-
-| Option     | Type    | Description                                          | Required |
-|------------|---------|------------------------------------------------------|----------|
-| `--id`     | INTEGER | Source datastore ID                                  | Yes      |
-| `--link`   | INTEGER | Enrichment datastore ID to link                      | No*      |
-| `--unlink` | FLAG    | Unlink enrichment datastore                          | No*      |
-
-**Note**: You must provide either `--link` or `--unlink`, but not both.
-
----
-
-### Containers
-
-The `containers` command group provides CRUD operations for computed containers (computed_table, computed_file, computed_join) and read/delete for all container types. Non-computed containers (table, view, file) are created automatically during catalog operations.
-
-#### Create a Computed Container
-
-```bash
-# Computed table (SQL query)
-qualytics containers create \
-  --type computed_table \
-  --name "ct_order_validation" \
-  --datastore-id 42 \
-  --query "SELECT * FROM orders WHERE total < 0"
-
-# Computed file (derived from source container)
-qualytics containers create \
-  --type computed_file \
-  --name "cf_filtered_orders" \
-  --datastore-id 42 \
-  --source-container-id 100 \
-  --select-clause "order_id, total" \
-  --where-clause "total > 0"
-
-# Computed join (cross-container join)
-qualytics containers create \
-  --type computed_join \
-  --name "cj_orders_customers" \
-  --left-container-id 100 \
-  --right-container-id 200 \
-  --left-key-field "customer_id" \
-  --right-key-field "id" \
-  --select-clause "l.order_id, r.name" \
-  --join-type left
-
-# Preview payload without creating
-qualytics containers create --type computed_table --name "test" --datastore-id 42 --query "SELECT 1" --dry-run
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--type` | TEXT | Container type: `computed_table`, `computed_file`, or `computed_join` | Yes |
-| `--name` | TEXT | Container name | Yes |
-| `--datastore-id` | INTEGER | Datastore ID (required for computed_table and computed_file) | Conditional |
-| `--query` | TEXT | SQL query (required for computed_table) | Conditional |
-| `--source-container-id` | INTEGER | Source container ID (required for computed_file) | Conditional |
-| `--select-clause` | TEXT | Select clause (required for computed_file and computed_join) | Conditional |
-| `--where-clause` | TEXT | Where clause filter | No |
-| `--group-by-clause` | TEXT | Group by clause | No |
-| `--left-container-id` | INTEGER | Left container ID (required for computed_join) | Conditional |
-| `--right-container-id` | INTEGER | Right container ID (required for computed_join) | Conditional |
-| `--left-key-field` | TEXT | Left join key field (required for computed_join) | Conditional |
-| `--right-key-field` | TEXT | Right join key field (required for computed_join) | Conditional |
-| `--left-prefix` | TEXT | Left prefix for joined fields | No |
-| `--right-prefix` | TEXT | Right prefix for joined fields | No |
-| `--join-type` | TEXT | Join type: `inner`, `left`, `right`, or `full` | No |
-| `--description` | TEXT | Container description | No |
-| `--tags` | TEXT | Comma-separated tags | No |
-| `--dry-run` | FLAG | Print payload without making HTTP request | No |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-#### Update a Container
-
-Uses GET-merge-PUT pattern — fetches existing, overlays changes, PUTs back.
-
-```bash
-# Update query
-qualytics containers update --id 100 --query "SELECT * FROM orders WHERE total < 0 AND status = 'active'"
-
-# Update with force (when field drops affect checks/anomalies)
-qualytics containers update --id 100 --query "SELECT order_id FROM orders" --force-drop-fields
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--id` | INTEGER | Container ID to update | Yes |
-| `--name` | TEXT | New container name | No |
-| `--query` | TEXT | New SQL query (computed_table) | No |
-| `--select-clause` | TEXT | New select clause | No |
-| `--where-clause` | TEXT | New where clause | No |
-| `--group-by-clause` | TEXT | New group by clause | No |
-| `--description` | TEXT | New description | No |
-| `--tags` | TEXT | Comma-separated tags | No |
-| `--force-drop-fields` | FLAG | Allow dropping fields with associated checks/anomalies | No |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-**Note**: If the update would drop fields that have quality checks or anomalies, the API returns 409. Use `--force-drop-fields` to proceed.
-
-#### Get a Container
-
-```bash
-qualytics containers get --id 100
-qualytics containers get --id 100 --profiles --format json
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--id` | INTEGER | Container ID | Yes |
-| `--profiles` | FLAG | Also fetch field profiles | No |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-#### List Containers
-
-```bash
-qualytics containers list --datastore-id 42
-qualytics containers list --datastore-id 42 --type "computed_table,computed_file" --tag "production"
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--datastore-id` | INTEGER | Datastore ID to list containers from | Yes |
-| `--type` | TEXT | Comma-separated container types: table, view, file, computed_table, computed_file, computed_join | No |
-| `--name` | TEXT | Filter by name | No |
-| `--tag` | TEXT | Tag name to filter by | No |
-| `--search` | TEXT | Search string across container fields | No |
-| `--archived` | TEXT | Archive filter: `only` for archived, `include` for all | No |
-| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
-
-#### Delete a Container
-
-```bash
-qualytics containers delete --id 100
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--id` | INTEGER | Container ID to delete | Yes |
-
-**Warning**: Deleting a container cascades to its fields, quality checks, and anomalies.
-
-#### Validate a Computed Container
-
-Dry-run validation of a computed container definition against the API (no container is created).
-
-```bash
-qualytics containers validate --type computed_table --datastore-id 42 --query "SELECT * FROM orders"
-qualytics containers validate --type computed_table --datastore-id 42 --query "SELECT * FROM orders" --timeout 120
-```
-
-| Option | Type | Description | Required |
-|--------|------|-------------|----------|
-| `--type` | TEXT | Container type: `computed_table`, `computed_file`, or `computed_join` | Yes |
-| `--datastore-id` | INTEGER | Datastore ID | Conditional |
-| `--query` | TEXT | SQL query | Conditional |
-| `--timeout` | INTEGER | Validation timeout in seconds (default: 60) | No |
-| (other create options) | — | Same options as `create` for building the payload | Conditional |
-
----
+For a complete GitHub Actions workflow, see [docs/examples/github-actions-promotion.md](docs/examples/github-actions-promotion.md).
 
 ## Computed Tables
 
-The `computed-tables` command group allows you to import computed tables from files and automatically create quality checks for error detection queries.
-
-### Import Computed Tables
-
-Import computed tables from a file (Excel, CSV, or TXT) and optionally create satisfiesExpression checks.
+Computed tables let you define SQL-based virtual containers and automatically generate quality checks for error detection.
 
 ```bash
-qualytics computed-tables import --datastore DATASTORE_ID --input FILE_PATH [OPTIONS]
+# Create a single computed table
+qualytics containers create --type computed_table --name ct_orders \
+  --datastore-id 42 --query "SELECT * FROM orders WHERE total < 0"
+
+# Bulk import from Excel/CSV
+qualytics computed-tables import --datastore 42 --input checks.xlsx --as-draft
+
+# Preview before importing
+qualytics computed-tables preview --input checks.xlsx
 ```
 
-#### Input File Structure
-
-The input file must have **3 columns in positional order** (the first row is treated as a header and skipped):
-
-| Column | Name        | Required | Description                                           |
-|--------|-------------|----------|-------------------------------------------------------|
-| 1      | name        | **Yes**  | Unique identifier for the computed table              |
-| 2      | description | No       | Description stored in metadata and check              |
-| 3      | query       | **Yes**  | SQL query for the computed table                      |
-
-**Important**: Column names in the header row don't matter - only the position matters. You can name them anything (e.g., `check_id`, `check_description`, `check_query`).
-
-#### Excel File Example (.xlsx)
-
-| check_id    | check_description                     | check_query                                                        |
-|-------------|---------------------------------------|--------------------------------------------------------------------|
-| CHK001      | Detect orders with negative totals    | SELECT * FROM sales_orders WHERE total_amount < 0                  |
-| CHK002      | Find customers without email          | SELECT * FROM customer_master WHERE email IS NULL OR email = ''    |
-| CHK003      | Identify duplicate invoices           | SELECT invoice_no, COUNT(*) FROM invoices GROUP BY invoice_no HAVING COUNT(*) > 1 |
-
-#### CSV File Example (.csv)
-
-```csv
-check_id,check_description,check_query
-CHK001,Detect orders with negative totals,"SELECT * FROM sales_orders WHERE total_amount < 0"
-CHK002,Find customers without email,"SELECT * FROM customer_master WHERE email IS NULL OR email = ''"
-CHK003,Identify duplicate invoices,"SELECT invoice_no, COUNT(*) FROM invoices GROUP BY invoice_no HAVING COUNT(*) > 1"
-```
-
-**Note**: For multiline SQL queries in CSV, wrap the entire query in double quotes:
-
-```csv
-check_id,check_description,check_query
-CHK004,Complex order validation,"SELECT o.*
-FROM sales_orders o
-JOIN customer_master c ON o.customer_id = c.id
-WHERE o.status = 'SHIPPED'
-  AND c.country IS NULL"
-```
-
-#### Validation Rules
-
-The import process validates each row before processing:
-
-| Validation          | Behavior                                           |
-|---------------------|----------------------------------------------------|
-| Empty name          | Row is **skipped** with warning                    |
-| Empty query         | Row is **skipped** with warning                    |
-| Empty description   | Row is **processed** (description defaults to "")  |
-| Duplicate name      | Second occurrence is **skipped** with warning      |
-| Blank row           | Row is **skipped** silently                        |
-
-**Example validation output:**
-```
-Found 5 records in the file.
-Warnings during validation:
-  - Row 3: Empty name, skipping.
-  - Row 4: 'CHK001' has empty query, skipping.
-  - Row 7: Duplicate name 'CHK002' (first seen at row 2), skipping.
-3 valid records to import.
-```
-
-#### Options
-
-| Option                | Type    | Description                                                      | Default               |
-|-----------------------|---------|------------------------------------------------------------------|-----------------------|
-| `--datastore`         | INTEGER | Datastore ID to create computed tables in                        | Required              |
-| `--input`             | TEXT    | Input file path (.xlsx, .csv, or .txt)                           | Required              |
-| `--prefix`            | TEXT    | Prefix for computed table names                                  | `ct_`                 |
-| `--delimiter`         | TEXT    | Delimiter for CSV/TXT files                                      | `,` for CSV, `\t` for TXT |
-| `--as-draft`          | FLAG    | Create checks in Draft status (default)                          | True                  |
-| `--as-active`         | FLAG    | Create checks in Active status                                   | False                 |
-| `--skip-checks`       | FLAG    | Skip creating quality checks (only create computed tables)       | False                 |
-| `--skip-profile-wait` | FLAG    | Skip waiting for profile operation (**Warning**: checks may fail) | False                 |
-| `--tags`              | TEXT    | Tags for checks (comma-separated)                                | None                  |
-| `--dry-run`           | FLAG    | Preview what would be created without making changes             | False                 |
-| `--debug`             | FLAG    | Enable debug mode with API logging                               | False                 |
-
-#### Check Status: Draft vs Active
-
-The `--as-draft` and `--as-active` flags control the status of created quality checks:
-
-| Status   | Flag          | Behavior                                                    |
-|----------|---------------|-------------------------------------------------------------|
-| Draft    | `--as-draft`  | Check exists but won't run during scans. Review before activating. |
-| Active   | `--as-active` | Check runs immediately during scan operations.              |
-
-**Default**: Checks are created as **Draft** for safety.
-
-#### Use Cases
-
-Below are common use cases showing what happens with different option combinations:
-
----
-
-**1. Basic Import (Default)**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx
-```
-| What happens |
-|--------------|
-| Creates computed tables with `ct_` prefix |
-| Waits for profile operation to complete |
-| Creates quality checks in **Draft** status |
-| Skips existing computed tables |
-| Skips check creation if check already exists |
-
----
-
-**2. Import with Active Checks**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --as-active
-```
-| What happens |
-|--------------|
-| Same as basic import |
-| Checks are created in **Active** status |
-| Checks will run during the next scan operation |
-
-**Use when**: Rules are tested and ready for production.
-
----
-
-**3. Import Only Computed Tables (No Checks)**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --skip-checks
-```
-| What happens |
-|--------------|
-| Creates computed tables only |
-| **No quality checks are created** |
-| Still waits for profile operations |
-
-**Use when**: You want to configure checks manually in the UI.
-
----
-
-**4. Skip Profile Wait**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --skip-profile-wait
-```
-| What happens |
-|--------------|
-| Creates computed tables without waiting for profile |
-| **⚠️ Checks will likely FAIL** - container has no fields until profile completes |
-| Faster for bulk imports |
-
-**Warning**: If profiling hasn't completed, check creation will fail with: `Container X has no fields. Cannot create check.`
-
-**Use when**: Only use with `--skip-checks` for bulk computed table creation. Add checks manually later after profiling completes.
-
----
-
-**5. Import with Custom Prefix**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --prefix "dq_"
-```
-| What happens |
-|--------------|
-| Computed tables use `dq_` prefix instead of `ct_` |
-| Example: `CHK001` → `dq_CHK001` |
-
-**Use when**: Organizing different types of rules with different prefixes.
-
----
-
-**6. Import with Tags**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --tags "production,finance"
-```
-| What happens |
-|--------------|
-| Checks are created with specified tags |
-| Multiple tags separated by commas |
-
-**Use when**: Organizing checks for filtering in the UI.
-
----
-
-**7. Dry Run (Preview Only)**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --dry-run
-```
-| What happens |
-|--------------|
-| **No changes are made** |
-| Shows preview table of what would be created |
-| Shows which tables would be skipped (already exist) |
-
-**Use when**: Validating input file before actual import.
-
----
-
-**8. Debug Mode**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --debug
-```
-| What happens |
-|--------------|
-| Shows API requests/responses in console |
-| Writes detailed logs to `~/.qualytics/logs/` |
-
-**Use when**: Troubleshooting import failures.
-
----
-
-**9. CSV with Custom Delimiter**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.txt --delimiter ";"
-```
-| What happens |
-|--------------|
-| Reads file using semicolon as delimiter |
-
-**Use when**: Files exported from systems with non-standard delimiters.
-
----
-
-**10. Production-Ready Import**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx \
-  --prefix "prod_" \
-  --tags "production,automated" \
-  --as-active \
-  --debug
-```
-| What happens |
-|--------------|
-| Computed tables with `prod_` prefix |
-| Checks in **Active** status |
-| Tags: `production`, `automated` |
-| Full API logging for audit trail |
-
----
-
-**11. Fast Bulk Import (Minimal)**
-```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx \
-  --skip-checks \
-  --skip-profile-wait
-```
-| What happens |
-|--------------|
-| Fastest possible import |
-| No profile waiting, no checks created |
-| Computed tables only |
-
-**Use when**: Bulk setup of computed tables only. You must add checks manually after profiling completes.
-
-**Note**: This is the recommended way to use `--skip-profile-wait` - always combine it with `--skip-checks`.
-
-#### Computed Table Naming
-
-The final computed table name follows the pattern: `<prefix><name>`
-
-For example, with default prefix `ct_`:
-- Input name: `CHK001` → Computed table: `ct_CHK001`
-- Input name: `order_validation` → Computed table: `ct_order_validation`
-
-Common suffixes like `_SF`, `_DB`, `_BQ`, `_SNOWFLAKE` are automatically stripped from the `rule_id` stored in metadata:
-- Input name: `CHK001_SF` → `rule_id` in metadata: `CHK001`
-
-#### Check Behavior
-
-When checks are created (default behavior), a `satisfiesExpression` check is automatically generated where:
-
-- **Empty result set (no rows)** = PASS (all data is valid)
-- **Any rows returned** = FAIL (each row is flagged as an anomaly)
-
-This is ideal for error detection queries where returned results indicate data quality issues.
-
-The check expression wraps all field names with backticks for compatibility with special characters and functions:
-```sql
-`order_id` IS NULL AND `customer_name` IS NULL AND `coalesce(trim(status))` IS NULL
-```
-
-#### Metadata Storage
-
-Both the computed table and quality check store metadata for traceability:
-
-**Computed Table `additional_metadata`:**
-```json
-{
-  "description": "Detect orders with negative totals",
-  "rule_id": "CHK001",
-  "imported_from": "qualytics-cli",
-  "import_timestamp": "2026-01-28T12:00:00"
-}
-```
-
-**Quality Check `additional_metadata`:**
-```json
-{
-  "rule_id": "CHK001",
-  "computed_table_name": "ct_CHK001",
-  "original_description": "Detect orders with negative totals",
-  "imported_from": "qualytics-cli",
-  "import_timestamp": "2026-01-28T12:00:00"
-}
-```
-
-#### SQL Query Handling
-
-**Cross-catalog/schema references** are preserved as-is:
-
-```sql
-SELECT * FROM analytics_prod.sales_schema.orders o
-JOIN finance_db.accounting.invoices i ON o.invoice_id = i.id
-WHERE o.status = 'PENDING'
-```
-
-**Automatic alias addition**: Columns without aliases get unique aliases added automatically (`expr_1`, `expr_2`, etc.):
-
-```sql
--- Original query (columns without aliases)
-SELECT coalesce(trim(name), 'Blank'), upper(status), id as order_id FROM orders
-
--- After processing (aliases added)
-SELECT coalesce(trim(name), 'Blank') as expr_1, upper(status) as expr_2, id as order_id FROM orders
-```
-
-This ensures all fields have proper names for the quality check expression.
-
-If you need to test with all tables in the same catalog/schema, pre-process your input file to remove the prefixes before importing.
-
-### List Computed Tables
-
-List all computed tables in a datastore.
-
-```bash
-qualytics computed-tables list --datastore DATASTORE_ID
-```
-
-| Option        | Type    | Description                              | Required |
-|---------------|---------|------------------------------------------|----------|
-| `--datastore` | INTEGER | Datastore ID to list computed tables from | Yes      |
-
-**Example output:**
-```
-┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
-┃ ID   ┃ Name               ┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
-│ 101  │ ct_CHK001          │
-│ 102  │ ct_CHK002          │
-│ 103  │ ct_CHK003          │
-└──────┴────────────────────┘
-
-Total: 3 computed tables
-```
-
-### Preview File
-
-Preview computed table definitions from a file without importing. Useful for validating your input file before import.
-
-```bash
-qualytics computed-tables preview --input FILE_PATH [OPTIONS]
-```
-
-| Option        | Type    | Description                                      | Default |
-|---------------|---------|--------------------------------------------------|---------|
-| `--input`     | TEXT    | Input file path (.xlsx, .csv, or .txt)           | Required |
-| `--delimiter` | TEXT    | Delimiter for CSV/TXT files                      | `,` for CSV, `\t` for TXT |
-| `--limit`     | INTEGER | Number of records to preview                     | 5       |
-| `--prefix`    | TEXT    | Prefix to show for computed table names          | `ct_`   |
-
-**Example:**
-```bash
-qualytics computed-tables preview --input checks.xlsx --limit 3
-```
-
-**Example output:**
-```
-Reading definitions from: checks.xlsx
-Found 5 records in the file.
-
-Preview of first 3 records:
-
-Record 1:
-  Computed Table Name: ct_CHK001
-  Description: Detect orders with negative totals
-  Query: SELECT * FROM sales_orders WHERE total_amount < 0
-
-Record 2:
-  Computed Table Name: ct_CHK002
-  Description: Find customers without email
-  Query: SELECT * FROM customer_master WHERE email IS NULL...
-
-Record 3:
-  Computed Table Name: ct_CHK003
-  Description: Identify duplicate invoices
-  Query: SELECT invoice_no, COUNT(*) FROM invoices GROUP B...
-
-... and 2 more records
-```
-
----
+For the full guide covering input file formats, validation rules, check behavior, and all 11 use cases, see [docs/computed-tables.md](docs/computed-tables.md).
 
 ## Development
 
-This project uses modern Python tooling with [uv](https://docs.astral.sh/uv/) for dependency management and [ruff](https://docs.astral.sh/ruff/) for linting and formatting.
-
-### Requirements
-
-- Python 3.10 or higher
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
-
-### Setting Up Development Environment
-
-1. **Install uv** (if not already installed):
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-
-2. **Clone the repository**:
-   ```bash
-   git clone https://github.com/Qualytics/qualytics-cli.git
-   cd qualytics-cli
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   uv sync
-   ```
-
-4. **Install pre-commit hooks** (optional but recommended):
-   ```bash
-   uv run pre-commit install
-   ```
-
-### Development Commands
-
 ```bash
-# Install/update dependencies
-uv sync
-
-# Run the CLI in development mode
-uv run qualytics --help
-
-# Run linting checks
-uv run ruff check qualytics/
-
-# Auto-fix linting issues
-uv run ruff check qualytics/ --fix
-
-# Format code
-uv run ruff format qualytics/
-
-# Run all pre-commit hooks (includes linting, formatting, and Python 3.10+ upgrades)
-uv run pre-commit run --all-files
-
-# Build the package
-uv build
-
-# Run tests
-uv run pytest
-
-# Run tests with coverage
-uv run pytest --cov --cov-report=term-missing
+git clone https://github.com/Qualytics/qualytics-cli.git
+cd qualytics-cli
+uv sync                              # Install dependencies
+uv run pytest                        # Run tests (472 tests)
+uv run pre-commit run --all-files    # Lint, format, type checks
 ```
 
-### Versioning & Releases
-
-Version bumping is managed via `uv version` and automated through GitHub Actions:
-
-```bash
-# Check current version
-uv version
-
-# Bump version locally (patch/minor/major)
-uv version patch   # 0.4.0 -> 0.4.1
-uv version minor   # 0.4.0 -> 0.5.0
-uv version major   # 0.4.0 -> 1.0.0
-```
-
-Releases are triggered by the **Release** workflow in GitHub Actions (manual dispatch), which bumps the version, creates a git tag, and triggers the **Publish** workflow to build and publish to PyPI via trusted publishing (OIDC).
-
-### Code Quality Standards
-
-This project enforces:
-- **Python 3.10+** minimum version
-- **Ruff** for linting and formatting (88 character line length)
-- **pyupgrade** for automatic Python syntax modernization
-- **Pre-commit hooks** for automated quality checks
-
-### Project Structure
-
-```
-qualytics-cli/
-├── qualytics/               # Main package
-│   ├── qualytics.py         # Entry point — registers all Typer sub-apps
-│   ├── config.py            # Configuration management
-│   ├── cli/                 # CLI commands layer (Typer sub-applications)
-│   ├── services/            # Business logic & orchestration
-│   ├── api/                 # Thin HTTP wrappers over the Qualytics API
-│   └── utils/               # Validation, file ops, YAML loading
-├── tests/                   # Test suite (pytest)
-├── pyproject.toml           # Project configuration & dependencies
-├── .pre-commit-config.yaml  # Pre-commit hooks configuration
-└── .github/workflows/       # CI/CD (lint, test, publish, release)
-```
-
-### Contributing
-
-1. Create a new branch for your feature/fix
-2. Make your changes
-3. Run `uv run pytest` to ensure tests pass
-4. Run `uv run pre-commit run --all-files` to ensure all quality checks pass
-5. Commit your changes (pre-commit hooks will run automatically if installed)
-6. Submit a pull request — CI will run lint, tests, and pre-commit checks automatically
-
----
+For architecture details, code conventions, and contribution guidelines, see [AGENTS.md](AGENTS.md).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License -- see [LICENSE](LICENSE) for details.

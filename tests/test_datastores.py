@@ -268,7 +268,6 @@ class TestGetDatastoreByName:
 class TestBuildCreateDatastorePayload:
     def test_with_connection_id(self):
         payload = build_create_datastore_payload(
-            cfg=None,
             name="ds1",
             connection_id=5,
             database="mydb",
@@ -278,33 +277,6 @@ class TestBuildCreateDatastorePayload:
         assert payload["connection_id"] == 5
         assert payload["database"] == "mydb"
         assert payload["schema"] == "public"
-        assert "connection" not in payload
-
-    def test_with_connection_config(self):
-        cfg = {
-            "name": "pg_conn",
-            "type": "postgresql",
-            "parameters": {
-                "host": "localhost",
-                "port": 5432,
-                "user": "admin",
-                "password": "secret",
-            },
-        }
-        payload = build_create_datastore_payload(
-            cfg=cfg, name="ds2", database="mydb", schema="public"
-        )
-        assert payload["connection"]["name"] == "pg_conn"
-        assert payload["connection"]["type"] == "postgresql"
-        assert "connection_id" not in payload
-
-    def test_raises_without_cfg_or_connection_id(self):
-        import pytest
-
-        with pytest.raises(ValueError, match="Either cfg or connection_id"):
-            build_create_datastore_payload(
-                cfg=None, name="ds", database="db", schema="sc"
-            )
 
 
 class TestBuildUpdateDatastorePayload:

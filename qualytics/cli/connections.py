@@ -22,11 +22,9 @@ from ..services.connections import (
 from ..utils import (
     OutputFormat,
     format_for_display,
-    get_connection as get_yaml_connection,
     redact_payload,
     resolve_env_vars,
 )
-from ..config import CONNECTIONS_PATH
 
 connections_app = typer.Typer(
     name="connections",
@@ -126,16 +124,6 @@ def connections_create(
         "--parameters",
         help='JSON string for type-specific params (e.g. \'{"role": "ADMIN", "warehouse": "WH"}\')',
     ),
-    from_yaml: str | None = typer.Option(
-        None,
-        "--from-yaml",
-        help="Path to connections YAML file (default: ~/.qualytics/config/connections.yml)",
-    ),
-    connection_key: str | None = typer.Option(
-        None,
-        "--connection-key",
-        help="Connection key/name in the YAML file (required with --from-yaml)",
-    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print payload only; no HTTP"
     ),
@@ -145,10 +133,6 @@ def connections_create(
 ):
     """Create a new connection.
 
-    Two modes:
-      1. Inline flags: --type, --host, --port, --username, --password, etc.
-      2. From YAML: --from-yaml <path> --connection-key <key>
-
     Sensitive flags support ${ENV_VAR} syntax — values are resolved from
     environment variables (or .env file) before being sent to the API.
     Use single quotes in your shell to prevent premature expansion:
@@ -157,80 +141,44 @@ def connections_create(
           --host db.example.com --port 5432 \\
           --username '${DB_USER}' --password '${DB_PASSWORD}'
     """
-    # Mode 2: from YAML
-    if from_yaml is not None or connection_key is not None:
-        if from_yaml is None:
-            from_yaml = CONNECTIONS_PATH
-        if connection_key is None:
-            print("[red]--connection-key is required when using --from-yaml.[/red]")
-            raise typer.Exit(code=1)
+    if connection_type is None:
+        print("[red]--type is required.[/red]")
+        raise typer.Exit(code=1)
 
+    # Resolve env vars in sensitive fields
+    resolved = _resolve_sensitive_flags(
+        host=host,
+        username=username,
+        password=password,
+        access_key=access_key,
+        secret_key=secret_key,
+        uri=uri,
+    )
+
+    # Parse extra parameters JSON
+    extra_params = None
+    if parameters is not None:
         try:
-            cfg = get_yaml_connection(from_yaml, connection_key)
-        except (ValueError, FileNotFoundError) as e:
-            print(f"[red]{e}[/red]")
+            extra_params = json.loads(parameters)
+        except json.JSONDecodeError as e:
+            print(f"[red]Invalid JSON in --parameters: {e}[/red]")
             raise typer.Exit(code=1)
 
-        payload = {
-            "type": cfg["type"],
-            "name": cfg.get("name", connection_key),
-        }
-        params = cfg.get("parameters", {})
-        if "host" in params:
-            payload["host"] = params["host"]
-        if "port" in params:
-            payload["port"] = params["port"]
-        if "user" in params:
-            payload["username"] = params["user"]
-        if "username" in params:
-            payload["username"] = params["username"]
-        if "password" in params:
-            payload["password"] = params["password"]
-
-        # Merge any remaining params
-        for k, v in params.items():
-            if k not in ("host", "port", "user", "username", "password"):
-                payload[k] = v
-    else:
-        # Mode 1: inline flags
-        if connection_type is None:
-            print("[red]--type is required (or use --from-yaml).[/red]")
-            raise typer.Exit(code=1)
-
-        # Resolve env vars in sensitive fields
-        resolved = _resolve_sensitive_flags(
-            host=host,
-            username=username,
-            password=password,
-            access_key=access_key,
-            secret_key=secret_key,
-            uri=uri,
-        )
-
-        # Parse extra parameters JSON
-        extra_params = None
-        if parameters is not None:
-            try:
-                extra_params = json.loads(parameters)
-            except json.JSONDecodeError as e:
-                print(f"[red]Invalid JSON in --parameters: {e}[/red]")
-                raise typer.Exit(code=1)
-
-        payload = build_create_connection_payload(
-            connection_type,
-            name=name,
-            host=resolved.get("host", host),
-            port=port,
-            username=resolved.get("username", username),
-            password=resolved.get("password"),
-            uri=resolved.get("uri"),
-            access_key=resolved.get("access_key"),
-            secret_key=resolved.get("secret_key"),
-            catalog=catalog,
-            jdbc_fetch_size=jdbc_fetch_size,
-            max_parallelization=max_parallelization,
-            parameters=extra_params,
-        )
+    payload = build_create_connection_payload(
+        connection_type,
+        name=name,
+        host=resolved.get("host", host),
+        port=port,
+        username=resolved.get("username", username),
+        password=resolved.get("password"),
+        uri=resolved.get("uri"),
+        access_key=resolved.get("access_key"),
+        secret_key=resolved.get("secret_key"),
+        catalog=catalog,
+        jdbc_fetch_size=jdbc_fetch_size,
+        max_parallelization=max_parallelization,
+        parameters=extra_params,
+    )
 
     print("[bold]Connection Create Payload (secrets redacted):[/bold]")
     print(format_for_display(redact_payload(payload), fmt))

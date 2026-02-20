@@ -28,7 +28,6 @@ CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.
 CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
 OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
 DOTENV_PATH = os.path.expanduser(f"{BASE_PATH}/.env")
-CONNECTIONS_PATH = os.path.expanduser(f"{BASE_PATH}/config/connections.yml")
 PROJECT_CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config/config.yml")
 
 

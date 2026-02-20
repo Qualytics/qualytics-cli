@@ -14,14 +14,14 @@ from ..api.datastores import (
     update_datastore,
     verify_connection,
 )
-from ..config import ConfigError, CONNECTIONS_PATH
+from ..config import ConfigError
 from ..services.connections import get_connection_by
 from ..services.datastores import (
     build_create_datastore_payload,
     build_update_datastore_payload,
     get_datastore_by,
 )
-from ..utils import get_connection, OutputFormat, format_for_display, redact_payload
+from ..utils import OutputFormat, format_for_display, redact_payload
 
 datastores_app = typer.Typer(
     name="datastores", help="Create, get, update, delete, and manage datastores"
@@ -48,7 +48,7 @@ def datastores_create(
         None,
         "--connection-name",
         "-cn",
-        help="Connection name from connections.yml",
+        help="Name of an existing connection in Qualytics",
     ),
     connection_id: int | None = typer.Option(
         None, "--connection-id", help="Existing connection id to reference"
@@ -111,12 +111,8 @@ def datastores_create(
             )
             raise typer.Exit(code=1)
 
-        connection_cfg = None
-
         if connection_name:
-            print(
-                f"[cyan]Checking if connection '{connection_name}' exists in Qualytics...[/cyan]"
-            )
+            print(f"[cyan]Looking up connection '{connection_name}'...[/cyan]")
             existing_connection = get_connection_by(
                 client, connection_name=connection_name
             )
@@ -128,13 +124,12 @@ def datastores_create(
                 )
             else:
                 print(
-                    f"[yellow]Connection not found in Qualytics. Getting config from YAML to create new connection...[/yellow]"
+                    f"[red]Connection '{connection_name}' not found. "
+                    "Create it first with: qualytics connections create[/red]"
                 )
-                connection_cfg = get_connection(CONNECTIONS_PATH, connection_name)
-                connection_id = None
+                raise typer.Exit(code=1)
 
         payload = build_create_datastore_payload(
-            cfg=connection_cfg,
             name=name,
             connection_id=connection_id,
             tags=[t.strip() for t in tags.split(",")] if tags else None,

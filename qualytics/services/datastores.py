@@ -57,9 +57,8 @@ def get_datastore_by(
 
 def build_create_datastore_payload(
     *,
-    cfg: dict | None,
     name: str,
-    connection_id: int | None = None,
+    connection_id: int,
     tags: list[str] | None = None,
     teams: list[str] | None = None,
     enrichment_only: bool = False,
@@ -74,6 +73,7 @@ def build_create_datastore_payload(
     """Build a payload for creating a datastore."""
     payload: dict = {
         "name": name,
+        "connection_id": int(connection_id),
         "enrichment_only": enrichment_only,
         "enrichment_remediation_strategy": enrichment_remediation_strategy,
         "trigger_catalog": trigger_catalog,
@@ -83,22 +83,6 @@ def build_create_datastore_payload(
         "schema": schema,
     }
 
-    if connection_id is not None:
-        payload["connection_id"] = int(connection_id)
-    elif cfg is not None:
-        params = cfg["parameters"]
-        connection: dict = {
-            "name": cfg["name"],
-            "type": cfg["type"],
-            "host": params["host"],
-            "port": params["port"],
-            "username": params["user"],
-            "password": params["password"],
-        }
-
-        payload["connection"] = connection
-    else:
-        raise ValueError("Either cfg or connection_id must be provided")
     if enrichment_prefix is not None:
         payload["enrichment_prefix"] = enrichment_prefix
     if enrichment_source_record_limit is not None:

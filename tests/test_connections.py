@@ -554,54 +554,6 @@ class TestConnectionsCreateCLI:
         assert "Invalid JSON" in result.output
 
     @patch("qualytics.cli.connections.create_connection")
-    @patch("qualytics.cli.connections.get_yaml_connection")
-    @patch("qualytics.cli.connections.get_client")
-    def test_create_from_yaml(self, mock_gc, mock_yaml, mock_create, cli_runner):
-        mock_gc.return_value = _mock_client()
-        mock_yaml.return_value = {
-            "type": "postgresql",
-            "name": "pg-prod",
-            "parameters": {
-                "host": "db.example.com",
-                "port": 5432,
-                "user": "admin",
-                "password": "secret",
-            },
-        }
-        mock_create.return_value = {
-            "id": 3,
-            "name": "pg-prod",
-            "type": "postgresql",
-        }
-        result = cli_runner.invoke(
-            app,
-            [
-                "connections",
-                "create",
-                "--from-yaml",
-                "/tmp/connections.yml",
-                "--connection-key",
-                "pg_prod",
-            ],
-        )
-        assert result.exit_code == 0
-        assert "created successfully" in result.output
-        mock_yaml.assert_called_once_with("/tmp/connections.yml", "pg_prod")
-
-    def test_create_from_yaml_requires_connection_key(self, cli_runner):
-        result = cli_runner.invoke(
-            app,
-            [
-                "connections",
-                "create",
-                "--from-yaml",
-                "/tmp/connections.yml",
-            ],
-        )
-        assert result.exit_code == 1
-        assert "--connection-key" in result.output
-
-    @patch("qualytics.cli.connections.create_connection")
     @patch("qualytics.cli.connections.get_client")
     def test_create_env_var_resolution(
         self, mock_gc, mock_create, cli_runner, monkeypatch

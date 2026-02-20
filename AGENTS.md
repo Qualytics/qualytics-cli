@@ -52,7 +52,6 @@ qualytics-cli/
 │   └── utils/
 │       ├── validation.py     # URL normalization
 │       ├── file_ops.py       # Error logging, file deduplication
-│       ├── yaml_loader.py    # Connection YAML parsing
 │       ├── secrets.py        # Env var resolution and sensitive field redaction
 │       └── serialization.py  # YAML/JSON load, dump, display, format detection
 ├── tests/
@@ -226,14 +225,10 @@ Full connection lifecycle management — create, update, get, list, delete, and 
 - `services/connections.py` — business logic: `get_connection_by`, `get_connection_by_name`, `build_create_connection_payload`, `build_update_connection_payload`
 - `cli/connections.py` — 6 CLI commands under `qualytics connections`
 
-**Two create modes:**
-1. Inline flags: `--type postgresql --host ... --password '${DB_PASS}'`
-2. From YAML: `--from-yaml /path/to/connections.yml --connection-key pg_prod` (reuses existing `get_connection()` from `yaml_loader.py`)
-
 **`--parameters` JSON catch-all:** For type-specific fields that don't have dedicated flags (e.g., `--parameters '{"role": "ADMIN", "warehouse": "WH"}'`). Merged last, overrides dedicated flags.
 
 **CLI commands:**
-- `create` — inline flags (with `${ENV_VAR}` support) or `--from-yaml`, `--dry-run` support
+- `create` — inline flags with `${ENV_VAR}` support, `--dry-run` support
 - `update` — partial update: only provided fields are sent
 - `get` — by `--id` or `--name`, secrets redacted in output
 - `list` — filterable by `--name`, `--type` (comma-separated), all connections redacted
@@ -361,7 +356,6 @@ print(format_for_display(data, OutputFormat.JSON))
 | File | Purpose |
 |------|---------|
 | `config.yaml` | URL, token, ssl_verify (auto-migrated from legacy `config.json`) |
-| `config/connections.yml` | Database connection definitions |
 | `data_checks.yaml` | Default checks export location |
 | `data_checks_template.yaml` | Default templates export location |
 | `errors-{date}.log` | Import operation errors |
@@ -476,7 +470,7 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 | `test_client.py` | QualyticsClient: URL building, SSL config, exception hierarchy, get_client factory |
 | `test_config.py` | Config loading, saving, token validation, legacy JSON migration |
 | `test_anomalies.py` | API layer (list, get, update, bulk update, delete, bulk delete), CLI commands (get, list, update, archive, delete), status validation, bulk operations |
-| `test_connections.py` | API layer (create, update, get, list, list_all, delete, test), service layer (get_connection_by, build payloads), secrets (env var resolution, redaction), CLI commands (create, update, get, list, delete, test), from-YAML creation, 409 handling |
+| `test_connections.py` | API layer (create, update, get, list, list_all, delete, test), service layer (get_connection_by, build payloads), secrets (env var resolution, redaction), CLI commands (create, update, get, list, delete, test), 409 handling |
 | `test_export_import.py` | Helpers (slugify, write_yaml, env var names), strip functions (connections, datastores, containers), import functions (connections, datastores, containers with upsert), export orchestrator (full, filtered, deduplication), import orchestrator (full, filtered), CLI commands (export, import, dry-run, error display) |
 | `test_containers.py` | API layer (create, update, get, list, list_all, delete, validate, field_profiles, listing), service layer (get_container_by_name, build payloads), CLI commands (create, update, get, list, delete, validate), polymorphic create, 409 handling |
 | `test_datastores.py` | API layer (create, update, get, list, list_all, delete, verify, validate, enrichment connect/disconnect), service layer (get_datastore_by, build payloads), CLI commands (create, update, get, list, delete, verify, enrichment), validation |
