@@ -71,69 +71,164 @@ To view the currently saved configuration:
 qualytics show-config
 ```
 
-### Export Checks
+### Quality Checks
 
-You can export checks to a file using the `checks export` command:
+The `checks` command group provides full CRUD operations and git-friendly export/import for quality checks.
+
+#### Create Checks
+
+Create quality checks from a YAML or JSON file:
 
 ```bash
-qualytics checks export --datastore DATASTORE_ID [--containers CONTAINER_IDS] [--tags TAG_NAMES] [--output LOCATION_TO_BE_EXPORTED]
+# Create from a single-check file
+qualytics checks create --datastore-id 42 --file check.yaml
+
+# Create from a file containing a list of checks (bulk)
+qualytics checks create --datastore-id 42 --file checks.yaml
 ```
 
-By default, it saves the exported checks to `./qualytics/data_checks.json`. However, you can specify a different output path with the `--output` option.
+| Option           | Type    | Description                              | Required |
+|------------------|---------|------------------------------------------|----------|
+| `--datastore-id` | INTEGER | Target datastore ID                      | Yes      |
+| `--file`         | TEXT    | Path to YAML/JSON file with check definitions | Yes  |
 
-| Option         | Type            | Description                                             | Default                            | Required |
-|----------------|-----------------|---------------------------------------------------------|------------------------------------|----------|
-| `--datastore`  | INTEGER         | Datastore ID                                            | None                               | Yes      |
-| `--containers` | List of INTEGER | Containers IDs                                          | None                               | No       |
-| `--tags`       | List of TEXT    | Tag names                                               | None                               | No       |
-| `--status`      | List of TEXT   | Status `Active`, `Draft` or `Archived`                  | None                               | No       |
-| `--output`     | TEXT            | Output file path   | ./qualytics/data_checks.json       | No                                 | No       |
+#### Get a Check
 
-### Export Check Templates
+```bash
+qualytics checks get --check-id 123
+qualytics checks get --check-id 123 --format json
+```
 
-You can export check templates to the `_export_check_templates` table to an enrichment datastore.
+| Option       | Type    | Description                               | Required |
+|--------------|---------|-------------------------------------------|----------|
+| `--check-id` | INTEGER | Quality check ID                          | Yes      |
+| `--format`   | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+#### List Checks
+
+```bash
+qualytics checks list --datastore-id 42
+qualytics checks list --datastore-id 42 --containers "1,2,3" --tags "production" --status Active
+```
+
+| Option           | Type    | Description                                      | Required |
+|------------------|---------|--------------------------------------------------|----------|
+| `--datastore-id` | INTEGER | Datastore ID                                     | Yes      |
+| `--containers`   | TEXT    | Comma-separated container IDs                    | No       |
+| `--tags`         | TEXT    | Comma-separated tag names                        | No       |
+| `--status`       | TEXT    | Filter by status: `Active`, `Draft`, `Archived`  | No       |
+| `--format`       | TEXT    | Output format: `yaml` or `json` (default: `yaml`)| No      |
+
+#### Update a Check
+
+```bash
+qualytics checks update --check-id 123 --file updated_check.yaml
+```
+
+| Option       | Type    | Description                              | Required |
+|--------------|---------|------------------------------------------|----------|
+| `--check-id` | INTEGER | Quality check ID to update               | Yes      |
+| `--file`     | TEXT    | Path to YAML/JSON file with updated fields | Yes    |
+
+#### Delete Checks
+
+```bash
+# Delete a single check
+qualytics checks delete --check-id 123
+
+# Bulk delete
+qualytics checks delete --ids "1,2,3,4,5"
+
+# Hard delete (permanent, no archival)
+qualytics checks delete --check-id 123 --no-archive
+```
+
+| Option       | Type    | Description                                          | Required |
+|--------------|---------|------------------------------------------------------|----------|
+| `--check-id` | INTEGER | Single check ID to delete                            | No*      |
+| `--ids`      | TEXT    | Comma-separated list of check IDs for bulk delete    | No*      |
+| `--archive`/`--no-archive` | FLAG | Archive on delete (default: `--archive`) | No       |
+
+**Note**: You must provide either `--check-id` or `--ids`, but not both.
+
+#### Export Checks (Git-Friendly)
+
+Export checks to a directory structure with one YAML file per check, organized by container:
+
+```bash
+qualytics checks export --datastore-id 42 --output ./checks/
+```
+
+This creates:
+```
+checks/
+  orders/
+    notnull__order_id.yaml
+    between__total_amount.yaml
+  customers/
+    matchespattern__email.yaml
+    isunique__customer_id.yaml
+```
+
+Each file is a portable check definition that references containers and fields by name (not ID), so the same files can be imported to any datastore that has matching containers.
+
+| Option           | Type    | Description                                      | Required |
+|------------------|---------|--------------------------------------------------|----------|
+| `--datastore-id` | INTEGER | Datastore ID to export from                      | Yes      |
+| `--output`       | TEXT    | Output directory path (default: `./checks`)      | No       |
+| `--containers`   | TEXT    | Comma-separated container IDs to filter          | No       |
+| `--tags`         | TEXT    | Comma-separated tag names to filter              | No       |
+| `--status`       | TEXT    | Filter by status: `Active`, `Draft`, `Archived`  | No       |
+
+#### Import Checks (Multi-Datastore + Upsert)
+
+Import checks from a directory to one or more datastores. Uses upsert logic — existing checks are updated, new ones are created.
+
+```bash
+# Import to a single datastore
+qualytics checks import --datastore-id 42 --input ./checks/
+
+# Import to multiple datastores (Dev → Test → Prod promotion)
+qualytics checks import --datastore-id 42 --datastore-id 43 --datastore-id 44 --input ./checks/
+
+# Preview what would change without making changes
+qualytics checks import --datastore-id 42 --input ./checks/ --dry-run
+```
+
+| Option           | Type         | Description                                      | Required |
+|------------------|--------------|--------------------------------------------------|----------|
+| `--datastore-id` | INTEGER (repeatable) | Target datastore ID(s)                   | Yes      |
+| `--input`        | TEXT         | Input directory path (default: `./checks`)       | No       |
+| `--dry-run`      | FLAG         | Preview changes without executing                | No       |
+
+**Upsert behavior:** Each check has a stable `_qualytics_check_uid` in its `additional_metadata`. On import, UIDs are matched against existing checks in the target datastore — matches update, new UIDs create. This makes repeated imports safe and idempotent.
+
+For a complete CI/CD promotion workflow with GitHub Actions, see [docs/examples/github-actions-promotion.md](docs/examples/github-actions-promotion.md).
+
+#### Export Check Templates
+
+Export check templates to the `_export_check_templates` table in an enrichment datastore.
 
 ```bash
 qualytics checks export-templates --enrichment_datastore_id ENRICHMENT_DATASTORE_ID [--check_templates CHECK_TEMPLATE_IDS]
 ```
 
-| Option                   | Type     | Description                                                                | Required |
-|--------------------------|----------|----------------------------------------------------------------------------|----------|
-| `--enrichment_datastore_id` | INTEGER  | The ID of the enrichment datastore where check templates will be exported. | Yes      |
-| `--check_templates`       | TEXT     | Comma-separated list of check template IDs or array-like format. Example: "1, 2, 3" or "[1,2,3]".| No       |
+| Option                      | Type    | Description                                                                | Required |
+|-----------------------------|---------|----------------------------------------------------------------------------|----------|
+| `--enrichment_datastore_id` | INTEGER | The ID of the enrichment datastore where templates will be exported        | Yes      |
+| `--check_templates`         | TEXT    | Comma-separated list of template IDs. Example: "1, 2, 3" or "[1,2,3]"     | No       |
 
-### Import Checks
+#### Import Check Templates
 
-To import checks from a file:
-
-```bash
-qualytics checks import --datastore DATASTORE_ID_LIST [--input LOCATION_FROM_THE_EXPORT]
-```
-
-By default, it reads the checks from `./qualytics/data_checks.json`. You can specify a different input file with the `--input` option.
-
-**Note**: Any errors encountered during the importing of checks will be logged in `./qualytics/errors.log`.
-
-| Option       | Type | Description                                                                  | Default                       | Required |
-|--------------|------|------------------------------------------------------------------------------|-------------------------------|----------|
-| `--datastore`| TEXT | Comma-separated list of Datastore IDs or array-like format. Example: 1,2,3,4,5 or "[1,2,3,4,5]" | None | Yes      |
-| `--input`    | TEXT | Input file path                                                              | HOME/.qualytics/data_checks.json | No       |
-
-
-
-### Import Check Templates
-
-You can import check templates from a file using the `checks import-templates` command:
+Import check templates from a file:
 
 ```bash
 qualytics checks import-templates [--input LOCATION_OF_CHECK_TEMPLATES]
 ```
 
-By default, it reads the check templates from `./qualytics/data_checks_template.json`. You can specify a different input file with the `--input` option.
-
-| Option    | Type | Description                  | Default                               | Required |
-|-----------|------|------------------------------|---------------------------------------|----------|
-| `--input` | TEXT | Input file path               | ./qualytics/data_checks_template.json | No       |
+| Option    | Type | Description                                         | Default                                | Required |
+|-----------|------|-----------------------------------------------------|----------------------------------------|----------|
+| `--input` | TEXT | Input file path (format auto-detected by extension) | ~/.qualytics/data_checks_template.yaml | No       |
 
 ### Schedule Metadata Export
 
@@ -419,14 +514,14 @@ When creating a datastore with `--connection-name`:
 
 This means you can define your connection once and reuse it across multiple datastores!
 
-### Add a New Datastore
+### Create a Datastore
 
 Create a new datastore in Qualytics. You can either reference an existing connection by ID or specify a connection name from your `connections.yml` file.
 
-#### Example: Adding a Regular Datastore
+#### Example: Creating a Regular Datastore
 
 ```bash
-qualytics datastore new \
+qualytics datastore create \
   --name "Production Analytics" \
   --connection-name "prod_snowflake_connection" \
   --database "ANALYTICS_DB" \
@@ -436,10 +531,10 @@ qualytics datastore new \
   --trigger-catalog
 ```
 
-#### Example: Adding an Enrichment Datastore
+#### Example: Creating an Enrichment Datastore
 
 ```bash
-qualytics datastore new \
+qualytics datastore create \
   --name "Data Quality Enrichment" \
   --connection-name "enrichment_db_connection" \
   --database "DQ_ENRICHMENT" \
@@ -467,6 +562,7 @@ qualytics datastore new \
 | `--high-count-rollup-threshold`        | INTEGER | High count rollup threshold (min: 1)                                                             | No       |
 | `--trigger-catalog`/`--no-trigger-catalog` | BOOL | Whether to trigger catalog after creation (default: True)                                     | No       |
 | `--dry-run`                            | BOOL    | Print payload only without making HTTP request                                                   | No       |
+| `--format`                             | TEXT    | Output format for payload preview: `yaml` or `json` (default: `yaml`)                           | No       |
 
 **Note**: You must provide either `--connection-name` or `--connection-id`, but not both. Use `--connection-name` to create a new connection from your YAML config, or `--connection-id` to reference an existing connection.
 
@@ -474,6 +570,7 @@ qualytics datastore new \
 
 ```bash
 qualytics datastore list
+qualytics datastore list --format json   # JSON output for scripting
 ```
 
 ### Get a Datastore
@@ -492,15 +589,16 @@ qualytics datastore get --name "My Datastore Name"
 
 | Option   | Type    | Description                                      | Required |
 |----------|---------|--------------------------------------------------|----------|
-| `--id`   | INTEGER | Datastore ID (mutually exclusive with --name)    | No*      |
-| `--name` | TEXT    | Datastore name (mutually exclusive with --id)    | No*      |
+| `--id`     | INTEGER | Datastore ID (mutually exclusive with --name)    | No*      |
+| `--name`   | TEXT    | Datastore name (mutually exclusive with --id)    | No*      |
+| `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
 
 **Note**: You must provide either `--id` or `--name`, but not both.
 
-### Remove a Datastore
+### Delete a Datastore
 
 ```bash
-qualytics datastore remove --id DATASTORE_ID
+qualytics datastore delete --id DATASTORE_ID
 ```
 
 **Warning**: Use with caution as this will permanently delete the datastore.

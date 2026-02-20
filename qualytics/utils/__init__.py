@@ -3,6 +3,12 @@
 from .validation import validate_and_format_url
 from .file_ops import distinct_file_content, log_error
 from .yaml_loader import load_connections, get_connection
+from .serialization import (
+    OutputFormat,
+    load_data_file,
+    dump_data_file,
+    format_for_display,
+)
 
 __all__ = [
     "validate_and_format_url",
@@ -10,4 +16,8 @@ __all__ = [
     "log_error",
     "load_connections",
     "get_connection",
+    "OutputFormat",
+    "load_data_file",
+    "dump_data_file",
+    "format_for_display",
 ]

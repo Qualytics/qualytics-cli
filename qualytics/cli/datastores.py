@@ -1,16 +1,16 @@
 """CLI commands for datastore management."""
 
-import json
+import copy
 import typer
 from rich import print
 
 from ..api.client import get_client, QualyticsAPIError
 from ..config import ConfigError, CONNECTIONS_PATH
-from ..utils import get_connection
+from ..utils import get_connection, OutputFormat, format_for_display
 from ..services.datastores import (
     get_connection_by,
     get_datastore_by,
-    build_new_datastore_payload,
+    build_create_datastore_payload,
 )
 from ..api import datastores as datastore
 
@@ -21,8 +21,8 @@ datastore_app = typer.Typer(
 )
 
 
-@datastore_app.command("new", help="new datastore")
-def new_datastore(
+@datastore_app.command("create", help="Create a new datastore")
+def create_datastore(
     name: str = typer.Option(..., "--name", "-n", help="Datastore name"),
     connection_name: str | None = typer.Option(
         None,
@@ -71,6 +71,9 @@ def new_datastore(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print payload only; no HTTP"
     ),
+    fmt: OutputFormat = typer.Option(
+        OutputFormat.YAML, "--format", "-f", help="Output format: yaml or json"
+    ),
 ):
     client = get_client()
 
@@ -109,7 +112,7 @@ def new_datastore(
                 connection_cfg = get_connection(CONNECTIONS_PATH, connection_name)
                 connection_id = None
 
-        payload = build_new_datastore_payload(
+        payload = build_create_datastore_payload(
             cfg=connection_cfg,
             name=name,
             connection_id=connection_id,
@@ -126,7 +129,7 @@ def new_datastore(
         )
 
         # Pretty preview (mask sensitive fields)
-        printable = json.loads(json.dumps(payload))
+        printable = copy.deepcopy(payload)
 
         sensitive_fields = [
             "password",
@@ -170,7 +173,7 @@ def new_datastore(
             pass
 
         print("[bold]Datastore Create Payload (preview with redacted secrets):[/bold]")
-        print(json.dumps(printable, indent=2))
+        print(format_for_display(printable, fmt))
 
         if dry_run:
             print("[green]Dry run successful. No HTTP request was made.[/green]")
@@ -208,12 +211,16 @@ def new_datastore(
 
 
 @datastore_app.command("list", help="List all datastores")
-def list_datastores():
+def list_datastores(
+    fmt: OutputFormat = typer.Option(
+        OutputFormat.YAML, "--format", "-f", help="Output format: yaml or json"
+    ),
+):
     client = get_client()
     try:
         result = datastore.list_datastores(client)
         print("[green]Datastores listed:[/green]")
-        print(json.dumps(result, indent=2))
+        print(format_for_display(result, fmt))
     except ConfigError as e:
         print(f"[red]Config error:[/red] {e}")
         raise typer.Exit(code=2)
@@ -231,6 +238,9 @@ def list_datastores():
 def get_datastore(
     id: int = typer.Option(None, "--id", help="Datastore ID"),
     name: str = typer.Option(None, "--name", help="Datastore name"),
+    fmt: OutputFormat = typer.Option(
+        OutputFormat.YAML, "--format", "-f", help="Output format: yaml or json"
+    ),
 ):
     client = get_client()
 
@@ -253,7 +263,7 @@ def get_datastore(
             raise typer.Exit(code=1)
 
         print("[green]Datastore found:[/green]")
-        print(json.dumps(result, indent=2))
+        print(format_for_display(result, fmt))
 
     except ConfigError as e:
         print(f"[red]Config error:[/red] {e}")
@@ -268,15 +278,15 @@ def get_datastore(
         raise typer.Exit(code=1)
 
 
-@datastore_app.command("remove", help="Remove a datastore. Use with caution!")
-def remove_datastore(
+@datastore_app.command("delete", help="Delete a datastore. Use with caution!")
+def delete_datastore(
     id: int = typer.Option(..., "--id", help="Datastore id"),
 ):
     client = get_client()
 
     try:
-        result = datastore.remove_datastore(client, id)
-        print(f"[green]Datastore with ID {id} removed successfully![/green]")
+        result = datastore.delete_datastore(client, id)
+        print(f"[green]Datastore with ID {id} deleted successfully![/green]")
         if result.get("message"):
             print(f"[green]{result.get('message')}[/green]")
     except ConfigError as e:

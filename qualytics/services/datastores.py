@@ -104,7 +104,7 @@ def get_datastore_by(
     return None
 
 
-def build_new_datastore_payload(
+def build_create_datastore_payload(
     *,
     cfg: dict | None,
     name: str,
@@ -120,7 +120,7 @@ def build_new_datastore_payload(
     database: str,
     schema: str,
 ) -> dict:
-    """Build a payload for creating a new datastore."""
+    """Build a payload for creating a datastore."""
     payload: dict = {
         "name": name,
         "enrichment_only": enrichment_only,

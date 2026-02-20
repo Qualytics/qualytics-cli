@@ -18,7 +18,7 @@ def get_datastore_by_id(client: QualyticsClient, datastore_id: int) -> dict:
     return response.json()
 
 
-def remove_datastore(client: QualyticsClient, datastore_id: int) -> dict:
+def delete_datastore(client: QualyticsClient, datastore_id: int) -> dict:
     response = client.delete(f"datastores/{datastore_id}")
 
     if not response.content or response.status_code == 204:

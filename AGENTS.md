@@ -25,11 +25,12 @@ qualytics-cli/
 │   ├── config.py             # Configuration management (load/save/validate)
 │   ├── api/
 │   │   ├── client.py         # Centralized API client (QualyticsClient)
-│   │   └── datastores.py     # Datastore API operations
+│   │   ├── datastores.py     # Datastore API operations
+│   │   └── quality_checks.py # Quality checks API operations (CRUD + bulk)
 │   ├── cli/
 │   │   ├── main.py           # init, show-config commands
-│   │   ├── checks.py         # checks export/import commands
-│   │   ├── datastores.py     # datastore new/list/get/remove commands
+│   │   ├── checks.py         # checks CRUD + git-friendly export/import
+│   │   ├── datastores.py     # datastore create/list/get/delete commands
 │   │   ├── operations.py     # run catalog/profile/scan commands
 │   │   ├── computed_tables.py # computed-tables import/list/preview commands
 │   │   └── schedule.py       # schedule export-metadata command
@@ -41,15 +42,20 @@ qualytics-cli/
 │   └── utils/
 │       ├── validation.py     # URL normalization
 │       ├── file_ops.py       # Error logging, file deduplication
-│       └── yaml_loader.py    # Connection YAML parsing
+│       ├── yaml_loader.py    # Connection YAML parsing
+│       └── serialization.py  # YAML/JSON load, dump, display, format detection
 ├── tests/
 │   ├── conftest.py           # Shared fixtures (cli_runner)
 │   ├── test_cli.py           # CLI smoke tests (command registration)
 │   ├── test_client.py        # API client unit tests
-│   └── test_config.py        # Configuration and token validation tests
+│   ├── test_config.py        # Configuration and token validation tests
+│   └── test_serialization.py # Serialization utilities tests
 ├── pyproject.toml            # Project config (hatchling, dependencies, tools)
 ├── uv.lock                   # Locked dependency versions (committed)
 ├── .pre-commit-config.yaml   # Pre-commit hooks
+├── docs/
+│   └── examples/
+│       └── github-actions-promotion.md  # CI/CD promotion workflow guide
 ├── AGENTS.md                 # This file
 └── README.md                 # User-facing documentation
 ```
@@ -108,7 +114,7 @@ CLI commands catch specific exceptions for business logic (e.g., `ConflictError`
 
 SSL verification is **secure by default** (`True`) and configurable per installation:
 
-- `qualytics init --no-verify-ssl` saves `ssl_verify: false` to `~/.qualytics/config.json`
+- `qualytics init --no-verify-ssl` saves `ssl_verify: false` to `~/.qualytics/config.yaml`
 - `QualyticsClient` reads `ssl_verify` from config
 - `InsecureRequestWarning` is suppressed only when SSL is explicitly disabled
 - `qualytics show-config` displays the current SSL status
@@ -126,6 +132,46 @@ Operations (catalog, profile, scan) use time-based polling instead of fixed retr
 - Returns `None` on timeout, allowing callers to handle gracefully
 - Background mode (`--background`) skips polling entirely
 
+### Quality Checks (`services/quality_checks.py`)
+
+Git-friendly export/import with upsert support for multi-environment promotion (Dev → Test → Prod).
+
+**Export format:** One YAML file per check, organized by container subdirectory:
+```
+checks/
+  orders/
+    notnull__order_id.yaml
+    between__total_amount.yaml
+  customers/
+    matchespattern__email.yaml
+```
+
+**Stable UID:** Each exported check contains `_qualytics_check_uid` in `additional_metadata`, computed as `{container}__{rule_type}__{sorted_fields}`. This enables upsert on import — matching UIDs update existing checks, new UIDs create new checks.
+
+**Portable fields:** `rule_type`, `description`, `container` (by name), `fields` (by name), `coverage`, `filter`, `properties`, `tags` (by name), `status`, `additional_metadata`. Environment-specific fields (IDs, timestamps, anomaly counts) are stripped on export.
+
+**Multi-datastore import:** `checks import --datastore-id 1 --datastore-id 2` processes each datastore independently, resolving container names to IDs within each target.
+
+### Serialization (`utils/serialization.py`)
+
+YAML is the default format for all CLI input/output. JSON is supported via `--format json`.
+
+**Key conventions:**
+- Default export/import files use `.yaml` extension
+- `--format yaml|json` flag on export and display commands (checks export, datastore list/get/create)
+- Import commands auto-detect format by file extension (`.json` → JSON, everything else → YAML)
+- Smart inference: `--output file.json` with default `--format yaml` infers JSON
+- `_SafeStringLoader` prevents YAML from parsing ISO date strings as `datetime` objects
+- `yaml.safe_dump(sort_keys=False)` preserves key order for human-readable output
+
+```python
+from qualytics.utils import OutputFormat, load_data_file, dump_data_file, format_for_display
+
+data = load_data_file("checks.yaml")          # Auto-detects format
+dump_data_file(data, "out.yaml", OutputFormat.YAML)
+print(format_for_display(data, OutputFormat.JSON))
+```
+
 ---
 
 ## Configuration
@@ -134,10 +180,10 @@ Operations (catalog, profile, scan) use time-based polling instead of fixed retr
 
 | File | Purpose |
 |------|---------|
-| `config.json` | URL, token, ssl_verify |
+| `config.yaml` | URL, token, ssl_verify (auto-migrated from legacy `config.json`) |
 | `config/connections.yml` | Database connection definitions |
-| `data_checks.json` | Default checks export location |
-| `data_checks_template.json` | Default templates export location |
+| `data_checks.yaml` | Default checks export location |
+| `data_checks_template.yaml` | Default templates export location |
 | `errors-{date}.log` | Import operation errors |
 | `operation-error.txt` | Operation execution errors |
 | `logs/` | Debug logs (computed-tables --debug) |
@@ -154,8 +200,8 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 |--------------|-------------|-------------|
 | `init` | — | Configure URL, token, SSL |
 | `show-config` | — | Display current configuration |
-| `checks` | `export`, `import`, `export-templates`, `import-templates` | Quality check management |
-| `datastore` | `new`, `list`, `get`, `remove` | Datastore CRUD |
+| `checks` | `create`, `get`, `list`, `update`, `delete`, `export`, `import`, `export-templates`, `import-templates` | Quality check CRUD + git-friendly export/import |
+| `datastore` | `create`, `list`, `get`, `delete` | Datastore CRUD |
 | `run` | `catalog`, `profile`, `scan` | Trigger datastore operations |
 | `operation` | `check_status` | Check operation status |
 | `computed-tables` | `import`, `list`, `preview` | Computed table management |
@@ -180,7 +226,7 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | requests | HTTP client (used only in `api/client.py`) |
 | pyjwt | JWT token validation |
 | croniter | Cron expression validation |
-| pyyaml | Connection YAML parsing |
+| pyyaml | YAML serialization (config, export/import, display) |
 | openpyxl | Excel file reading |
 | urllib3 | SSL warning suppression |
 
@@ -245,7 +291,9 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 |------|----------|
 | `test_cli.py` | Smoke tests: CLI loads, all command groups registered |
 | `test_client.py` | QualyticsClient: URL building, SSL config, exception hierarchy, get_client factory |
-| `test_config.py` | Config loading, saving, token validation |
+| `test_config.py` | Config loading, saving, token validation, legacy JSON migration |
+| `test_quality_checks.py` | API layer (endpoints, params, pagination), CLI commands (all 9), service import (upsert, dry-run, multi-datastore), promotion workflow, edge cases |
+| `test_serialization.py` | Format detection, YAML/JSON load/dump, datetime preservation, display formatting |
 
 ### Conventions
 
@@ -333,7 +381,10 @@ uv version --short                   # Show current version
 |--------|----------|---------|
 | GET | `/quality-checks` | Fetch quality checks (paginated) |
 | POST | `/quality-checks` | Create quality checks |
+| GET | `/quality-checks/{id}` | Get a single quality check |
 | PUT | `/quality-checks/{id}` | Update quality checks |
+| DELETE | `/quality-checks/{id}` | Delete a single quality check |
+| DELETE | `/quality-checks` | Bulk delete quality checks |
 | GET | `/containers/listing` | Get container/table IDs |
 | POST | `/containers` | Create computed tables |
 | GET | `/containers/{id}/field-profiles` | Get field profiles |

@@ -6,6 +6,7 @@ from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 
 import jwt
+import yaml
 from datetime import datetime, timezone
 from rich import print
 
@@ -21,7 +22,8 @@ home = Path.home()
 folder_name = ".qualytics"
 BASE_PATH = f"{home}/{folder_name}"
 
-CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.json")
+CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.yaml")
+CONFIG_PATH_LEGACY = os.path.expanduser(f"{BASE_PATH}/config.json")
 CRONTAB_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation-errors.txt")
 CRONTAB_COMMANDS_PATH = os.path.expanduser(f"{BASE_PATH}/schedule-operation.txt")
 OPERATION_ERROR_PATH = os.path.expanduser(f"{BASE_PATH}/operation-error.txt")
@@ -36,17 +38,36 @@ class ConfigError(ValueError):
 
 
 def save_config(data):
-    """Save configuration data to the config file."""
+    """Save configuration data to the config file (YAML format)."""
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     with open(CONFIG_PATH, "w") as f:
-        json.dump(data, f, indent=4)
+        yaml.safe_dump(
+            data, f, default_flow_style=False, sort_keys=False, allow_unicode=True
+        )
 
 
 def load_config():
-    """Load configuration data from the config file."""
+    """Load configuration data from the config file.
+
+    Checks for ``config.yaml`` first, then falls back to the legacy
+    ``config.json``.  When the legacy file is found it is automatically
+    migrated to YAML.
+    """
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH) as f:
-            return json.load(f)
+            return yaml.safe_load(f)
+
+    # Fall back to legacy JSON config and auto-migrate
+    if os.path.exists(CONFIG_PATH_LEGACY):
+        with open(CONFIG_PATH_LEGACY) as f:
+            data = json.load(f)
+        save_config(data)
+        print(
+            f"[bold yellow] Migrated config from {CONFIG_PATH_LEGACY} to {CONFIG_PATH}. "
+            f"You can safely remove the old config.json file. [/bold yellow]"
+        )
+        return data
+
     return None
 
 
