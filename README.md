@@ -230,6 +230,131 @@ qualytics checks import-templates [--input LOCATION_OF_CHECK_TEMPLATES]
 |-----------|------|-----------------------------------------------------|----------------------------------------|----------|
 | `--input` | TEXT | Input file path (format auto-detected by extension) | ~/.qualytics/data_checks_template.yaml | No       |
 
+### Anomalies
+
+The `anomalies` command group provides tools for managing anomalies created by failed quality checks during scan operations. This is especially useful for CI/CD pipelines that gate deployments on data quality.
+
+#### Get an Anomaly
+
+```bash
+qualytics anomalies get --id 42
+qualytics anomalies get --id 42 --format json
+```
+
+| Option     | Type    | Description                                      | Required |
+|------------|---------|--------------------------------------------------|----------|
+| `--id`     | INTEGER | Anomaly ID                                       | Yes      |
+| `--format` | TEXT    | Output format: `yaml` or `json` (default: `yaml`) | No     |
+
+#### List Anomalies
+
+```bash
+# List all anomalies for a datastore
+qualytics anomalies list --datastore-id 42
+
+# Filter by status, type, date range
+qualytics anomalies list --datastore-id 42 --status Active --type record --start-date 2024-01-01
+
+# JSON output for CI scripting
+qualytics anomalies list --datastore-id 42 --status Active --format json
+```
+
+| Option           | Type    | Description                                          | Required |
+|------------------|---------|------------------------------------------------------|----------|
+| `--datastore-id` | INTEGER | Datastore ID to list anomalies from                  | Yes      |
+| `--container`    | INTEGER | Container ID to filter by                            | No       |
+| `--check-id`     | INTEGER | Quality check ID to filter by                        | No       |
+| `--status`       | TEXT    | Comma-separated statuses: Active, Acknowledged, Resolved, etc. | No |
+| `--type`         | TEXT    | Anomaly type: `shape` or `record`                    | No       |
+| `--tag`          | TEXT    | Tag name to filter by                                | No       |
+| `--start-date`   | TEXT    | Start date (YYYY-MM-DD)                              | No       |
+| `--end-date`     | TEXT    | End date (YYYY-MM-DD)                                | No       |
+| `--format`       | TEXT    | Output format: `yaml` or `json` (default: `yaml`)   | No       |
+
+#### Update Anomaly Status
+
+Update anomalies to open statuses (`Active` or `Acknowledged`):
+
+```bash
+# Single update
+qualytics anomalies update --id 42 --status Acknowledged
+
+# With description and tags
+qualytics anomalies update --id 42 --status Acknowledged --description "Known issue" --tags "reviewed,ci"
+
+# Bulk update
+qualytics anomalies update --ids "1,2,3" --status Acknowledged
+```
+
+| Option          | Type    | Description                                          | Required |
+|-----------------|---------|------------------------------------------------------|----------|
+| `--id`          | INTEGER | Single anomaly ID to update                          | No*      |
+| `--ids`         | TEXT    | Comma-separated anomaly IDs for bulk update          | No*      |
+| `--status`      | TEXT    | New status: `Active` or `Acknowledged`               | Yes      |
+| `--description` | TEXT    | Update description                                   | No       |
+| `--tags`        | TEXT    | Comma-separated tag names                            | No       |
+
+**Note**: You must provide either `--id` or `--ids`. For archived statuses (`Resolved`, `Invalid`, etc.), use `anomalies archive`.
+
+#### Archive Anomalies
+
+Soft-delete anomalies with an archived status:
+
+```bash
+# Archive with default status (Resolved)
+qualytics anomalies archive --id 42
+
+# Archive with specific status
+qualytics anomalies archive --id 42 --status Invalid
+
+# Bulk archive
+qualytics anomalies archive --ids "1,2,3" --status Duplicate
+```
+
+| Option     | Type    | Description                                              | Required |
+|------------|---------|----------------------------------------------------------|----------|
+| `--id`     | INTEGER | Single anomaly ID to archive                             | No*      |
+| `--ids`    | TEXT    | Comma-separated anomaly IDs for bulk archive             | No*      |
+| `--status` | TEXT    | Archive status: `Resolved`, `Invalid`, `Duplicate`, or `Discarded` (default: `Resolved`) | No |
+
+**Note**: You must provide either `--id` or `--ids`.
+
+#### Delete Anomalies
+
+Permanently delete anomalies (hard-delete):
+
+```bash
+# Single delete
+qualytics anomalies delete --id 42
+
+# Bulk delete
+qualytics anomalies delete --ids "1,2,3"
+```
+
+| Option | Type    | Description                                          | Required |
+|--------|---------|------------------------------------------------------|----------|
+| `--id` | INTEGER | Single anomaly ID to delete                          | No*      |
+| `--ids`| TEXT    | Comma-separated anomaly IDs for bulk delete          | No*      |
+
+**Warning**: Hard-delete is permanent. Use `anomalies archive` for soft-delete.
+
+#### CI/CD Anomaly Gating
+
+Use anomalies to gate CI/CD pipelines based on data quality:
+
+```bash
+# Check for active anomalies and fail the pipeline if any exist
+ANOMALY_COUNT=$(qualytics anomalies list --datastore-id $DS_ID --status Active --format json | python -c "import sys,json; print(len(json.load(sys.stdin)))")
+
+if [ "$ANOMALY_COUNT" -gt "0" ]; then
+  echo "FAIL: $ANOMALY_COUNT active anomalies found"
+  exit 1
+fi
+
+# Acknowledge known anomalies in CI
+qualytics anomalies update --ids "1,2,3" --status Acknowledged --description "Acknowledged by CI pipeline"
+```
+
 ### Schedule Metadata Export
 
 Allows you to schedule exports of metadata from your datastores using a specified crontab expression.

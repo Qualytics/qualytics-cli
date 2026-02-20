@@ -62,6 +62,17 @@ def test_computed_tables_command_registered(cli_runner):
     assert "computed" in result.output.lower() or "import" in result.output.lower()
 
 
+def test_anomalies_command_registered(cli_runner):
+    """Test that the 'anomalies' command group is registered."""
+    result = cli_runner.invoke(app, ["anomalies", "--help"])
+    assert result.exit_code == 0
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "update" in result.output.lower()
+    assert "archive" in result.output.lower()
+    assert "delete" in result.output.lower()
+
+
 def test_version_is_semver():
     """Test that the version follows semver format."""
     parts = __version__.split(".")

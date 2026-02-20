@@ -25,10 +25,12 @@ qualytics-cli/
 │   ├── config.py             # Configuration management (load/save/validate)
 │   ├── api/
 │   │   ├── client.py         # Centralized API client (QualyticsClient)
+│   │   ├── anomalies.py      # Anomaly API operations (CRUD + bulk)
 │   │   ├── datastores.py     # Datastore API operations
 │   │   └── quality_checks.py # Quality checks API operations (CRUD + bulk)
 │   ├── cli/
 │   │   ├── main.py           # init, show-config commands
+│   │   ├── anomalies.py      # anomalies get/list/update/archive/delete commands
 │   │   ├── checks.py         # checks CRUD + git-friendly export/import
 │   │   ├── datastores.py     # datastore create/list/get/delete commands
 │   │   ├── operations.py     # run catalog/profile/scan commands
@@ -46,9 +48,11 @@ qualytics-cli/
 │       └── serialization.py  # YAML/JSON load, dump, display, format detection
 ├── tests/
 │   ├── conftest.py           # Shared fixtures (cli_runner)
+│   ├── test_anomalies.py     # Anomaly API + CLI tests
 │   ├── test_cli.py           # CLI smoke tests (command registration)
 │   ├── test_client.py        # API client unit tests
 │   ├── test_config.py        # Configuration and token validation tests
+│   ├── test_quality_checks.py # Quality checks API + CLI + service tests
 │   └── test_serialization.py # Serialization utilities tests
 ├── pyproject.toml            # Project config (hatchling, dependencies, tools)
 ├── uv.lock                   # Locked dependency versions (committed)
@@ -152,6 +156,39 @@ checks/
 
 **Multi-datastore import:** `checks import --datastore-id 1 --datastore-id 2` processes each datastore independently, resolving container names to IDs within each target.
 
+### Anomalies (`api/anomalies.py`, `cli/anomalies.py`)
+
+Anomaly CRUD for CI/CD gating and status management. Anomalies are created by failed quality checks during scan operations — there is no "create" command.
+
+**Status model:**
+- **Open statuses** (via `update` command → PUT/PATCH): `Active`, `Acknowledged`
+- **Archive statuses** (via `archive` command → DELETE with `archive=true`): `Resolved`, `Invalid`, `Duplicate`, `Discarded`
+- **Hard delete** (via `delete` command → DELETE with `archive=false`): permanent removal
+
+**API functions:**
+- `list_anomalies()` — GET /anomalies with 14+ filter params (datastore, container, quality_check, status, anomaly_type, tag, rule_type, start_date, end_date, timeframe, archived, sort_created, sort_weight)
+- `list_all_anomalies()` — auto-paginate across all pages
+- `get_anomaly()` — GET /anomalies/{id}
+- `update_anomaly()` — PUT /anomalies/{id} (single, open statuses only)
+- `bulk_update_anomalies()` — PATCH /anomalies (bulk, open statuses only)
+- `delete_anomaly()` — DELETE /anomalies/{id} (archive or hard-delete)
+- `bulk_delete_anomalies()` — DELETE /anomalies (bulk archive or hard-delete)
+
+**CLI commands:**
+- `get` — single anomaly by `--id`
+- `list` — filterable by `--datastore-id`, `--container`, `--check-id`, `--status`, `--type`, `--tag`, `--start-date`, `--end-date`
+- `update` — single (`--id`) or bulk (`--ids`), validates open statuses only
+- `archive` — single or bulk soft-delete with status (default: `Resolved`)
+- `delete` — single or bulk hard-delete
+
+**CI use case:**
+```bash
+# Gate CI pipeline on active anomalies
+ANOMALIES=$(qualytics anomalies list --datastore-id $DS --status Active --format json)
+COUNT=$(echo "$ANOMALIES" | python -c "import sys,json; print(len(json.load(sys.stdin)))")
+if [ "$COUNT" -gt "0" ]; then echo "FAIL: $COUNT active anomalies"; exit 1; fi
+```
+
 ### Serialization (`utils/serialization.py`)
 
 YAML is the default format for all CLI input/output. JSON is supported via `--format json`.
@@ -200,6 +237,7 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 |--------------|-------------|-------------|
 | `init` | — | Configure URL, token, SSL |
 | `show-config` | — | Display current configuration |
+| `anomalies` | `get`, `list`, `update`, `archive`, `delete` | Anomaly management (status updates, archiving, deletion) |
 | `checks` | `create`, `get`, `list`, `update`, `delete`, `export`, `import`, `export-templates`, `import-templates` | Quality check CRUD + git-friendly export/import |
 | `datastore` | `create`, `list`, `get`, `delete` | Datastore CRUD |
 | `run` | `catalog`, `profile`, `scan` | Trigger datastore operations |
@@ -292,6 +330,7 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 | `test_cli.py` | Smoke tests: CLI loads, all command groups registered |
 | `test_client.py` | QualyticsClient: URL building, SSL config, exception hierarchy, get_client factory |
 | `test_config.py` | Config loading, saving, token validation, legacy JSON migration |
+| `test_anomalies.py` | API layer (list, get, update, bulk update, delete, bulk delete), CLI commands (get, list, update, archive, delete), status validation, bulk operations |
 | `test_quality_checks.py` | API layer (endpoints, params, pagination), CLI commands (all 9), service import (upsert, dry-run, multi-datastore), promotion workflow, edge cases |
 | `test_serialization.py` | Format detection, YAML/JSON load/dump, datetime preservation, display formatting |
 
@@ -379,6 +418,12 @@ uv version --short                   # Show current version
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
+| GET | `/anomalies` | List anomalies (paginated, with filters) |
+| GET | `/anomalies/{id}` | Get a single anomaly |
+| PUT | `/anomalies/{id}` | Update anomaly (status, description, tags) |
+| PATCH | `/anomalies` | Bulk update anomalies |
+| DELETE | `/anomalies/{id}` | Delete/archive a single anomaly |
+| DELETE | `/anomalies` | Bulk delete/archive anomalies |
 | GET | `/quality-checks` | Fetch quality checks (paginated) |
 | POST | `/quality-checks` | Create quality checks |
 | GET | `/quality-checks/{id}` | Get a single quality check |
