@@ -1,7 +1,5 @@
 """CLI commands for datastore management."""
 
-import copy
-
 import typer
 from rich import print
 
@@ -17,13 +15,13 @@ from ..api.datastores import (
     verify_connection,
 )
 from ..config import ConfigError, CONNECTIONS_PATH
+from ..services.connections import get_connection_by
 from ..services.datastores import (
     build_create_datastore_payload,
     build_update_datastore_payload,
-    get_connection_by,
     get_datastore_by,
 )
-from ..utils import get_connection, OutputFormat, format_for_display
+from ..utils import get_connection, OutputFormat, format_for_display, redact_payload
 
 datastores_app = typer.Typer(
     name="datastores", help="Create, get, update, delete, and manage datastores"
@@ -38,49 +36,6 @@ _VALID_REMEDIATION = {"none", "append", "overwrite"}
 def _parse_comma_list(value: str) -> list[str]:
     """Parse '1,2,3' or '[1,2,3]' into a list of stripped strings."""
     return [x.strip() for x in value.strip("[]").split(",") if x.strip()]
-
-
-def _redact_payload(payload: dict) -> dict:
-    """Return a copy of payload with sensitive connection fields masked."""
-    printable = copy.deepcopy(payload)
-    sensitive_fields = [
-        "password",
-        "token",
-        "api_key",
-        "secret",
-        "private_key",
-        "private_key_der_b64",
-        "private_key_path",
-        "access_key",
-        "secret_key",
-        "credentials",
-        "auth_token",
-    ]
-    try:
-        if "connection" in printable:
-            for field in sensitive_fields:
-                if field in printable["connection"]:
-                    printable["connection"][field] = "*** redacted ***"
-
-            if "parameters" in printable["connection"]:
-                for field in sensitive_fields:
-                    if field in printable["connection"]["parameters"]:
-                        printable["connection"]["parameters"][field] = (
-                            "*** redacted ***"
-                        )
-
-                if "authentication" in printable["connection"]["parameters"]:
-                    for field in sensitive_fields:
-                        if (
-                            field
-                            in printable["connection"]["parameters"]["authentication"]
-                        ):
-                            printable["connection"]["parameters"]["authentication"][
-                                field
-                            ] = "*** redacted ***"
-    except Exception:
-        pass
-    return printable
 
 
 # ── create ───────────────────────────────────────────────────────────────
@@ -195,7 +150,7 @@ def datastores_create(
         )
 
         print("[bold]Datastore Create Payload (preview with redacted secrets):[/bold]")
-        print(format_for_display(_redact_payload(payload), fmt))
+        print(format_for_display(redact_payload(payload), fmt))
 
         if dry_run:
             print("[green]Dry run successful. No HTTP request was made.[/green]")

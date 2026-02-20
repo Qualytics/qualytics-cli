@@ -14,7 +14,13 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from ..api.client import QualyticsClient, QualyticsAPIError, get_client
+from ..api.containers import (
+    create_container as api_create_container,
+    get_field_profiles as api_get_field_profiles,
+    list_containers_listing,
+)
 from ..api.operations import get_operation, list_operations
+from ..api.quality_checks import create_quality_check
 from ..config import BASE_PATH
 from ..utils import distinct_file_content, log_error
 
@@ -473,11 +479,12 @@ def _create_computed_table(
 
     _debug_log(f"Creating computed table: {name}", payload=payload)
 
+    log_message = f"Creating computed table: {name}\nDatastore ID: {datastore_id}\nAliases added: {aliases_added}\n\nOriginal Query:\n{query}\n\nFinal Query:\n{final_query}"
+
     try:
-        response = client.post("containers", json=payload)
+        result = api_create_container(client, payload)
     except QualyticsAPIError as e:
         _debug_log(f"Failed to create computed table '{name}': {e}")
-        log_message = f"Creating computed table: {name}\nDatastore ID: {datastore_id}\nAliases added: {aliases_added}\n\nOriginal Query:\n{query}\n\nFinal Query:\n{final_query}"
         _write_debug_log(
             log_type="computed_table",
             name=name,
@@ -490,22 +497,18 @@ def _create_computed_table(
         log_error(error_msg, error_log_path)
         return None
 
-    _debug_log(f"Create computed table response for: {name}", response=response)
-
-    # Write to individual log file
-    log_message = f"Creating computed table: {name}\nDatastore ID: {datastore_id}\nAliases added: {aliases_added}\n\nOriginal Query:\n{query}\n\nFinal Query:\n{final_query}"
+    _debug_log(f"Created computed table: {name} (ID: {result.get('id')})")
 
     log_file = _write_debug_log(
         log_type="computed_table",
         name=name,
         message=log_message,
         payload=payload,
-        response=response,
     )
     if log_file:
         _debug_log(f"Log written to: {log_file}")
 
-    return response.json()
+    return result
 
 
 def _wait_for_profile_operation(
@@ -575,10 +578,8 @@ def _wait_for_profile_operation(
             if result == "success":
                 # Verify container has field profiles
                 try:
-                    field_profiles_response = client.get(
-                        f"containers/{container_id}/field-profiles",
-                    )
-                    fields = field_profiles_response.json().get("items", [])
+                    profiles_data = api_get_field_profiles(client, container_id)
+                    fields = profiles_data.get("items", [])
                     _debug_log(
                         f"Container {container_id} has {len(fields)} field profiles after profile"
                     )
@@ -614,11 +615,9 @@ def _get_existing_computed_tables(
     Returns a dict mapping table name to container ID.
     """
     try:
-        response = client.get(
-            "containers/listing",
-            params={"datastore": datastore_id, "type": "computed_table"},
+        tables = list_containers_listing(
+            client, datastore_id, container_type="computed_table"
         )
-        tables = response.json()
         return {t["name"]: t["id"] for t in tables}
     except QualyticsAPIError:
         return {}
@@ -648,8 +647,8 @@ def _get_container_fields(
 ) -> list[dict] | None:
     """Get field profiles for a container after profiling."""
     try:
-        response = client.get(f"containers/{container_id}/field-profiles")
-        return response.json().get("items", [])
+        data = api_get_field_profiles(client, container_id)
+        return data.get("items", [])
     except QualyticsAPIError:
         return None
 
@@ -728,14 +727,16 @@ def _create_satisfies_expression_check(
 
     _debug_log(f"Creating check for container {container_id}", payload=payload)
 
+    log_message = f"Creating satisfiesExpression check for: {name}\nContainer ID: {container_id}\nExpression: {expression}"
+
     try:
-        response = client.post("quality-checks", json=payload)
+        result = create_quality_check(client, payload)
     except QualyticsAPIError as e:
         _debug_log(f"Failed to create check for '{name}': {e}")
         _write_debug_log(
             log_type="check",
             name=name,
-            message=f"Creating satisfiesExpression check for: {name}\nContainer ID: {container_id}\nExpression: {expression}",
+            message=log_message,
             payload=payload,
         )
         error_msg = (
@@ -744,20 +745,18 @@ def _create_satisfies_expression_check(
         log_error(error_msg, error_log_path)
         return None
 
-    _debug_log(f"Create check response for container {container_id}", response=response)
+    _debug_log(f"Created check for container {container_id} (ID: {result.get('id')})")
 
-    # Write to individual log file
     log_file = _write_debug_log(
         log_type="check",
         name=name,
-        message=f"Creating satisfiesExpression check for: {name}\nContainer ID: {container_id}\nExpression: {expression}",
+        message=log_message,
         payload=payload,
-        response=response,
     )
     if log_file:
         _debug_log(f"Log written to: {log_file}")
 
-    return response.json()
+    return result
 
 
 def _parse_tags(tags_str: str) -> list[str]:
@@ -1082,17 +1081,14 @@ def list_computed_tables(
     client = get_client()
 
     try:
-        response = client.get(
-            "containers/listing",
-            params={"datastore": datastore, "type": "computed_table"},
+        tables = list_containers_listing(
+            client, datastore, container_type="computed_table"
         )
     except QualyticsAPIError as e:
         print(
             f"[bold red]Failed to list computed tables: {e.status_code} - {e.message}[/bold red]"
         )
         raise typer.Exit(code=1)
-
-    tables = response.json()
 
     if not tables:
         print(f"[yellow]No computed tables found in datastore {datastore}.[/yellow]")

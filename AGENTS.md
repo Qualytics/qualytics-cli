@@ -26,6 +26,8 @@ qualytics-cli/
 │   ├── api/
 │   │   ├── client.py         # Centralized API client (QualyticsClient)
 │   │   ├── anomalies.py      # Anomaly API operations (CRUD + bulk)
+│   │   ├── containers.py     # Container API operations (CRUD + validate + field profiles)
+│   │   ├── connections.py    # Connection API operations (CRUD + test)
 │   │   ├── datastores.py     # Datastore API operations (CRUD + verify + enrichment)
 │   │   ├── operations.py     # Operation API operations (run, get, list, abort)
 │   │   └── quality_checks.py # Quality checks API operations (CRUD + bulk)
@@ -33,24 +35,30 @@ qualytics-cli/
 │   │   ├── main.py           # init, show-config commands
 │   │   ├── anomalies.py      # anomalies get/list/update/archive/delete commands
 │   │   ├── checks.py         # checks CRUD + git-friendly export/import
+│   │   ├── connections.py    # connections create/update/get/list/delete/test commands
+│   │   ├── containers.py     # containers create/update/get/list/delete/validate commands
 │   │   ├── datastores.py     # datastores create/update/get/list/delete/verify/enrichment commands
 │   │   ├── operations.py     # operations catalog/profile/scan/materialize/export/get/list/abort commands
 │   │   ├── computed_tables.py # computed-tables import/list/preview commands
 │   │   └── schedule.py       # schedule export-metadata command
 │   ├── services/
 │   │   ├── quality_checks.py # Quality check business logic
-│   │   ├── containers.py     # Container/table ID resolution
+│   │   ├── connections.py    # Connection lookup, payload building, name resolution
+│   │   ├── containers.py     # Container business logic (name resolution, payload building)
 │   │   ├── datastores.py     # Datastore lookup, payload building, name resolution
 │   │   └── operations.py     # Operation execution and polling
 │   └── utils/
 │       ├── validation.py     # URL normalization
 │       ├── file_ops.py       # Error logging, file deduplication
 │       ├── yaml_loader.py    # Connection YAML parsing
+│       ├── secrets.py        # Env var resolution and sensitive field redaction
 │       └── serialization.py  # YAML/JSON load, dump, display, format detection
 ├── tests/
 │   ├── conftest.py           # Shared fixtures (cli_runner)
 │   ├── test_anomalies.py     # Anomaly API + CLI tests
 │   ├── test_cli.py           # CLI smoke tests (command registration)
+│   ├── test_connections.py   # Connection API + service + secrets + CLI tests
+│   ├── test_containers.py    # Container API + service + CLI tests
 │   ├── test_datastores.py    # Datastore API + service + CLI tests
 │   ├── test_operations.py    # Operation API + service + CLI tests
 │   ├── test_client.py        # API client unit tests
@@ -200,13 +208,42 @@ COUNT=$(echo "$ANOMALIES" | python -c "import sys,json; print(len(json.load(sys.
 if [ "$COUNT" -gt "0" ]; then echo "FAIL: $COUNT active anomalies"; exit 1; fi
 ```
 
+### Connections (`api/connections.py`, `services/connections.py`, `cli/connections.py`)
+
+Full connection lifecycle management — create, update, get, list, delete, and test connections. Connections are the most sensitive resource because they hold database credentials.
+
+**Secrets strategy:**
+- Sensitive CLI flags (`--host`, `--username`, `--password`, `--access-key`, `--secret-key`, `--uri`) support `${ENV_VAR}` syntax, resolved via `os.path.expandvars()` before being sent to the API
+- Unresolved `${VAR}` placeholders raise an error and abort
+- All CLI output is redacted via `redact_payload()` from `utils/secrets.py`
+- Sensitive fields never touch disk in plaintext
+
+**Architecture:**
+- `api/connections.py` — 7 thin HTTP wrappers: `create_connection`, `update_connection`, `get_connection_api`, `list_connections`, `list_all_connections`, `delete_connection`, `test_connection`
+- `services/connections.py` — business logic: `get_connection_by`, `get_connection_by_name`, `build_create_connection_payload`, `build_update_connection_payload`
+- `cli/connections.py` — 6 CLI commands under `qualytics connections`
+
+**Two create modes:**
+1. Inline flags: `--type postgresql --host ... --password '${DB_PASS}'`
+2. From YAML: `--from-yaml /path/to/connections.yml --connection-key pg_prod` (reuses existing `get_connection()` from `yaml_loader.py`)
+
+**`--parameters` JSON catch-all:** For type-specific fields that don't have dedicated flags (e.g., `--parameters '{"role": "ADMIN", "warehouse": "WH"}'`). Merged last, overrides dedicated flags.
+
+**CLI commands:**
+- `create` — inline flags (with `${ENV_VAR}` support) or `--from-yaml`, `--dry-run` support
+- `update` — partial update: only provided fields are sent
+- `get` — by `--id` or `--name`, secrets redacted in output
+- `list` — filterable by `--name`, `--type` (comma-separated), all connections redacted
+- `delete` — by `--id`, handles 409 when datastores still reference it
+- `test` — test existing or with override credentials (`--host`, `--username`, `--password`)
+
 ### Datastores (`api/datastores.py`, `services/datastores.py`, `cli/datastores.py`)
 
 Full datastore lifecycle management — create, update, get, list, delete, verify connections, and manage enrichment links.
 
 **Architecture:**
 - `api/datastores.py` — 10 thin HTTP wrappers: `create_datastore`, `update_datastore`, `get_datastore`, `list_datastores`, `list_all_datastores`, `delete_datastore`, `verify_connection`, `validate_connection`, `connect_enrichment`, `disconnect_enrichment`
-- `services/datastores.py` — business logic: `get_connection_by`, `get_datastore_by`, `get_datastore_by_name`, `build_create_datastore_payload`, `build_update_datastore_payload`
+- `services/datastores.py` — business logic: `get_datastore_by`, `get_datastore_by_name`, `build_create_datastore_payload`, `build_update_datastore_payload`
 - `cli/datastores.py` — 7 CLI commands under `qualytics datastores`
 
 **CLI commands:**
@@ -217,6 +254,34 @@ Full datastore lifecycle management — create, update, get, list, delete, verif
 - `delete` — by `--id`
 - `verify` — test connection for an existing datastore (CI health checks)
 - `enrichment` — `--link <id>` to connect or `--unlink` to disconnect enrichment datastore
+
+### Containers (`api/containers.py`, `services/containers.py`, `cli/containers.py`)
+
+Full container lifecycle management — create computed containers, update, get, list, delete, and validate definitions.
+
+**Container types:** 6 total (`table`, `view`, `file`, `computed_table`, `computed_file`, `computed_join`). Only the 3 computed types can be created/updated via CLI — non-computed types are created during catalog operations.
+
+**Architecture:**
+- `api/containers.py` — 9 thin HTTP wrappers: `create_container`, `update_container`, `get_container`, `list_containers`, `list_all_containers`, `delete_container`, `validate_container`, `get_field_profiles`, `list_containers_listing`
+- `services/containers.py` — business logic: `get_table_ids`, `get_container_by_name`, `build_create_container_payload`, `build_update_container_payload`
+- `cli/containers.py` — 6 CLI commands under `qualytics containers`
+
+**Polymorphic create:** The `--type` flag discriminates between computed types, each requiring different fields:
+- `computed_table`: `--datastore-id`, `--name`, `--query`
+- `computed_file`: `--datastore-id`, `--name`, `--source-container-id`, `--select-clause`
+- `computed_join`: `--name`, `--left-container-id`, `--right-container-id`, `--left-key-field`, `--right-key-field`, `--select-clause`
+
+**Update pattern (GET-merge-PUT):** Updates fetch the existing container, overlay user changes via `build_update_container_payload()`, and PUT the merged payload. The `container_type` discriminator is always preserved.
+
+**409 handling:** When updating a computed container would drop fields that have associated quality checks or anomalies, the API returns 409. The CLI prints what would be dropped and fails unless `--force-drop-fields` is passed.
+
+**CLI commands:**
+- `create` — polymorphic by `--type`, with `--dry-run` support
+- `update` — GET-merge-PUT with `--force-drop-fields` for 409 conflicts
+- `get` — by `--id`, optional `--profiles` to include field profiles
+- `list` — requires `--datastore-id`, filterable by `--type`, `--name`, `--tag`, `--search`, `--archived`
+- `delete` — by `--id` (cascades to fields, checks, anomalies)
+- `validate` — dry-run validation of computed container definitions against the API
 
 ### Serialization (`utils/serialization.py`)
 
@@ -268,9 +333,11 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | `show-config` | — | Display current configuration |
 | `anomalies` | `get`, `list`, `update`, `archive`, `delete` | Anomaly management (status updates, archiving, deletion) |
 | `checks` | `create`, `get`, `list`, `update`, `delete`, `export`, `import`, `export-templates`, `import-templates` | Quality check CRUD + git-friendly export/import |
+| `connections` | `create`, `update`, `get`, `list`, `delete`, `test` | Connection CRUD with secrets management + connectivity testing |
+| `containers` | `create`, `update`, `get`, `list`, `delete`, `validate` | Container CRUD for computed types + validation |
 | `datastores` | `create`, `update`, `get`, `list`, `delete`, `verify`, `enrichment` | Datastore CRUD + connection verification + enrichment linking |
 | `operations` | `catalog`, `profile`, `scan`, `materialize`, `export`, `get`, `list`, `abort` | Operation lifecycle (trigger, monitor, abort) |
-| `computed-tables` | `import`, `list`, `preview` | Computed table management |
+| `computed-tables` | `import`, `list`, `preview` | Bulk computed table import from files |
 | `schedule` | `export-metadata` | Cron-based export scheduling |
 
 ---
@@ -359,6 +426,8 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 | `test_client.py` | QualyticsClient: URL building, SSL config, exception hierarchy, get_client factory |
 | `test_config.py` | Config loading, saving, token validation, legacy JSON migration |
 | `test_anomalies.py` | API layer (list, get, update, bulk update, delete, bulk delete), CLI commands (get, list, update, archive, delete), status validation, bulk operations |
+| `test_connections.py` | API layer (create, update, get, list, list_all, delete, test), service layer (get_connection_by, build payloads), secrets (env var resolution, redaction), CLI commands (create, update, get, list, delete, test), from-YAML creation, 409 handling |
+| `test_containers.py` | API layer (create, update, get, list, list_all, delete, validate, field_profiles, listing), service layer (get_container_by_name, build payloads), CLI commands (create, update, get, list, delete, validate), polymorphic create, 409 handling |
 | `test_datastores.py` | API layer (create, update, get, list, list_all, delete, verify, validate, enrichment connect/disconnect), service layer (get_datastore_by, build payloads), CLI commands (create, update, get, list, delete, verify, enrichment), validation |
 | `test_operations.py` | API layer (run, get, list, list_all, abort), service layer (polling, multi-datastore, background mode, payload construction), CLI commands (catalog, profile, scan, materialize, export, get, list, abort), validation |
 | `test_quality_checks.py` | API layer (endpoints, params, pagination), CLI commands (all 9), service import (upsert, dry-run, multi-datastore), promotion workflow, edge cases |
@@ -460,14 +529,24 @@ uv version --short                   # Show current version
 | PUT | `/quality-checks/{id}` | Update quality checks |
 | DELETE | `/quality-checks/{id}` | Delete a single quality check |
 | DELETE | `/quality-checks` | Bulk delete quality checks |
-| GET | `/containers/listing` | Get container/table IDs |
-| POST | `/containers` | Create computed tables |
+| POST | `/containers` | Create computed containers |
+| PUT | `/containers/{id}` | Update container (full PUT) |
+| GET | `/containers/{id}` | Get container by ID |
+| GET | `/containers` | List containers (paginated, with filters) |
+| DELETE | `/containers/{id}` | Delete container (cascades) |
+| POST | `/containers/validate` | Validate computed container definition |
 | GET | `/containers/{id}/field-profiles` | Get field profiles |
+| GET | `/containers/listing` | Lightweight container listing (non-paginated) |
 | POST | `/operations/run` | Trigger operations (catalog, profile, scan, materialize, export) |
 | GET | `/operations/{id}` | Get operation detail with progress counters |
 | GET | `/operations` | List operations (paginated, with filters) |
 | PUT | `/operations/abort/{id}` | Abort a running operation (best-effort) |
-| GET | `/connections` | List connections (paginated) |
+| POST | `/connections` | Create a connection |
+| PUT | `/connections/{id}` | Update a connection (partial PUT) |
+| GET | `/connections/{id}` | Get a single connection |
+| GET | `/connections` | List connections (paginated, with filters) |
+| DELETE | `/connections/{id}` | Delete a connection (409 if datastores reference it) |
+| POST | `/connections/{id}/test` | Test connection (optionally with override credentials) |
 | POST | `/datastores` | Create datastores |
 | PUT | `/datastores/{id}` | Update datastores |
 | GET | `/datastores/{id}` | Get datastore by ID |

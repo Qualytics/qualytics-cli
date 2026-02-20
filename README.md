@@ -513,9 +513,157 @@ qualytics operations abort --id 123
 
 **Note**: Abort is best-effort. If the operation has already finished, it's a no-op.
 
-## Configuring Connections
+### Connections
 
-Before creating datastores, you need to define your database connections in a YAML configuration file. This allows you to:
+The `connections` command group provides full CRUD operations for database connections with built-in secrets management. Connections hold sensitive database credentials and are referenced by datastores.
+
+**Secrets handling:** Sensitive flags (`--host`, `--username`, `--password`, `--access-key`, `--secret-key`, `--uri`) support `${ENV_VAR}` syntax. Values are resolved from environment variables (or `.env` file) at runtime — credentials never touch disk in plaintext. All CLI output automatically redacts sensitive fields.
+
+#### Create a Connection
+
+Two modes: inline flags or from a YAML file.
+
+```bash
+# Mode 1: Inline flags with ${ENV_VAR} syntax
+qualytics connections create \
+  --type postgresql \
+  --name "prod-pg" \
+  --host db.example.com \
+  --port 5432 \
+  --username '${DB_USER}' \
+  --password '${DB_PASSWORD}'
+
+# With type-specific parameters via JSON catch-all
+qualytics connections create \
+  --type snowflake \
+  --name "sf-warehouse" \
+  --host account.snowflakecomputing.com \
+  --username '${SF_USER}' \
+  --password '${SF_PASSWORD}' \
+  --parameters '{"role": "ANALYST", "warehouse": "COMPUTE_WH"}'
+
+# Mode 2: From YAML file
+qualytics connections create --from-yaml ~/.qualytics/config/connections.yml --connection-key prod_postgres
+
+# Preview without creating
+qualytics connections create --type postgresql --name test --host localhost --dry-run
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--type` | TEXT | Connection type: postgresql, snowflake, mysql, bigquery, etc. | Yes* |
+| `--name` | TEXT | Connection name | No |
+| `--host` | TEXT | Host (supports `${ENV_VAR}`) | No |
+| `--port` | INTEGER | Port number | No |
+| `--username` | TEXT | Username (supports `${ENV_VAR}`) | No |
+| `--password` | TEXT | Password (supports `${ENV_VAR}`) | No |
+| `--uri` | TEXT | URI for DFS connections (supports `${ENV_VAR}`) | No |
+| `--access-key` | TEXT | Access key for DFS connections (supports `${ENV_VAR}`) | No |
+| `--secret-key` | TEXT | Secret key for DFS connections (supports `${ENV_VAR}`) | No |
+| `--catalog` | TEXT | Catalog for native connections | No |
+| `--jdbc-fetch-size` | INTEGER | JDBC fetch size | No |
+| `--max-parallelization` | INTEGER | Max parallelization level | No |
+| `--parameters` | TEXT | JSON string for type-specific params | No |
+| `--from-yaml` | TEXT | Path to connections YAML file | No* |
+| `--connection-key` | TEXT | Connection key in the YAML file | No* |
+| `--dry-run` | FLAG | Print payload without making HTTP request | No |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+**Note**: Use either `--type` (inline mode) or `--from-yaml`/`--connection-key` (YAML mode), not both.
+
+#### Update a Connection
+
+```bash
+# Update name
+qualytics connections update --id 42 --name "new-name"
+
+# Update credentials with env vars
+qualytics connections update --id 42 --password '${NEW_DB_PASSWORD}'
+
+# Update type-specific params
+qualytics connections update --id 42 --parameters '{"warehouse": "NEW_WH"}'
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--id` | INTEGER | Connection ID to update | Yes |
+| `--name` | TEXT | New connection name | No |
+| `--host` | TEXT | New host (supports `${ENV_VAR}`) | No |
+| `--port` | INTEGER | New port | No |
+| `--username` | TEXT | New username (supports `${ENV_VAR}`) | No |
+| `--password` | TEXT | New password (supports `${ENV_VAR}`) | No |
+| `--uri` | TEXT | New URI (supports `${ENV_VAR}`) | No |
+| `--access-key` | TEXT | New access key (supports `${ENV_VAR}`) | No |
+| `--secret-key` | TEXT | New secret key (supports `${ENV_VAR}`) | No |
+| `--parameters` | TEXT | JSON string for type-specific params | No |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+#### Get a Connection
+
+```bash
+qualytics connections get --id 42
+qualytics connections get --name "prod-pg" --format json
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--id` | INTEGER | Connection ID (mutually exclusive with `--name`) | No* |
+| `--name` | TEXT | Connection name (mutually exclusive with `--id`) | No* |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+**Note**: Sensitive fields are automatically redacted in the output.
+
+#### List Connections
+
+```bash
+qualytics connections list
+qualytics connections list --type "postgresql,snowflake" --name "prod"
+qualytics connections list --format json
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--name` | TEXT | Filter by name (search) | No |
+| `--type` | TEXT | Comma-separated connection types (e.g. `postgresql,snowflake`) | No |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+#### Delete a Connection
+
+```bash
+qualytics connections delete --id 42
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--id` | INTEGER | Connection ID to delete | Yes |
+
+**Note**: Fails with 409 if datastores still reference this connection. Remove or reassign those datastores first.
+
+#### Test a Connection
+
+Test an existing connection, optionally with override credentials:
+
+```bash
+# Test with saved credentials
+qualytics connections test --id 42
+
+# Test with override credentials (not persisted)
+qualytics connections test --id 42 --host new-host.com --password '${TEST_PASSWORD}'
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--id` | INTEGER | Connection ID to test | Yes |
+| `--host` | TEXT | Override host (supports `${ENV_VAR}`) | No |
+| `--username` | TEXT | Override username (supports `${ENV_VAR}`) | No |
+| `--password` | TEXT | Override password (supports `${ENV_VAR}`) | No |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+---
+
+## Configuring Connections via YAML
+
+In addition to the `connections` CLI commands above, you can define database connections in a YAML configuration file for use with `qualytics connections create --from-yaml` or `qualytics datastores create --connection-name`. This allows you to:
 - Reuse connection configurations across multiple datastores
 - Manage connection credentials in a centralized location
 - Automatically create new connections or reference existing ones in Qualytics
@@ -523,8 +671,6 @@ Before creating datastores, you need to define your database connections in a YA
 ### Setting Up connections.yml
 
 Create a file at `~/.qualytics/config/connections.yml` with your connection configurations.
-
-**Important**: All connection values must be directly written in the `connections.yml` file. The CLI does not use `.env` files for connection configuration.
 
 #### Configuration Structure
 
@@ -849,6 +995,154 @@ qualytics datastores enrichment --id 1 --unlink
 | `--unlink` | FLAG    | Unlink enrichment datastore                          | No*      |
 
 **Note**: You must provide either `--link` or `--unlink`, but not both.
+
+---
+
+### Containers
+
+The `containers` command group provides CRUD operations for computed containers (computed_table, computed_file, computed_join) and read/delete for all container types. Non-computed containers (table, view, file) are created automatically during catalog operations.
+
+#### Create a Computed Container
+
+```bash
+# Computed table (SQL query)
+qualytics containers create \
+  --type computed_table \
+  --name "ct_order_validation" \
+  --datastore-id 42 \
+  --query "SELECT * FROM orders WHERE total < 0"
+
+# Computed file (derived from source container)
+qualytics containers create \
+  --type computed_file \
+  --name "cf_filtered_orders" \
+  --datastore-id 42 \
+  --source-container-id 100 \
+  --select-clause "order_id, total" \
+  --where-clause "total > 0"
+
+# Computed join (cross-container join)
+qualytics containers create \
+  --type computed_join \
+  --name "cj_orders_customers" \
+  --left-container-id 100 \
+  --right-container-id 200 \
+  --left-key-field "customer_id" \
+  --right-key-field "id" \
+  --select-clause "l.order_id, r.name" \
+  --join-type left
+
+# Preview payload without creating
+qualytics containers create --type computed_table --name "test" --datastore-id 42 --query "SELECT 1" --dry-run
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--type` | TEXT | Container type: `computed_table`, `computed_file`, or `computed_join` | Yes |
+| `--name` | TEXT | Container name | Yes |
+| `--datastore-id` | INTEGER | Datastore ID (required for computed_table and computed_file) | Conditional |
+| `--query` | TEXT | SQL query (required for computed_table) | Conditional |
+| `--source-container-id` | INTEGER | Source container ID (required for computed_file) | Conditional |
+| `--select-clause` | TEXT | Select clause (required for computed_file and computed_join) | Conditional |
+| `--where-clause` | TEXT | Where clause filter | No |
+| `--group-by-clause` | TEXT | Group by clause | No |
+| `--left-container-id` | INTEGER | Left container ID (required for computed_join) | Conditional |
+| `--right-container-id` | INTEGER | Right container ID (required for computed_join) | Conditional |
+| `--left-key-field` | TEXT | Left join key field (required for computed_join) | Conditional |
+| `--right-key-field` | TEXT | Right join key field (required for computed_join) | Conditional |
+| `--left-prefix` | TEXT | Left prefix for joined fields | No |
+| `--right-prefix` | TEXT | Right prefix for joined fields | No |
+| `--join-type` | TEXT | Join type: `inner`, `left`, `right`, or `full` | No |
+| `--description` | TEXT | Container description | No |
+| `--tags` | TEXT | Comma-separated tags | No |
+| `--dry-run` | FLAG | Print payload without making HTTP request | No |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+#### Update a Container
+
+Uses GET-merge-PUT pattern — fetches existing, overlays changes, PUTs back.
+
+```bash
+# Update query
+qualytics containers update --id 100 --query "SELECT * FROM orders WHERE total < 0 AND status = 'active'"
+
+# Update with force (when field drops affect checks/anomalies)
+qualytics containers update --id 100 --query "SELECT order_id FROM orders" --force-drop-fields
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--id` | INTEGER | Container ID to update | Yes |
+| `--name` | TEXT | New container name | No |
+| `--query` | TEXT | New SQL query (computed_table) | No |
+| `--select-clause` | TEXT | New select clause | No |
+| `--where-clause` | TEXT | New where clause | No |
+| `--group-by-clause` | TEXT | New group by clause | No |
+| `--description` | TEXT | New description | No |
+| `--tags` | TEXT | Comma-separated tags | No |
+| `--force-drop-fields` | FLAG | Allow dropping fields with associated checks/anomalies | No |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+**Note**: If the update would drop fields that have quality checks or anomalies, the API returns 409. Use `--force-drop-fields` to proceed.
+
+#### Get a Container
+
+```bash
+qualytics containers get --id 100
+qualytics containers get --id 100 --profiles --format json
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--id` | INTEGER | Container ID | Yes |
+| `--profiles` | FLAG | Also fetch field profiles | No |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+#### List Containers
+
+```bash
+qualytics containers list --datastore-id 42
+qualytics containers list --datastore-id 42 --type "computed_table,computed_file" --tag "production"
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--datastore-id` | INTEGER | Datastore ID to list containers from | Yes |
+| `--type` | TEXT | Comma-separated container types: table, view, file, computed_table, computed_file, computed_join | No |
+| `--name` | TEXT | Filter by name | No |
+| `--tag` | TEXT | Tag name to filter by | No |
+| `--search` | TEXT | Search string across container fields | No |
+| `--archived` | TEXT | Archive filter: `only` for archived, `include` for all | No |
+| `--format` | TEXT | Output format: `yaml` or `json` (default: `yaml`) | No |
+
+#### Delete a Container
+
+```bash
+qualytics containers delete --id 100
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--id` | INTEGER | Container ID to delete | Yes |
+
+**Warning**: Deleting a container cascades to its fields, quality checks, and anomalies.
+
+#### Validate a Computed Container
+
+Dry-run validation of a computed container definition against the API (no container is created).
+
+```bash
+qualytics containers validate --type computed_table --datastore-id 42 --query "SELECT * FROM orders"
+qualytics containers validate --type computed_table --datastore-id 42 --query "SELECT * FROM orders" --timeout 120
+```
+
+| Option | Type | Description | Required |
+|--------|------|-------------|----------|
+| `--type` | TEXT | Container type: `computed_table`, `computed_file`, or `computed_join` | Yes |
+| `--datastore-id` | INTEGER | Datastore ID | Conditional |
+| `--query` | TEXT | SQL query | Conditional |
+| `--timeout` | INTEGER | Validation timeout in seconds (default: 60) | No |
+| (other create options) | — | Same options as `create` for building the payload | Conditional |
 
 ---
 

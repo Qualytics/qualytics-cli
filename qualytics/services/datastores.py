@@ -4,58 +4,6 @@ from ..api.client import QualyticsClient
 from ..api.datastores import get_datastore, list_datastores
 
 
-def get_connection_by(
-    client: QualyticsClient,
-    connection_id: int | None = None,
-    connection_name: str | None = None,
-) -> dict | None:
-    """Get connection from Qualytics API by ID or name.
-
-    Handles pagination to search through all connections.
-
-    Returns:
-        dict: The connection object if found
-        None: If connection not found
-    """
-    if connection_id is None and connection_name is None:
-        raise ValueError("Either connection_id or connection_name must be provided")
-
-    if connection_id is not None and connection_name is not None:
-        raise ValueError(
-            "Cannot specify both connection_id and connection_name. Please use only one."
-        )
-
-    page = 1
-    size = 50
-
-    while True:
-        response = client.get("connections", params={"page": page, "size": size})
-        data = response.json()
-
-        if "items" not in data:
-            raise ValueError(
-                f"Unexpected API response format. Expected 'items' field but got: {list(data.keys())}"
-            )
-
-        connections = data["items"]
-
-        for connection in connections:
-            if connection_id is not None and connection.get("id") == connection_id:
-                return connection
-            if (
-                connection_name is not None
-                and connection.get("name") == connection_name
-            ):
-                return connection
-
-        if len(connections) < size:
-            break
-
-        page += 1
-
-    return None
-
-
 def get_datastore_by_name(client: QualyticsClient, name: str) -> dict | None:
     """Find a datastore by name via paginated list search.
 

@@ -65,6 +65,30 @@ def test_computed_tables_command_registered(cli_runner):
     assert "computed" in result.output.lower() or "import" in result.output.lower()
 
 
+def test_containers_command_registered(cli_runner):
+    """Test that the 'containers' command group is registered."""
+    result = cli_runner.invoke(app, ["containers", "--help"])
+    assert result.exit_code == 0
+    assert "create" in result.output.lower()
+    assert "update" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "delete" in result.output.lower()
+    assert "validate" in result.output.lower()
+
+
+def test_connections_command_registered(cli_runner):
+    """Test that the 'connections' command group is registered."""
+    result = cli_runner.invoke(app, ["connections", "--help"])
+    assert result.exit_code == 0
+    assert "create" in result.output.lower()
+    assert "update" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "delete" in result.output.lower()
+    assert "test" in result.output.lower()
+
+
 def test_anomalies_command_registered(cli_runner):
     """Test that the 'anomalies' command group is registered."""
     result = cli_runner.invoke(app, ["anomalies", "--help"])
