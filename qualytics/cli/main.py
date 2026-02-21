@@ -4,14 +4,7 @@ import typer
 from typing import Annotated
 from rich import print
 
-from ..config import (
-    __version__,
-    load_config,
-    save_config,
-    is_token_valid,
-    CONFIG_PATH,
-)
-from ..utils import validate_and_format_url
+from ..config import __version__
 
 
 app = typer.Typer()
@@ -27,26 +20,19 @@ def version_callback(
         raise typer.Exit()
 
 
-@app.command()
+@app.command(hidden=True, deprecated=True)
 def show_config():
-    """Display the saved configuration."""
-    config = load_config()
-    if config:
-        ssl_status = config.get("ssl_verify", True)
-        ssl_label = "[green]enabled[/green]" if ssl_status else "[red]disabled[/red]"
+    """[Deprecated] Use 'qualytics auth status' instead."""
+    print(
+        "[bold yellow]Warning: 'qualytics show-config' is deprecated. "
+        "Use 'qualytics auth status' instead.[/bold yellow]\n"
+    )
+    from .auth import auth_status
 
-        print(f"[bold yellow] Config file located in: {CONFIG_PATH} [/bold yellow]")
-        print(f"[bold yellow] URL: {config['url']} [/bold yellow]")
-        print(f"[bold yellow] Token: {config['token']} [/bold yellow]")
-        print(f"[bold yellow] SSL Verification: {ssl_label} [/bold yellow]")
-
-        # Verify token expiration using the separate function
-        is_token_valid(config["token"])
-    else:
-        print("Configuration not found!")
+    auth_status()
 
 
-@app.command()
+@app.command(hidden=True, deprecated=True)
 def init(
     url: str = typer.Option(
         ..., help="The URL to be set. Example: https://your-qualytics.qualytics.io/"
@@ -58,18 +44,11 @@ def init(
         help="Disable SSL certificate verification for API requests.",
     ),
 ):
-    """Initialize Qualytics CLI configuration."""
-    url = validate_and_format_url(url)
+    """[Deprecated] Use 'qualytics auth init' instead."""
+    print(
+        "[bold yellow]Warning: 'qualytics init' is deprecated. "
+        "Use 'qualytics auth init' instead.[/bold yellow]\n"
+    )
+    from .auth import auth_init
 
-    config = {"url": url, "token": token, "ssl_verify": not no_verify_ssl}
-
-    # Verify token expiration using the separate function
-    token_valid = is_token_valid(token)
-
-    if token_valid:
-        save_config(config)
-        print("[bold green] Configuration saved! [/bold green]")
-        if no_verify_ssl:
-            print(
-                "[bold yellow] SSL verification is disabled. Use with caution. [/bold yellow]"
-            )
+    auth_init(url=url, token=token, no_verify_ssl=no_verify_ssl)

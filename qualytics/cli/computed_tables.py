@@ -1,4 +1,7 @@
-"""CLI commands for computed tables and rule imports."""
+"""Internal helpers for computed table import and preview.
+
+These functions power the 'containers import' and 'containers preview' CLI commands.
+"""
 
 import csv
 import json
@@ -14,15 +17,16 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from ..api.client import QualyticsClient, QualyticsAPIError, get_client
+from ..api.containers import (
+    create_container as api_create_container,
+    get_field_profiles as api_get_field_profiles,
+    list_containers_listing,
+)
+from ..api.operations import get_operation, list_operations
+from ..api.quality_checks import create_quality_check
 from ..config import BASE_PATH
 from ..utils import distinct_file_content, log_error
 
-
-# Create Typer instance for computed tables
-computed_tables_app = typer.Typer(
-    name="computed-tables",
-    help="Commands for handling computed tables and rule imports",
-)
 
 console = Console()
 
@@ -472,11 +476,12 @@ def _create_computed_table(
 
     _debug_log(f"Creating computed table: {name}", payload=payload)
 
+    log_message = f"Creating computed table: {name}\nDatastore ID: {datastore_id}\nAliases added: {aliases_added}\n\nOriginal Query:\n{query}\n\nFinal Query:\n{final_query}"
+
     try:
-        response = client.post("containers", json=payload)
+        result = api_create_container(client, payload)
     except QualyticsAPIError as e:
         _debug_log(f"Failed to create computed table '{name}': {e}")
-        log_message = f"Creating computed table: {name}\nDatastore ID: {datastore_id}\nAliases added: {aliases_added}\n\nOriginal Query:\n{query}\n\nFinal Query:\n{final_query}"
         _write_debug_log(
             log_type="computed_table",
             name=name,
@@ -489,22 +494,18 @@ def _create_computed_table(
         log_error(error_msg, error_log_path)
         return None
 
-    _debug_log(f"Create computed table response for: {name}", response=response)
-
-    # Write to individual log file
-    log_message = f"Creating computed table: {name}\nDatastore ID: {datastore_id}\nAliases added: {aliases_added}\n\nOriginal Query:\n{query}\n\nFinal Query:\n{final_query}"
+    _debug_log(f"Created computed table: {name} (ID: {result.get('id')})")
 
     log_file = _write_debug_log(
         log_type="computed_table",
         name=name,
         message=log_message,
         payload=payload,
-        response=response,
     )
     if log_file:
         _debug_log(f"Log written to: {log_file}")
 
-    return response.json()
+    return result
 
 
 def _wait_for_profile_operation(
@@ -514,36 +515,28 @@ def _wait_for_profile_operation(
     max_retries: int = 10,
     wait_time: int = 30,
 ) -> bool:
-    """
-    Wait for the profile operation triggered by computed table creation.
+    """Wait for the profile operation triggered by computed table creation.
 
-    Polls the operation endpoint until it finishes, then verifies container has fields.
-
-    Parameters:
-    - max_retries: Number of retry attempts if operation doesn't succeed
-    - wait_time: Seconds to wait between retry attempts
+    Uses the shared API layer to find and poll the operation, then verifies
+    the container has fields.
 
     Returns True if profile succeeded and container has fields, False otherwise.
     """
     _debug_log(f"Looking for profile operation for container {container_id}")
 
-    # First, find the profile operation for this container
+    # Find the profile operation for this container
     try:
-        response = client.get(
-            "operations",
-            params={
-                "type": "profile",
-                "datastore_id": datastore_id,
-                "container_id": container_id,
-                "sort": "desc",
-                "size": 1,
-            },
+        data = list_operations(
+            client,
+            datastore=[datastore_id],
+            operation_type="profile",
+            sort_created="desc",
+            size=1,
         )
     except QualyticsAPIError as e:
         _debug_log(f"Failed to get operations: {e.status_code}")
         return False
 
-    data = response.json()
     if not data.get("items") or len(data["items"]) == 0:
         _debug_log("No profile operation found for container")
         return False
@@ -551,19 +544,17 @@ def _wait_for_profile_operation(
     operation_id = data["items"][0]["id"]
     _debug_log(f"Found profile operation ID: {operation_id}")
 
-    # Now wait for the operation to finish
+    # Wait for the operation to finish
     for attempt in range(max_retries):
-        # Poll until operation has end_time
         poll_count = 0
         op_data = None
         while True:
             try:
-                op_response = client.get(f"operations/{operation_id}")
+                op_data = get_operation(client, operation_id)
             except QualyticsAPIError as e:
                 _debug_log(f"Failed to get operation status: {e.status_code}")
                 break
 
-            op_data = op_response.json()
             if op_data.get("end_time"):
                 _debug_log(
                     f"Operation {operation_id} finished with result: {op_data.get('result')}"
@@ -571,7 +562,7 @@ def _wait_for_profile_operation(
                 break
 
             poll_count += 1
-            if poll_count % 3 == 0:  # Log every 3rd poll
+            if poll_count % 3 == 0:
                 _debug_log(
                     f"Operation {operation_id} still running... (poll #{poll_count})"
                 )
@@ -584,10 +575,8 @@ def _wait_for_profile_operation(
             if result == "success":
                 # Verify container has field profiles
                 try:
-                    field_profiles_response = client.get(
-                        f"containers/{container_id}/field-profiles",
-                    )
-                    fields = field_profiles_response.json().get("items", [])
+                    profiles_data = api_get_field_profiles(client, container_id)
+                    fields = profiles_data.get("items", [])
                     _debug_log(
                         f"Container {container_id} has {len(fields)} field profiles after profile"
                     )
@@ -602,12 +591,10 @@ def _wait_for_profile_operation(
                 )
                 return False
 
-        # If we're on last attempt, return what we have
         if attempt == max_retries - 1:
             _debug_log(f"Max retries ({max_retries}) reached, giving up")
             return False
 
-        # Wait before retrying
         print(
             f"  [dim]Attempt {attempt + 1} - profile not ready, retrying in {wait_time}s...[/dim]"
         )
@@ -625,11 +612,9 @@ def _get_existing_computed_tables(
     Returns a dict mapping table name to container ID.
     """
     try:
-        response = client.get(
-            "containers/listing",
-            params={"datastore": datastore_id, "type": "computed_table"},
+        tables = list_containers_listing(
+            client, datastore_id, container_type="computed_table"
         )
-        tables = response.json()
         return {t["name"]: t["id"] for t in tables}
     except QualyticsAPIError:
         return {}
@@ -659,8 +644,8 @@ def _get_container_fields(
 ) -> list[dict] | None:
     """Get field profiles for a container after profiling."""
     try:
-        response = client.get(f"containers/{container_id}/field-profiles")
-        return response.json().get("items", [])
+        data = api_get_field_profiles(client, container_id)
+        return data.get("items", [])
     except QualyticsAPIError:
         return None
 
@@ -739,14 +724,16 @@ def _create_satisfies_expression_check(
 
     _debug_log(f"Creating check for container {container_id}", payload=payload)
 
+    log_message = f"Creating satisfiesExpression check for: {name}\nContainer ID: {container_id}\nExpression: {expression}"
+
     try:
-        response = client.post("quality-checks", json=payload)
+        result = create_quality_check(client, payload)
     except QualyticsAPIError as e:
         _debug_log(f"Failed to create check for '{name}': {e}")
         _write_debug_log(
             log_type="check",
             name=name,
-            message=f"Creating satisfiesExpression check for: {name}\nContainer ID: {container_id}\nExpression: {expression}",
+            message=log_message,
             payload=payload,
         )
         error_msg = (
@@ -755,20 +742,18 @@ def _create_satisfies_expression_check(
         log_error(error_msg, error_log_path)
         return None
 
-    _debug_log(f"Create check response for container {container_id}", response=response)
+    _debug_log(f"Created check for container {container_id} (ID: {result.get('id')})")
 
-    # Write to individual log file
     log_file = _write_debug_log(
         log_type="check",
         name=name,
-        message=f"Creating satisfiesExpression check for: {name}\nContainer ID: {container_id}\nExpression: {expression}",
+        message=log_message,
         payload=payload,
-        response=response,
     )
     if log_file:
         _debug_log(f"Log written to: {log_file}")
 
-    return response.json()
+    return result
 
 
 def _parse_tags(tags_str: str) -> list[str]:
@@ -798,7 +783,6 @@ def _extract_rule_id(name: str) -> str:
     return cleaned
 
 
-@computed_tables_app.command("import")
 def import_computed_tables(
     datastore: int = typer.Option(
         ..., "--datastore", help="Datastore ID to create computed tables in"
@@ -875,10 +859,10 @@ def import_computed_tables(
       Cross-catalog/schema references (e.g., catalog.schema.table) are preserved.
 
     Example:
-        qualytics computed-tables import --datastore 123 --input tables.csv
-        qualytics computed-tables import --datastore 123 --input rules.xlsx --prefix "rule_"
-        qualytics computed-tables import --datastore 123 --input data.csv --skip-checks
-        qualytics computed-tables import --datastore 123 --input data.csv --as-active --tags "prod"
+        qualytics containers import --datastore 123 --input tables.csv
+        qualytics containers import --datastore 123 --input rules.xlsx --prefix "rule_"
+        qualytics containers import --datastore 123 --input data.csv --skip-checks
+        qualytics containers import --datastore 123 --input data.csv --as-active --tags "prod"
     """
     # Set debug mode
     global _debug_mode, _debug_logs_dir
@@ -1081,29 +1065,23 @@ def import_computed_tables(
     distinct_file_content(error_log_path)
 
 
-@computed_tables_app.command("list")
 def list_computed_tables(
     datastore: int = typer.Option(
         ..., "--datastore", help="Datastore ID to list computed tables from"
     ),
 ):
-    """
-    List all computed tables in a datastore.
-    """
+    """List all computed tables in a datastore."""
     client = get_client()
 
     try:
-        response = client.get(
-            "containers/listing",
-            params={"datastore": datastore, "type": "computed_table"},
+        tables = list_containers_listing(
+            client, datastore, container_type="computed_table"
         )
     except QualyticsAPIError as e:
         print(
             f"[bold red]Failed to list computed tables: {e.status_code} - {e.message}[/bold red]"
         )
         raise typer.Exit(code=1)
-
-    tables = response.json()
 
     if not tables:
         print(f"[yellow]No computed tables found in datastore {datastore}.[/yellow]")
@@ -1120,7 +1098,6 @@ def list_computed_tables(
     print(f"\n[bold]Total: {len(tables)} computed tables[/bold]")
 
 
-@computed_tables_app.command("preview")
 def preview_file(
     input_file: str = typer.Option(
         ..., "--input", help="Input file path (.xlsx, .csv, or .txt)"
@@ -1139,8 +1116,7 @@ def preview_file(
         help="Prefix to show for computed table names (default: 'ct_')",
     ),
 ):
-    """
-    Preview computed table definitions from a file without importing.
+    """Preview computed table definitions from a file without importing.
 
     FILE STRUCTURE (positional columns):
       - Column 1: name

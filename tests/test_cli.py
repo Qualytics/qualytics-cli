@@ -25,27 +25,30 @@ def test_checks_command_registered(cli_runner):
     assert "checks" in result.output.lower() or "export" in result.output.lower()
 
 
-def test_datastore_command_registered(cli_runner):
-    """Test that the 'datastore' command group is registered."""
-    result = cli_runner.invoke(app, ["datastore", "--help"])
+def test_datastores_command_registered(cli_runner):
+    """Test that the 'datastores' command group is registered."""
+    result = cli_runner.invoke(app, ["datastores", "--help"])
     assert result.exit_code == 0
-    assert "datastore" in result.output.lower() or "list" in result.output.lower()
+    assert "create" in result.output.lower()
+    assert "update" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "delete" in result.output.lower()
+    assert "verify" in result.output.lower()
+    assert "enrichment" in result.output.lower()
 
 
-def test_run_command_registered(cli_runner):
-    """Test that the 'run' command group is registered."""
-    result = cli_runner.invoke(app, ["run", "--help"])
+def test_operations_command_registered(cli_runner):
+    """Test that the 'operations' command group is registered."""
+    result = cli_runner.invoke(app, ["operations", "--help"])
     assert result.exit_code == 0
-    assert "catalog" in result.output.lower() or "profile" in result.output.lower()
-
-
-def test_operation_command_registered(cli_runner):
-    """Test that the 'operation' command group is registered."""
-    result = cli_runner.invoke(app, ["operation", "--help"])
-    assert result.exit_code == 0
-    assert (
-        "operation" in result.output.lower() or "check_status" in result.output.lower()
-    )
+    assert "catalog" in result.output.lower()
+    assert "profile" in result.output.lower()
+    assert "scan" in result.output.lower()
+    assert "materialize" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "abort" in result.output.lower()
 
 
 def test_schedule_command_registered(cli_runner):
@@ -55,11 +58,65 @@ def test_schedule_command_registered(cli_runner):
     assert "schedule" in result.output.lower() or "export" in result.output.lower()
 
 
-def test_computed_tables_command_registered(cli_runner):
-    """Test that the 'computed-tables' command group is registered."""
-    result = cli_runner.invoke(app, ["computed-tables", "--help"])
+def test_containers_command_registered(cli_runner):
+    """Test that the 'containers' command group is registered."""
+    result = cli_runner.invoke(app, ["containers", "--help"])
     assert result.exit_code == 0
-    assert "computed" in result.output.lower() or "import" in result.output.lower()
+    assert "create" in result.output.lower()
+    assert "update" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "delete" in result.output.lower()
+    assert "validate" in result.output.lower()
+    assert "import" in result.output.lower()
+    assert "preview" in result.output.lower()
+
+
+def test_connections_command_registered(cli_runner):
+    """Test that the 'connections' command group is registered."""
+    result = cli_runner.invoke(app, ["connections", "--help"])
+    assert result.exit_code == 0
+    assert "create" in result.output.lower()
+    assert "update" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "delete" in result.output.lower()
+    assert "test" in result.output.lower()
+
+
+def test_anomalies_command_registered(cli_runner):
+    """Test that the 'anomalies' command group is registered."""
+    result = cli_runner.invoke(app, ["anomalies", "--help"])
+    assert result.exit_code == 0
+    assert "get" in result.output.lower()
+    assert "list" in result.output.lower()
+    assert "update" in result.output.lower()
+    assert "archive" in result.output.lower()
+    assert "delete" in result.output.lower()
+
+
+def test_auth_command_registered(cli_runner):
+    """Test that the 'auth' command group is registered with all subcommands."""
+    result = cli_runner.invoke(app, ["auth", "--help"])
+    assert result.exit_code == 0
+    assert "login" in result.output.lower()
+    assert "status" in result.output.lower()
+    assert "init" in result.output.lower()
+
+
+def test_config_command_registered(cli_runner):
+    """Test that the 'config' command group is registered."""
+    result = cli_runner.invoke(app, ["config", "--help"])
+    assert result.exit_code == 0
+    assert "export" in result.output.lower()
+    assert "import" in result.output.lower()
+
+
+def test_mcp_command_registered(cli_runner):
+    """Test that the 'mcp' command group is registered."""
+    result = cli_runner.invoke(app, ["mcp", "--help"])
+    assert result.exit_code == 0
+    assert "serve" in result.output.lower()
 
 
 def test_version_is_semver():

@@ -101,7 +101,20 @@ class QualyticsClient:
         url = self._build_url(path)
         kwargs.setdefault("timeout", self.timeout)
 
-        response = self._session.request(method, url, **kwargs)
+        try:
+            response = self._session.request(method, url, **kwargs)
+        except requests.exceptions.SSLError:
+            raise ConnectionError(
+                f"SSL handshake failed for {url}. "
+                "If your server runs plain HTTP, use http:// instead of https:// "
+                "in your URL (e.g. qualytics init --url http://localhost:8000)."
+            )
+        except requests.exceptions.ConnectionError:
+            raise ConnectionError(
+                f"Could not connect to {url}. "
+                "Check that the server is running and the URL is correct."
+            )
+
         self._raise_for_status(response)
         return response
 
@@ -123,7 +136,8 @@ class QualyticsClient:
             raise AuthenticationError(
                 status,
                 "Authentication failed. Your token may be expired or invalid. "
-                'Run: qualytics init --url "..." --token "..." to reconfigure.',
+                "Run: qualytics auth login --url <your-url> "
+                "or: qualytics auth init --url <your-url> --token <your-token>",
                 url,
             )
         if status == 404:
@@ -149,7 +163,9 @@ def get_client(config: dict | None = None) -> QualyticsClient:
 
     if config is None:
         print(
-            "[bold red]Configuration not found. Run 'qualytics init' first.[/bold red]"
+            "[bold red]Configuration not found. "
+            "Run 'qualytics auth login --url <your-url>' "
+            "or 'qualytics auth init --url <url> --token <token>'.[/bold red]"
         )
         raise SystemExit(1)
 
