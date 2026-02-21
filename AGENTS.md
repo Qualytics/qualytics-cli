@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Qualytics CLI** is a command-line interface for the Qualytics data quality platform. It wraps the Qualytics controlplane REST API, enabling users to manage quality checks, datastores, computed tables, and operations (catalog, profile, scan) programmatically.
+**Qualytics CLI** is a command-line interface for the Qualytics data quality platform. It wraps the Qualytics controlplane REST API, enabling users to manage quality checks, datastores, containers, and operations (catalog, profile, scan) programmatically.
 
 **License:** MIT
 **Language:** Python 3.10+
@@ -32,15 +32,16 @@ qualytics-cli/
 │   │   ├── operations.py     # Operation API operations (run, get, list, abort)
 │   │   └── quality_checks.py # Quality checks API operations (CRUD + bulk)
 │   ├── cli/
-│   │   ├── main.py           # init, show-config commands
+│   │   ├── main.py           # Deprecated wrappers (init → auth init, show-config → auth status)
 │   │   ├── anomalies.py      # anomalies get/list/update/archive/delete commands
 │   │   ├── checks.py         # checks CRUD + git-friendly export/import
+│   │   ├── auth.py           # auth login/status/init commands
 │   │   ├── connections.py    # connections create/update/get/list/delete/test commands
-│   │   ├── containers.py     # containers create/update/get/list/delete/validate commands
+│   │   ├── containers.py     # containers create/update/get/list/delete/validate/import/preview commands
 │   │   ├── datastores.py     # datastores create/update/get/list/delete/verify/enrichment commands
 │   │   ├── export_import.py  # config export/import (config-as-code)
 │   │   ├── operations.py     # operations catalog/profile/scan/materialize/export/get/list/abort commands
-│   │   ├── computed_tables.py # computed-tables import/list/preview commands
+│   │   ├── computed_tables.py # Internal helpers for computed table import and preview (used by containers.py)
 │   │   └── schedule.py       # schedule export-metadata command
 │   ├── services/
 │   │   ├── quality_checks.py # Quality check business logic
@@ -131,10 +132,10 @@ CLI commands catch specific exceptions for business logic (e.g., `ConflictError`
 
 SSL verification is **secure by default** (`True`) and configurable per installation:
 
-- `qualytics init --no-verify-ssl` saves `ssl_verify: false` to `~/.qualytics/config.yaml`
+- `qualytics auth init --no-verify-ssl` saves `ssl_verify: false` to `~/.qualytics/config.yaml`
 - `QualyticsClient` reads `ssl_verify` from config
 - `InsecureRequestWarning` is suppressed only when SSL is explicitly disabled
-- `qualytics show-config` displays the current SSL status
+- `qualytics auth status` displays the current SSL status
 
 ### Operations (`api/operations.py`, `services/operations.py`, `cli/operations.py`)
 
@@ -308,7 +309,7 @@ Full container lifecycle management — create computed containers, update, get,
 **Architecture:**
 - `api/containers.py` — 9 thin HTTP wrappers: `create_container`, `update_container`, `get_container`, `list_containers`, `list_all_containers`, `delete_container`, `validate_container`, `get_field_profiles`, `list_containers_listing`
 - `services/containers.py` — business logic: `get_table_ids`, `get_container_by_name`, `build_create_container_payload`, `build_update_container_payload`
-- `cli/containers.py` — 6 CLI commands under `qualytics containers`
+- `cli/containers.py` — 8 CLI commands under `qualytics containers`
 
 **Polymorphic create:** The `--type` flag discriminates between computed types, each requiring different fields:
 - `computed_table`: `--datastore-id`, `--name`, `--query`
@@ -326,6 +327,8 @@ Full container lifecycle management — create computed containers, update, get,
 - `list` — requires `--datastore-id`, filterable by `--type`, `--name`, `--tag`, `--search`, `--archived`
 - `delete` — by `--id` (cascades to fields, checks, anomalies)
 - `validate` — dry-run validation of computed container definitions against the API
+- `import` — bulk import computed tables from file (.xlsx, .csv, .txt) with auto-check creation
+- `preview` — preview computed table definitions from file without importing
 
 ### Serialization (`utils/serialization.py`)
 
@@ -360,7 +363,7 @@ print(format_for_display(data, OutputFormat.JSON))
 | `data_checks_template.yaml` | Default templates export location |
 | `errors-{date}.log` | Import operation errors |
 | `operation-error.txt` | Operation execution errors |
-| `logs/` | Debug logs (computed-tables --debug) |
+| `logs/` | Debug logs (containers import --debug) |
 
 ### Token Validation
 
@@ -372,17 +375,17 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 
 | Command Group | Subcommands | Description |
 |--------------|-------------|-------------|
-| `init` | — | Configure URL, token, SSL |
-| `show-config` | — | Display current configuration |
+| `auth` | `login`, `status`, `init` | Authentication: browser login, status display, manual token init |
 | `anomalies` | `get`, `list`, `update`, `archive`, `delete` | Anomaly management (status updates, archiving, deletion) |
 | `checks` | `create`, `get`, `list`, `update`, `delete`, `export`, `import`, `export-templates`, `import-templates` | Quality check CRUD + git-friendly export/import |
 | `config` | `export`, `import` | Config-as-code: export/import connections, datastores, containers, and checks as hierarchical YAML |
 | `connections` | `create`, `update`, `get`, `list`, `delete`, `test` | Connection CRUD with secrets management + connectivity testing |
-| `containers` | `create`, `update`, `get`, `list`, `delete`, `validate` | Container CRUD for computed types + validation |
+| `containers` | `create`, `update`, `get`, `list`, `delete`, `validate`, `import`, `preview` | Container CRUD + validation + bulk import |
 | `datastores` | `create`, `update`, `get`, `list`, `delete`, `verify`, `enrichment` | Datastore CRUD + connection verification + enrichment linking |
 | `operations` | `catalog`, `profile`, `scan`, `materialize`, `export`, `get`, `list`, `abort` | Operation lifecycle (trigger, monitor, abort) |
-| `computed-tables` | `import`, `list`, `preview` | Bulk computed table import from files |
 | `schedule` | `export-metadata` | Cron-based export scheduling |
+| ~~`init`~~ | — | **Deprecated** → `auth init` |
+| ~~`show-config`~~ | — | **Deprecated** → `auth status` |
 
 ---
 
@@ -466,6 +469,7 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 
 | File | Coverage |
 |------|----------|
+| `test_auth.py` | Auth commands: callback server, login flow, status display, init, deprecated wrappers |
 | `test_cli.py` | Smoke tests: CLI loads, all command groups registered |
 | `test_client.py` | QualyticsClient: URL building, SSL config, exception hierarchy, get_client factory |
 | `test_config.py` | Config loading, saving, token validation, legacy JSON migration |
@@ -617,8 +621,8 @@ Content-Type: application/json
 
 | Issue | Symptom | Solution |
 |-------|---------|----------|
-| Token expired | "Your token is expired" warning | Run `qualytics init` with a new token |
-| SSL errors | Certificate verification failures | Use `qualytics init --no-verify-ssl` (not recommended for production) |
+| Token expired | "Your token is expired" warning | Run `qualytics auth login` or `qualytics auth init` with a new token |
+| SSL errors | Certificate verification failures | Use `qualytics auth init --no-verify-ssl` (not recommended for production) |
 | Profile not found | "Profile `{name}` was not found" | Verify container exists in target datastore |
 | Operation timeout | "timed out after Xs" | Increase `--timeout` value |
 | Import conflicts | Quality check already exists | CLI automatically updates (upsert pattern) |

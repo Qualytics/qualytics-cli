@@ -82,7 +82,7 @@ def is_token_valid(token: str):
             current_time = datetime.now(timezone.utc).timestamp()
             if not expiration_time >= current_time:
                 print(
-                    '[bold red] WARNING: Your token is expired, please setup with a new token by running: qualytics init --url "your-qualytics.io/api" --token "my-token" [/bold red]'
+                    '[bold red] WARNING: Your token is expired, please setup with a new token by running: qualytics auth init --url "your-qualytics.io" --token "my-token" [/bold red]'
                 )
                 return None
             else:

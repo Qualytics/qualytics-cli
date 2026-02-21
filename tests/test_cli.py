@@ -58,13 +58,6 @@ def test_schedule_command_registered(cli_runner):
     assert "schedule" in result.output.lower() or "export" in result.output.lower()
 
 
-def test_computed_tables_command_registered(cli_runner):
-    """Test that the 'computed-tables' command group is registered."""
-    result = cli_runner.invoke(app, ["computed-tables", "--help"])
-    assert result.exit_code == 0
-    assert "computed" in result.output.lower() or "import" in result.output.lower()
-
-
 def test_containers_command_registered(cli_runner):
     """Test that the 'containers' command group is registered."""
     result = cli_runner.invoke(app, ["containers", "--help"])
@@ -75,6 +68,8 @@ def test_containers_command_registered(cli_runner):
     assert "list" in result.output.lower()
     assert "delete" in result.output.lower()
     assert "validate" in result.output.lower()
+    assert "import" in result.output.lower()
+    assert "preview" in result.output.lower()
 
 
 def test_connections_command_registered(cli_runner):
@@ -98,6 +93,15 @@ def test_anomalies_command_registered(cli_runner):
     assert "update" in result.output.lower()
     assert "archive" in result.output.lower()
     assert "delete" in result.output.lower()
+
+
+def test_auth_command_registered(cli_runner):
+    """Test that the 'auth' command group is registered with all subcommands."""
+    result = cli_runner.invoke(app, ["auth", "--help"])
+    assert result.exit_code == 0
+    assert "login" in result.output.lower()
+    assert "status" in result.output.lower()
+    assert "init" in result.output.lower()
 
 
 def test_config_command_registered(cli_runner):

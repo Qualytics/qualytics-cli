@@ -26,43 +26,53 @@ uv pip install qualytics-cli
 ## Quick Start
 
 ```bash
-# 1. Configure your Qualytics instance
-qualytics init --url "https://your-instance.qualytics.io/" --token "YOUR_TOKEN"
+# 1. Authenticate via browser (recommended)
+qualytics auth login --url "https://your-instance.qualytics.io/"
 
-# 2. Create a connection (credentials from environment variables)
+# Or configure with a token directly
+qualytics auth init --url "https://your-instance.qualytics.io/" --token "YOUR_TOKEN"
+
+# 2. Check your authentication status
+qualytics auth status
+
+# 3. Create a connection (credentials from environment variables)
 qualytics connections create \
   --type postgresql --name prod-pg \
   --host db.example.com --port 5432 \
   --username '${PG_USER}' --password '${PG_PASS}'
 
-# 3. Create a datastore referencing that connection
+# 4. Create a datastore referencing that connection
 qualytics datastores create \
   --name "Order Analytics" \
   --connection-name prod-pg \
   --database analytics --schema public
 
-# 4. Export your configuration to YAML
+# 5. Export your configuration to YAML
 qualytics config export --datastore-id 1 --output ./qualytics-config
 
-# 5. Preview what an import would do (without making changes)
+# 6. Preview what an import would do (without making changes)
 qualytics config import --input ./qualytics-config --dry-run
 ```
 
 ## Configuration
 
-### Initialize
+### Authentication
 
 ```bash
-qualytics init --url "https://your-instance.qualytics.io/" --token "YOUR_TOKEN"
+# Browser-based login (opens your Qualytics instance login page)
+qualytics auth login --url "https://your-instance.qualytics.io/"
+
+# Manual token configuration
+qualytics auth init --url "https://your-instance.qualytics.io/" --token "YOUR_TOKEN"
 
 # For self-signed certificates
-qualytics init --url "https://..." --token "..." --no-verify-ssl
+qualytics auth init --url "https://..." --token "..." --no-verify-ssl
 ```
 
-Configuration is saved to `~/.qualytics/config.yaml`. View it with:
+Configuration is saved to `~/.qualytics/config.yaml`. View your auth status with:
 
 ```bash
-qualytics show-config
+qualytics auth status
 ```
 
 ### Environment Variables
@@ -72,19 +82,20 @@ The CLI loads environment variables from a `.env` file in your working directory
 ```bash
 export QUALYTICS_URL="https://your-instance.qualytics.io/"
 export QUALYTICS_TOKEN="your-jwt-token"
-qualytics init --url '${QUALYTICS_URL}' --token '${QUALYTICS_TOKEN}'
+qualytics auth init --url '${QUALYTICS_URL}' --token '${QUALYTICS_TOKEN}'
 ```
 
 ## Command Reference
 
 Run `qualytics <command> --help` for full flag details on any command.
 
-### Setup
+### Authentication
 
 | Command | Description |
 |---------|-------------|
-| `init` | Configure Qualytics URL, API token, and SSL settings |
-| `show-config` | Display the current saved configuration |
+| `auth login` | Authenticate via browser (opens login page, receives token callback) |
+| `auth status` | Display authentication status (URL, masked token, expiry, SSL) |
+| `auth init` | Configure URL, token, and SSL settings manually |
 
 ### Connections
 
@@ -119,6 +130,8 @@ Run `qualytics <command> --help` for full flag details on any command.
 | `containers list` | List containers for a `--datastore-id`, filterable by `--type`, `--tag` |
 | `containers delete` | Delete a container by `--id` (cascades to fields, checks, anomalies) |
 | `containers validate` | Dry-run validation of a computed container definition |
+| `containers import` | Bulk import computed tables from Excel, CSV, or TXT files |
+| `containers preview` | Preview computed table definitions before importing |
 
 ### Quality Checks
 
@@ -163,14 +176,6 @@ Run `qualytics <command> --help` for full flag details on any command.
 |---------|-------------|
 | `config export` | Export configuration as hierarchical YAML (connections, datastores, containers, checks) |
 | `config import` | Import configuration with dependency-ordered upsert and `--dry-run` support |
-
-### Computed Tables
-
-| Command | Description |
-|---------|-------------|
-| `computed-tables import` | Bulk import computed tables from Excel, CSV, or TXT files |
-| `computed-tables list` | List computed tables in a datastore |
-| `computed-tables preview` | Preview file contents before importing |
 
 ### Schedule
 
@@ -298,9 +303,9 @@ qualytics config import --input ./config
 
 For a complete GitHub Actions workflow, see [docs/examples/github-actions-promotion.md](docs/examples/github-actions-promotion.md).
 
-## Computed Tables
+## Computed Containers
 
-Computed tables let you define SQL-based virtual containers and automatically generate quality checks for error detection.
+Create SQL-based virtual containers and automatically generate quality checks for error detection.
 
 ```bash
 # Create a single computed table
@@ -308,13 +313,13 @@ qualytics containers create --type computed_table --name ct_orders \
   --datastore-id 42 --query "SELECT * FROM orders WHERE total < 0"
 
 # Bulk import from Excel/CSV
-qualytics computed-tables import --datastore 42 --input checks.xlsx --as-draft
+qualytics containers import --datastore 42 --input checks.xlsx --as-draft
 
 # Preview before importing
-qualytics computed-tables preview --input checks.xlsx
+qualytics containers preview --input checks.xlsx
 ```
 
-For the full guide covering input file formats, validation rules, check behavior, and all 11 use cases, see [docs/computed-tables.md](docs/computed-tables.md).
+For the full guide covering input file formats, validation rules, check behavior, and all use cases, see [docs/computed-tables.md](docs/computed-tables.md).
 
 ## Development
 

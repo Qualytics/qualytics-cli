@@ -1,4 +1,7 @@
-"""CLI commands for computed tables and rule imports."""
+"""Internal helpers for computed table import and preview.
+
+These functions power the 'containers import' and 'containers preview' CLI commands.
+"""
 
 import csv
 import json
@@ -24,12 +27,6 @@ from ..api.quality_checks import create_quality_check
 from ..config import BASE_PATH
 from ..utils import distinct_file_content, log_error
 
-
-# Create Typer instance for computed tables
-computed_tables_app = typer.Typer(
-    name="computed-tables",
-    help="Commands for handling computed tables and rule imports",
-)
 
 console = Console()
 
@@ -786,7 +783,6 @@ def _extract_rule_id(name: str) -> str:
     return cleaned
 
 
-@computed_tables_app.command("import")
 def import_computed_tables(
     datastore: int = typer.Option(
         ..., "--datastore", help="Datastore ID to create computed tables in"
@@ -863,10 +859,10 @@ def import_computed_tables(
       Cross-catalog/schema references (e.g., catalog.schema.table) are preserved.
 
     Example:
-        qualytics computed-tables import --datastore 123 --input tables.csv
-        qualytics computed-tables import --datastore 123 --input rules.xlsx --prefix "rule_"
-        qualytics computed-tables import --datastore 123 --input data.csv --skip-checks
-        qualytics computed-tables import --datastore 123 --input data.csv --as-active --tags "prod"
+        qualytics containers import --datastore 123 --input tables.csv
+        qualytics containers import --datastore 123 --input rules.xlsx --prefix "rule_"
+        qualytics containers import --datastore 123 --input data.csv --skip-checks
+        qualytics containers import --datastore 123 --input data.csv --as-active --tags "prod"
     """
     # Set debug mode
     global _debug_mode, _debug_logs_dir
@@ -1069,15 +1065,12 @@ def import_computed_tables(
     distinct_file_content(error_log_path)
 
 
-@computed_tables_app.command("list")
 def list_computed_tables(
     datastore: int = typer.Option(
         ..., "--datastore", help="Datastore ID to list computed tables from"
     ),
 ):
-    """
-    List all computed tables in a datastore.
-    """
+    """List all computed tables in a datastore."""
     client = get_client()
 
     try:
@@ -1105,7 +1098,6 @@ def list_computed_tables(
     print(f"\n[bold]Total: {len(tables)} computed tables[/bold]")
 
 
-@computed_tables_app.command("preview")
 def preview_file(
     input_file: str = typer.Option(
         ..., "--input", help="Input file path (.xlsx, .csv, or .txt)"
@@ -1124,8 +1116,7 @@ def preview_file(
         help="Prefix to show for computed table names (default: 'ct_')",
     ),
 ):
-    """
-    Preview computed table definitions from a file without importing.
+    """Preview computed table definitions from a file without importing.
 
     FILE STRUCTURE (positional columns):
       - Column 1: name

@@ -1,6 +1,6 @@
 # Computed Tables Guide
 
-Computed tables let you define SQL-based virtual containers in Qualytics and automatically generate `satisfiesExpression` quality checks for error detection. This guide covers bulk import from files (Excel, CSV, TXT) using the `computed-tables` command group.
+Computed tables let you define SQL-based virtual containers in Qualytics and automatically generate `satisfiesExpression` quality checks for error detection. This guide covers bulk import from files (Excel, CSV, TXT) using the `containers` command group.
 
 For creating individual computed containers, see `qualytics containers create --type computed_table`.
 
@@ -70,7 +70,7 @@ Warnings during validation:
 ## Import Command
 
 ```bash
-qualytics computed-tables import --datastore DATASTORE_ID --input FILE_PATH [OPTIONS]
+qualytics containers import --datastore DATASTORE_ID --input FILE_PATH [OPTIONS]
 ```
 
 ### Options
@@ -94,7 +94,7 @@ qualytics computed-tables import --datastore DATASTORE_ID --input FILE_PATH [OPT
 ### 1. Basic Import (Default)
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx
+qualytics containers import --datastore 123 --input checks.xlsx
 ```
 
 Creates computed tables with `ct_` prefix, waits for profile operation, creates quality checks in **Draft** status. Skips existing computed tables and existing checks.
@@ -102,7 +102,7 @@ Creates computed tables with `ct_` prefix, waits for profile operation, creates 
 ### 2. Import with Active Checks
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --as-active
+qualytics containers import --datastore 123 --input checks.xlsx --as-active
 ```
 
 Same as basic import but checks are created in **Active** status and will run during the next scan. Use when rules are tested and ready for production.
@@ -110,7 +110,7 @@ Same as basic import but checks are created in **Active** status and will run du
 ### 3. Import Only Computed Tables (No Checks)
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --skip-checks
+qualytics containers import --datastore 123 --input checks.xlsx --skip-checks
 ```
 
 Creates computed tables only, no quality checks. Use when you want to configure checks manually in the UI.
@@ -118,7 +118,7 @@ Creates computed tables only, no quality checks. Use when you want to configure 
 ### 4. Skip Profile Wait
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --skip-profile-wait
+qualytics containers import --datastore 123 --input checks.xlsx --skip-profile-wait
 ```
 
 Creates computed tables without waiting for profile. **Warning:** checks will likely fail because the container has no fields until profiling completes. Only use with `--skip-checks` for bulk computed table creation.
@@ -126,7 +126,7 @@ Creates computed tables without waiting for profile. **Warning:** checks will li
 ### 5. Import with Custom Prefix
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --prefix "dq_"
+qualytics containers import --datastore 123 --input checks.xlsx --prefix "dq_"
 ```
 
 Computed tables use `dq_` prefix instead of `ct_`. Example: `CHK001` becomes `dq_CHK001`.
@@ -134,7 +134,7 @@ Computed tables use `dq_` prefix instead of `ct_`. Example: `CHK001` becomes `dq
 ### 6. Import with Tags
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --tags "production,finance"
+qualytics containers import --datastore 123 --input checks.xlsx --tags "production,finance"
 ```
 
 Checks are created with the specified tags for filtering in the UI.
@@ -142,7 +142,7 @@ Checks are created with the specified tags for filtering in the UI.
 ### 7. Dry Run (Preview Only)
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --dry-run
+qualytics containers import --datastore 123 --input checks.xlsx --dry-run
 ```
 
 No changes are made. Shows a preview table of what would be created and which tables would be skipped.
@@ -150,7 +150,7 @@ No changes are made. Shows a preview table of what would be created and which ta
 ### 8. Debug Mode
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx --debug
+qualytics containers import --datastore 123 --input checks.xlsx --debug
 ```
 
 Shows API requests/responses in the console and writes detailed logs to `~/.qualytics/logs/`. Use when troubleshooting import failures.
@@ -158,7 +158,7 @@ Shows API requests/responses in the console and writes detailed logs to `~/.qual
 ### 9. CSV with Custom Delimiter
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.txt --delimiter ";"
+qualytics containers import --datastore 123 --input checks.txt --delimiter ";"
 ```
 
 Reads the file using semicolon as delimiter. Use for files exported from systems with non-standard delimiters.
@@ -166,7 +166,7 @@ Reads the file using semicolon as delimiter. Use for files exported from systems
 ### 10. Production-Ready Import
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx \
+qualytics containers import --datastore 123 --input checks.xlsx \
   --prefix "prod_" \
   --tags "production,automated" \
   --as-active \
@@ -178,7 +178,7 @@ Computed tables with `prod_` prefix, checks in **Active** status, tagged for fil
 ### 11. Fast Bulk Import (Minimal)
 
 ```bash
-qualytics computed-tables import --datastore 123 --input checks.xlsx \
+qualytics containers import --datastore 123 --input checks.xlsx \
   --skip-checks \
   --skip-profile-wait
 ```
@@ -274,7 +274,7 @@ This ensures all fields have proper names for the quality check expression.
 ### List Computed Tables
 
 ```bash
-qualytics computed-tables list --datastore 123
+qualytics containers list --datastore 123
 ```
 
 Example output:
@@ -296,7 +296,7 @@ Total: 3 computed tables
 Preview computed table definitions from a file without importing:
 
 ```bash
-qualytics computed-tables preview --input checks.xlsx --limit 3
+qualytics containers preview --input checks.xlsx --limit 3
 ```
 
 | Option | Type | Description | Default |

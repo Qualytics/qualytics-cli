@@ -1,6 +1,7 @@
 """Tests for the centralized API client."""
 
 import pytest
+import requests
 from unittest.mock import patch, MagicMock
 
 from qualytics.api.client import (
@@ -12,6 +13,7 @@ from qualytics.api.client import (
     ServerError,
     get_client,
 )
+from qualytics.utils.validation import validate_and_format_url
 
 
 class TestQualyticsClient:
@@ -148,6 +150,82 @@ class TestQualyticsAPIError:
 
     def test_server_error_is_api_error(self):
         assert issubclass(ServerError, QualyticsAPIError)
+
+
+class TestConnectionErrors:
+    """Tests for connection error handling."""
+
+    def test_ssl_error_gives_helpful_message(self):
+        client = QualyticsClient("https://localhost:8000/api/", "token")
+        with patch.object(
+            client._session,
+            "request",
+            side_effect=requests.exceptions.SSLError("SSL handshake failed"),
+        ):
+            with pytest.raises(ConnectionError, match="SSL handshake failed"):
+                client.get("test")
+
+    def test_ssl_error_suggests_http(self):
+        client = QualyticsClient("https://localhost:8000/api/", "token")
+        with patch.object(
+            client._session,
+            "request",
+            side_effect=requests.exceptions.SSLError("SSL error"),
+        ):
+            with pytest.raises(ConnectionError, match="http://"):
+                client.get("test")
+
+    def test_connection_error_gives_helpful_message(self):
+        client = QualyticsClient("https://localhost:9999/api/", "token")
+        with patch.object(
+            client._session,
+            "request",
+            side_effect=requests.exceptions.ConnectionError("Connection refused"),
+        ):
+            with pytest.raises(ConnectionError, match="Could not connect"):
+                client.get("test")
+
+
+class TestValidateAndFormatUrl:
+    """Tests for URL validation and formatting."""
+
+    def test_https_url_preserved(self):
+        assert (
+            validate_and_format_url("https://example.com") == "https://example.com/api/"
+        )
+
+    def test_http_url_preserved(self):
+        assert (
+            validate_and_format_url("http://localhost:8000")
+            == "http://localhost:8000/api/"
+        )
+
+    def test_no_scheme_defaults_to_https(self):
+        assert validate_and_format_url("example.com") == "https://example.com/api/"
+
+    def test_trailing_slash_stripped(self):
+        assert (
+            validate_and_format_url("https://example.com/")
+            == "https://example.com/api/"
+        )
+
+    def test_trailing_api_stripped(self):
+        assert (
+            validate_and_format_url("https://example.com/api")
+            == "https://example.com/api/"
+        )
+
+    def test_trailing_api_slash_stripped(self):
+        assert (
+            validate_and_format_url("https://example.com/api/")
+            == "https://example.com/api/"
+        )
+
+    def test_http_localhost_with_port(self):
+        assert (
+            validate_and_format_url("http://localhost:8000/api/")
+            == "http://localhost:8000/api/"
+        )
 
 
 class TestGetClient:

@@ -23,7 +23,8 @@ from ..services.containers import (
 from ..utils import OutputFormat, format_for_display
 
 containers_app = typer.Typer(
-    name="containers", help="Create, get, update, delete, and manage containers"
+    name="containers",
+    help="Create, get, update, delete, and manage containers",
 )
 
 
@@ -432,3 +433,140 @@ def containers_validate(
     else:
         print("[red]Validation failed:[/red]")
         print(result)
+
+
+# ── import ────────────────────────────────────────────────────────────────
+
+
+@containers_app.command("import")
+def containers_import(
+    datastore: int = typer.Option(
+        ..., "--datastore", help="Datastore ID to create computed tables in"
+    ),
+    input_file: str = typer.Option(
+        ..., "--input", help="Input file path (.xlsx, .csv, or .txt)"
+    ),
+    delimiter: str | None = typer.Option(
+        None,
+        "--delimiter",
+        help="Delimiter for CSV/TXT files (default: ',' for CSV, '\\t' for TXT)",
+    ),
+    prefix: str = typer.Option(
+        "ct_",
+        "--prefix",
+        help="Prefix for computed table names (default: 'ct_')",
+    ),
+    as_draft: bool = typer.Option(
+        True,
+        "--as-draft/--as-active",
+        help="Create checks as Draft (default) or Active",
+    ),
+    skip_checks: bool = typer.Option(
+        False,
+        "--skip-checks",
+        help="Skip creating quality checks (only create computed tables)",
+    ),
+    skip_profile_wait: bool = typer.Option(
+        False,
+        "--skip-profile-wait",
+        help="Skip waiting for profile operation (WARNING: checks will fail without profile - use with --skip-checks)",
+    ),
+    tags: str | None = typer.Option(
+        None,
+        "--tags",
+        help="Tags for checks (comma-separated)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview what would be created without making any changes",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable debug mode - shows API requests/responses and writes logs to ~/.qualytics/logs/",
+    ),
+):
+    """Import computed tables from a file and create satisfiesExpression checks.
+
+    FILE STRUCTURE (positional columns, first row is header):
+      - Column 1: name (required) - will become computed table name with prefix
+      - Column 2: description (optional) - stored as check description and metadata
+      - Column 3: query (required) - SQL query for the computed table
+
+    COMPUTED TABLE NAMING:
+      The final name will be: <prefix><name>
+      Default prefix is 'ct_', so a row with name '1000664' becomes 'ct_1000664'
+
+    EXISTING TABLES:
+      Existing computed tables are SKIPPED (not recreated).
+      Checks are only created if they don't already exist for the container.
+
+    CHECK BEHAVIOR:
+      Creates a satisfiesExpression check where:
+      - Empty result set (no rows) = PASS
+      - Any rows returned = FAIL (each row is an anomaly)
+
+    SQL QUERIES:
+      Queries are used exactly as provided in the input file.
+      Cross-catalog/schema references (e.g., catalog.schema.table) are preserved.
+
+    Example:
+        qualytics containers import --datastore 123 --input tables.csv
+        qualytics containers import --datastore 123 --input rules.xlsx --prefix "rule_"
+        qualytics containers import --datastore 123 --input data.csv --skip-checks
+        qualytics containers import --datastore 123 --input data.csv --as-active --tags "prod"
+    """
+    from .computed_tables import import_computed_tables
+
+    import_computed_tables(
+        datastore=datastore,
+        input_file=input_file,
+        delimiter=delimiter,
+        prefix=prefix,
+        as_draft=as_draft,
+        skip_checks=skip_checks,
+        skip_profile_wait=skip_profile_wait,
+        tags=tags,
+        dry_run=dry_run,
+        debug=debug,
+    )
+
+
+# ── preview ───────────────────────────────────────────────────────────────
+
+
+@containers_app.command("preview")
+def containers_preview(
+    input_file: str = typer.Option(
+        ..., "--input", help="Input file path (.xlsx, .csv, or .txt)"
+    ),
+    delimiter: str | None = typer.Option(
+        None,
+        "--delimiter",
+        help="Delimiter for CSV/TXT files (default: ',' for CSV, '\\t' for TXT)",
+    ),
+    limit: int = typer.Option(
+        5, "--limit", help="Number of records to preview (default: 5)"
+    ),
+    prefix: str = typer.Option(
+        "ct_",
+        "--prefix",
+        help="Prefix to show for computed table names (default: 'ct_')",
+    ),
+):
+    """Preview computed table definitions from a file without importing.
+
+    FILE STRUCTURE (positional columns):
+      - Column 1: name
+      - Column 2: description
+      - Column 3: query
+    """
+    from .computed_tables import preview_file
+
+    preview_file(
+        input_file=input_file,
+        delimiter=delimiter,
+        limit=limit,
+        prefix=prefix,
+    )
