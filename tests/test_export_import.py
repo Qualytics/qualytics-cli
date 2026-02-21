@@ -1,9 +1,16 @@
 """Tests for the export/import config-as-code feature."""
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text (Rich/Typer help output on some platforms)."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
 
 from qualytics.qualytics import app
 from qualytics.services.export_import import (
@@ -952,9 +959,10 @@ class TestConfigExportCLI:
     def test_export_help(self, cli_runner):
         result = cli_runner.invoke(app, ["config", "export", "--help"])
         assert result.exit_code == 0
-        assert "--datastore-id" in result.output
-        assert "--output" in result.output
-        assert "--include" in result.output
+        output = _strip_ansi(result.output)
+        assert "--datastore-id" in output
+        assert "--output" in output
+        assert "--include" in output
 
     def test_export_requires_datastore_id(self, cli_runner):
         result = cli_runner.invoke(app, ["config", "export"])
@@ -993,9 +1001,10 @@ class TestConfigImportCLI:
     def test_import_help(self, cli_runner):
         result = cli_runner.invoke(app, ["config", "import", "--help"])
         assert result.exit_code == 0
-        assert "--input" in result.output
-        assert "--dry-run" in result.output
-        assert "--include" in result.output
+        output = _strip_ansi(result.output)
+        assert "--input" in output
+        assert "--dry-run" in output
+        assert "--include" in output
 
     def test_import_nonexistent_dir(self, cli_runner):
         result = cli_runner.invoke(
