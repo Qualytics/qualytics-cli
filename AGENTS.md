@@ -41,8 +41,12 @@ qualytics-cli/
 │   │   ├── datastores.py     # datastores create/update/get/list/delete/verify/enrichment commands
 │   │   ├── export_import.py  # config export/import (config-as-code)
 │   │   ├── operations.py     # operations catalog/profile/scan/materialize/export/get/list/abort commands
+│   │   ├── mcp_cmd.py        # mcp serve CLI command
 │   │   ├── computed_tables.py # Internal helpers for computed table import and preview (used by containers.py)
 │   │   └── schedule.py       # schedule export-metadata command
+│   ├── mcp/
+│   │   ├── __init__.py
+│   │   └── server.py          # FastMCP server — all MCP tools (wraps api/ and services/ layer)
 │   ├── services/
 │   │   ├── quality_checks.py # Quality check business logic
 │   │   ├── connections.py    # Connection lookup, payload building, name resolution
@@ -350,6 +354,34 @@ dump_data_file(data, "out.yaml", OutputFormat.YAML)
 print(format_for_display(data, OutputFormat.JSON))
 ```
 
+### MCP Server (`mcp/server.py`)
+
+Model Context Protocol server for LLM tool integrations (Claude Code, Cursor, Windsurf).
+
+**Architecture:** MCP tools call the **same api/ and services/ functions** as the CLI, just without the Typer/Rich formatting layer. Returns raw dicts/lists for structured JSON responses.
+
+```
+CLI layer (typer/rich)  →  services/  →  api/  →  Qualytics API
+                               ↑
+MCP layer (fastmcp)  ─────────┘
+```
+
+**35 MCP tools** across 8 groups: auth, connections, datastores, containers, checks, anomalies, operations, config.
+
+**Error handling:** `_client()` converts `SystemExit` → `ToolError`. `_api_call()` converts `QualyticsAPIError` → `ToolError`. LLMs see structured error messages.
+
+**Setup for Claude Code** (`~/.claude.json`):
+```json
+{
+  "mcpServers": {
+    "qualytics": {
+      "command": "qualytics",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
 ---
 
 ## Configuration
@@ -383,6 +415,7 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | `containers` | `create`, `update`, `get`, `list`, `delete`, `validate`, `import`, `preview` | Container CRUD + validation + bulk import |
 | `datastores` | `create`, `update`, `get`, `list`, `delete`, `verify`, `enrichment` | Datastore CRUD + connection verification + enrichment linking |
 | `operations` | `catalog`, `profile`, `scan`, `materialize`, `export`, `get`, `list`, `abort` | Operation lifecycle (trigger, monitor, abort) |
+| `mcp` | `serve` | MCP server for Claude Code, Cursor, and other LLM tools |
 | `schedule` | `export-metadata` | Cron-based export scheduling |
 | ~~`init`~~ | — | **Deprecated** → `auth init` |
 | ~~`show-config`~~ | — | **Deprecated** → `auth status` |
@@ -408,6 +441,7 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | croniter | Cron expression validation |
 | pyyaml | YAML serialization (config, export/import, display) |
 | openpyxl | Excel file reading |
+| fastmcp | MCP (Model Context Protocol) server framework |
 | urllib3 | SSL warning suppression |
 
 ### Dev Dependencies
@@ -471,6 +505,7 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 |------|----------|
 | `test_auth.py` | Auth commands: callback server, login flow, status display, init, deprecated wrappers |
 | `test_cli.py` | Smoke tests: CLI loads, all command groups registered |
+| `test_mcp.py` | MCP server: tool registration, auth status, helpers, all tool groups, CLI command |
 | `test_client.py` | QualyticsClient: URL building, SSL config, exception hierarchy, get_client factory |
 | `test_config.py` | Config loading, saving, token validation, legacy JSON migration |
 | `test_anomalies.py` | API layer (list, get, update, bulk update, delete, bulk delete), CLI commands (get, list, update, archive, delete), status validation, bulk operations |

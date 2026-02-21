@@ -112,6 +112,13 @@ def test_config_command_registered(cli_runner):
     assert "import" in result.output.lower()
 
 
+def test_mcp_command_registered(cli_runner):
+    """Test that the 'mcp' command group is registered."""
+    result = cli_runner.invoke(app, ["mcp", "--help"])
+    assert result.exit_code == 0
+    assert "serve" in result.output.lower()
+
+
 def test_version_is_semver():
     """Test that the version follows semver format."""
     parts = __version__.split(".")

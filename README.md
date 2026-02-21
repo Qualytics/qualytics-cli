@@ -177,6 +177,12 @@ Run `qualytics <command> --help` for full flag details on any command.
 | `config export` | Export configuration as hierarchical YAML (connections, datastores, containers, checks) |
 | `config import` | Import configuration with dependency-ordered upsert and `--dry-run` support |
 
+### MCP (LLM Integration)
+
+| Command | Description |
+|---------|-------------|
+| `mcp serve` | Start MCP server for Claude Code, Cursor, and other LLM tools |
+
 ### Schedule
 
 | Command | Description |
@@ -320,6 +326,47 @@ qualytics containers preview --input checks.xlsx
 ```
 
 For the full guide covering input file formats, validation rules, check behavior, and all use cases, see [docs/computed-tables.md](docs/computed-tables.md).
+
+## LLM Integration (MCP Server)
+
+The CLI includes a built-in [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server, enabling Claude Code, Cursor, Windsurf, and other AI tools to call Qualytics operations directly as structured tool calls.
+
+### Setup for Claude Code
+
+Add to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "qualytics": {
+      "command": "qualytics",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+Then in Claude Code you can say things like:
+
+> "List all datastores and show me which ones have failing quality checks"
+> "Create a computed table that finds orders with negative totals"
+> "Run a scan on datastore 42 and check for new anomalies"
+
+Claude Code will call the appropriate tools directly and get structured JSON responses.
+
+### Available Tools
+
+35 tools across 8 groups: `auth_status`, `list_datastores`, `list_containers`, `list_checks`, `list_anomalies`, `run_scan`, `export_config`, and more. Run `qualytics mcp serve --help` for details.
+
+### Running the Server
+
+```bash
+# STDIO transport (default — used by Claude Code and Cursor)
+qualytics mcp serve
+
+# HTTP transport (network-accessible)
+qualytics mcp serve --transport http --port 8000
+```
 
 ## Development
 
