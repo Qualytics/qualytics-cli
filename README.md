@@ -364,8 +364,8 @@ Claude Code will call the appropriate tools directly and get structured JSON res
 # STDIO transport (default — used by Claude Code and Cursor)
 qualytics mcp serve
 
-# HTTP transport (network-accessible)
-qualytics mcp serve --transport http --port 8000
+# Streamable-HTTP transport (network-accessible)
+qualytics mcp serve --transport streamable-http --port 8000
 ```
 
 ## Development

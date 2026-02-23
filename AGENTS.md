@@ -441,7 +441,7 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | croniter | Cron expression validation |
 | pyyaml | YAML serialization (config, export/import, display) |
 | openpyxl | Excel file reading |
-| fastmcp | MCP (Model Context Protocol) server framework |
+| fastmcp | MCP (Model Context Protocol) server framework (v3) |
 | urllib3 | SSL warning suppression |
 
 ### Dev Dependencies
