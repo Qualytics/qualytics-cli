@@ -255,13 +255,15 @@ qualytics-export/
       containers/
         filtered_orders/
           _container.yaml
+          computed_fields/
+            order_margin.yaml
       checks/
         orders/
           notnull__order_id.yaml
 ```
 
 **Export behavior:**
-- `export_config()` fetches connections, datastores, computed containers, and quality checks for given datastore IDs
+- `export_config()` fetches connections, datastores, computed containers, computed fields, and quality checks for given datastore IDs
 - Connections are deduplicated across datastores (exported once by name)
 - Secret fields (password, secret_key, etc.) are replaced with `${ENV_VAR}` placeholders
 - Only computed containers are exported (table/view/file are created by catalog operations)
@@ -272,19 +274,21 @@ qualytics-export/
 1. **Connections** — upsert by `name`, resolve `${ENV_VAR}` from environment
 2. **Datastores** — upsert by `name`, resolve `connection_name` → `connection_id`, link enrichment
 3. **Containers** — upsert computed containers by `name` within datastore, resolve name references to IDs
-4. **Quality checks** — reuses existing `import_checks_to_datastore()` with `_qualytics_check_uid` upsert
+4. **Computed fields** — upsert by `name` within container
+5. **Quality checks** — reuses existing `import_checks_to_datastore()` with `_qualytics_check_uid` upsert
 
 **Natural keys for upsert:**
 - Connection: `name` (globally unique)
 - Datastore: `name` (globally unique)
 - Container: `name` within datastore
+- Computed field: `name` within container
 - Quality check: `_qualytics_check_uid` in `additional_metadata`
 
 **CLI commands:**
 - `config export --datastore-id <id> [--output <dir>] [--include <types>]`
 - `config import --input <dir> [--dry-run] [--include <types>]`
 
-**`--include` filter:** Comma-separated resource types to include: `connections,datastores,containers,checks`. Defaults to all.
+**`--include` filter:** Comma-separated resource types to include: `connections,datastores,containers,computed_fields,checks`. Defaults to all.
 
 ### Datastores (`api/datastores.py`, `services/datastores.py`, `cli/datastores.py`)
 
@@ -441,7 +445,7 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | croniter | Cron expression validation |
 | pyyaml | YAML serialization (config, export/import, display) |
 | openpyxl | Excel file reading |
-| fastmcp | MCP (Model Context Protocol) server framework |
+| fastmcp | MCP (Model Context Protocol) server framework (v3) |
 | urllib3 | SSL warning suppression |
 
 ### Dev Dependencies

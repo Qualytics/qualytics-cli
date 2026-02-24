@@ -1,7 +1,7 @@
 """Tests for the export/import config-as-code feature."""
 
 import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 import yaml
@@ -15,6 +15,7 @@ def _strip_ansi(text: str) -> str:
 from qualytics.qualytics import app
 from qualytics.services.export_import import (
     _generate_env_var_name,
+    _import_computed_fields,
     _import_connections,
     _import_containers,
     _import_datastore,
@@ -24,6 +25,7 @@ from qualytics.services.export_import import (
     _write_yaml,
     export_config,
     import_config,
+    strip_computed_field_for_export,
     strip_connection_for_export,
     strip_container_for_export,
     strip_datastore_for_export,
@@ -72,7 +74,7 @@ def sample_datastore():
         "tags": ["production"],
         "teams": ["data-eng"],
         "connection": {"id": 1, "name": "prod-pg", "type": "postgresql"},
-        "enrichment_datastore": {"id": 20, "name": "enrichment-ds"},
+        "enrich_datastore": {"id": 20, "name": "enrichment-ds"},
         "created": "2024-01-15T10:00:00Z",
         "connected": True,
         "favorite": False,
@@ -218,8 +220,8 @@ class TestStripDatastoreForExport:
 
     def test_replaces_enrichment_with_name(self, sample_datastore):
         result = strip_datastore_for_export(sample_datastore)
-        assert result["enrichment_datastore_name"] == "enrichment-ds"
-        assert "enrichment_datastore" not in result
+        assert result["enrich_datastore_name"] == "enrichment-ds"
+        assert "enrich_datastore" not in result
 
     def test_removes_internal_fields(self, sample_datastore):
         result = strip_datastore_for_export(sample_datastore)
@@ -555,7 +557,7 @@ class TestImportDatastore:
                 {
                     "name": "my-ds",
                     "connection_name": "prod-pg",
-                    "enrichment_datastore_name": "enrichment-ds",
+                    "enrich_datastore_name": "enrichment-ds",
                 }
             )
         )
@@ -751,6 +753,14 @@ class TestExportConfig:
                 ],
             ),
             patch(
+                "qualytics.services.export_import.get_container",
+                return_value={
+                    "id": 100,
+                    "name": "computed_orders",
+                    "computed_fields": [],
+                },
+            ),
+            patch(
                 "qualytics.services.export_import.list_all_quality_checks",
                 return_value=[],
             ),
@@ -760,6 +770,7 @@ class TestExportConfig:
         assert result["connections"] == 1
         assert result["datastores"] == 1
         assert result["containers"] == 1
+        assert result["computed_fields"] == 0
         assert result["checks"] == 0
 
         # Verify files exist
@@ -850,6 +861,10 @@ class TestExportConfig:
                 ],
             ),
             patch(
+                "qualytics.services.export_import.get_container",
+                return_value={"id": 100, "computed_fields": []},
+            ),
+            patch(
                 "qualytics.services.export_import.list_all_quality_checks",
                 return_value=[],
             ),
@@ -857,6 +872,295 @@ class TestExportConfig:
             result = export_config(mock_client, [10], str(tmp_path))
 
         assert result["containers"] == 1
+
+
+# ── Computed fields ──────────────────────────────────────────────────────
+
+
+class TestStripComputedFieldForExport:
+    def test_strips_internal_fields(self):
+        cf = {
+            "id": 42,
+            "name": "cleaned_company",
+            "container_id": 100,
+            "transformation_type": "cleanedEntityName",
+            "source_fields": ["company_name"],
+            "properties": {"drop_from_suffix": True},
+            "additional_metadata": None,
+            "last_editor_id": 6,
+            "last_editor": {"id": 6, "name": "admin"},
+        }
+        result = strip_computed_field_for_export(cf)
+        assert "id" not in result
+        assert "container_id" not in result
+        assert "last_editor_id" not in result
+        assert "last_editor" not in result
+
+    def test_normalizes_transformation_key(self):
+        cf = {
+            "id": 1,
+            "name": "cast_field",
+            "container_id": 100,
+            "transformation_type": "cast",
+            "source_fields": ["amount"],
+            "properties": {"target_type": "integer"},
+        }
+        result = strip_computed_field_for_export(cf)
+        assert result["transformation"] == "cast"
+        assert "transformation_type" not in result
+
+    def test_keeps_portable_fields(self):
+        cf = {
+            "id": 1,
+            "name": "full_name",
+            "container_id": 100,
+            "transformation_type": "customExpression",
+            "source_fields": None,
+            "properties": {"column_expression": "CONCAT(first, ' ', last)"},
+            "additional_metadata": {"note": "user-defined"},
+        }
+        result = strip_computed_field_for_export(cf)
+        assert result["name"] == "full_name"
+        assert result["transformation"] == "customExpression"
+        assert result["source_fields"] is None
+        assert result["properties"]["column_expression"] == "CONCAT(first, ' ', last)"
+        assert result["additional_metadata"]["note"] == "user-defined"
+
+
+class TestExportComputedFields:
+    def test_exports_computed_fields_from_container(self, mock_client, tmp_path):
+        mock_ds = {
+            "id": 10,
+            "name": "test-ds",
+            "connection": {"id": 1, "name": "conn", "type": "pg"},
+        }
+        mock_container_detail = {
+            "id": 100,
+            "name": "accounts",
+            "container_type": "table",
+            "computed_fields": [
+                {
+                    "id": 1,
+                    "name": "cleaned_name",
+                    "container_id": 100,
+                    "transformation_type": "cleanedEntityName",
+                    "source_fields": ["company_name"],
+                    "properties": {"drop_from_suffix": True},
+                    "last_editor_id": 6,
+                }
+            ],
+        }
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_datastore",
+                return_value=mock_ds,
+            ),
+            patch(
+                "qualytics.services.export_import.list_all_containers",
+                return_value=[
+                    {"id": 100, "name": "accounts", "container_type": "table"}
+                ],
+            ),
+            patch(
+                "qualytics.services.export_import.get_container",
+                return_value=mock_container_detail,
+            ),
+            patch(
+                "qualytics.services.export_import.list_all_quality_checks",
+                return_value=[],
+            ),
+        ):
+            result = export_config(mock_client, [10], str(tmp_path))
+
+        assert result["computed_fields"] == 1
+        cf_path = (
+            tmp_path
+            / "datastores"
+            / "test_ds"
+            / "containers"
+            / "accounts"
+            / "computed_fields"
+            / "cleaned_name.yaml"
+        )
+        assert cf_path.exists()
+        data = yaml.safe_load(cf_path.read_text())
+        assert data["name"] == "cleaned_name"
+        assert data["transformation"] == "cleanedEntityName"
+        assert "id" not in data
+        assert "container_id" not in data
+
+    def test_skips_containers_without_computed_fields(self, mock_client, tmp_path):
+        mock_ds = {
+            "id": 10,
+            "name": "test-ds",
+            "connection": {"id": 1, "name": "conn", "type": "pg"},
+        }
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_datastore",
+                return_value=mock_ds,
+            ),
+            patch(
+                "qualytics.services.export_import.list_all_containers",
+                return_value=[{"id": 100, "name": "orders", "container_type": "table"}],
+            ),
+            patch(
+                "qualytics.services.export_import.get_container",
+                return_value={"id": 100, "name": "orders", "computed_fields": []},
+            ),
+            patch(
+                "qualytics.services.export_import.list_all_quality_checks",
+                return_value=[],
+            ),
+        ):
+            result = export_config(mock_client, [10], str(tmp_path))
+
+        assert result["computed_fields"] == 0
+
+
+class TestImportComputedFields:
+    def test_creates_computed_fields(self, mock_client, tmp_path):
+        # Set up directory structure
+        container_dir = tmp_path / "containers" / "accounts"
+        cf_dir = container_dir / "computed_fields"
+        cf_dir.mkdir(parents=True)
+        (container_dir / "_container.yaml").write_text(
+            yaml.safe_dump({"name": "accounts", "container_type": "table"})
+        )
+        (cf_dir / "cleaned_name.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "name": "cleaned_name",
+                    "transformation": "cleanedEntityName",
+                    "source_fields": ["company_name"],
+                    "properties": {"drop_from_suffix": True},
+                }
+            )
+        )
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_container_by_name",
+                return_value={"id": 100, "name": "accounts"},
+            ),
+            patch(
+                "qualytics.services.export_import.get_container",
+                return_value={"id": 100, "computed_fields": []},
+            ),
+            patch(
+                "qualytics.services.export_import.create_computed_field",
+                return_value={"id": 1, "name": "cleaned_name"},
+            ) as mock_create,
+        ):
+            result = _import_computed_fields(mock_client, tmp_path, datastore_id=10)
+
+        assert result["created"] == 1
+        assert result["updated"] == 0
+        mock_create.assert_called_once()
+        payload = mock_create.call_args[0][1]
+        assert payload["name"] == "cleaned_name"
+        assert payload["container_id"] == 100
+
+    def test_updates_existing_computed_fields(self, mock_client, tmp_path):
+        container_dir = tmp_path / "containers" / "accounts"
+        cf_dir = container_dir / "computed_fields"
+        cf_dir.mkdir(parents=True)
+        (container_dir / "_container.yaml").write_text(
+            yaml.safe_dump({"name": "accounts", "container_type": "table"})
+        )
+        (cf_dir / "cleaned_name.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "name": "cleaned_name",
+                    "transformation": "cleanedEntityName",
+                    "source_fields": ["company_name"],
+                    "properties": {"drop_from_suffix": True},
+                }
+            )
+        )
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_container_by_name",
+                return_value={"id": 100, "name": "accounts"},
+            ),
+            patch(
+                "qualytics.services.export_import.get_container",
+                return_value={
+                    "id": 100,
+                    "computed_fields": [{"id": 42, "name": "cleaned_name"}],
+                },
+            ),
+            patch(
+                "qualytics.services.export_import.update_computed_field",
+                return_value={"id": 42, "name": "cleaned_name"},
+            ) as mock_update,
+        ):
+            result = _import_computed_fields(mock_client, tmp_path, datastore_id=10)
+
+        assert result["updated"] == 1
+        assert result["created"] == 0
+        mock_update.assert_called_once_with(mock_client, 42, ANY)
+
+    def test_dry_run(self, mock_client, tmp_path):
+        container_dir = tmp_path / "containers" / "accounts"
+        cf_dir = container_dir / "computed_fields"
+        cf_dir.mkdir(parents=True)
+        (container_dir / "_container.yaml").write_text(
+            yaml.safe_dump({"name": "accounts", "container_type": "table"})
+        )
+        (cf_dir / "cleaned_name.yaml").write_text(
+            yaml.safe_dump({"name": "cleaned_name", "transformation": "cast"})
+        )
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_container_by_name",
+                return_value={"id": 100, "name": "accounts"},
+            ),
+            patch(
+                "qualytics.services.export_import.get_container",
+                return_value={"id": 100, "computed_fields": []},
+            ),
+        ):
+            result = _import_computed_fields(
+                mock_client, tmp_path, datastore_id=10, dry_run=True
+            )
+
+        assert result["created"] == 1
+
+    def test_missing_container_errors(self, mock_client, tmp_path):
+        container_dir = tmp_path / "containers" / "missing"
+        cf_dir = container_dir / "computed_fields"
+        cf_dir.mkdir(parents=True)
+        (container_dir / "_container.yaml").write_text(
+            yaml.safe_dump({"name": "missing_container", "container_type": "table"})
+        )
+        (cf_dir / "some_field.yaml").write_text(
+            yaml.safe_dump({"name": "some_field", "transformation": "cast"})
+        )
+
+        with patch(
+            "qualytics.services.export_import.get_container_by_name",
+            return_value=None,
+        ):
+            result = _import_computed_fields(mock_client, tmp_path, datastore_id=10)
+
+        assert result["failed"] == 1
+        assert "not found" in result["errors"][0]
+
+    def test_no_computed_fields_dir(self, mock_client, tmp_path):
+        container_dir = tmp_path / "containers" / "accounts"
+        container_dir.mkdir(parents=True)
+        (container_dir / "_container.yaml").write_text(
+            yaml.safe_dump({"name": "accounts"})
+        )
+
+        result = _import_computed_fields(mock_client, tmp_path, datastore_id=10)
+        assert result["created"] == 0
+        assert result["updated"] == 0
 
 
 # ── Import orchestrator ──────────────────────────────────────────────────
@@ -1039,6 +1343,12 @@ class TestConfigImportCLI:
                         "failed": 0,
                         "errors": [],
                     },
+                    "computed_fields": {
+                        "created": 0,
+                        "updated": 0,
+                        "failed": 0,
+                        "errors": [],
+                    },
                     "checks": {
                         "created": 0,
                         "updated": 0,
@@ -1076,6 +1386,12 @@ class TestConfigImportCLI:
                         "errors": [],
                     },
                     "containers": {
+                        "created": 0,
+                        "updated": 0,
+                        "failed": 0,
+                        "errors": [],
+                    },
+                    "computed_fields": {
                         "created": 0,
                         "updated": 0,
                         "failed": 0,
@@ -1119,6 +1435,12 @@ class TestConfigImportCLI:
                         "errors": [],
                     },
                     "containers": {
+                        "created": 0,
+                        "updated": 0,
+                        "failed": 0,
+                        "errors": [],
+                    },
+                    "computed_fields": {
                         "created": 0,
                         "updated": 0,
                         "failed": 0,

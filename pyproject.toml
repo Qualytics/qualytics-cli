@@ -41,7 +41,7 @@ dependencies = [
     "pyyaml>=6.0",
     "urllib3>=2.0.0",
     "openpyxl>=3.1.0",
-    "fastmcp>=2.0.0",
+    "fastmcp>=3.0.2",
 ]
 
 [project.urls]

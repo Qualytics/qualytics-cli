@@ -18,10 +18,14 @@ from ..services.operations import (
 )
 from ..utils import OutputFormat, format_for_display
 
+from . import add_suggestion_callback
+from . import progress
+
 operations_app = typer.Typer(
     name="operations",
-    help="Commands for triggering and managing datastore operations",
+    help="Trigger and monitor operations",
 )
+add_suggestion_callback(operations_app, "operations")
 
 _VALID_REMEDIATION = {"append", "overwrite", "none"}
 _VALID_ASSET_TYPES = {"anomalies", "checks", "profiles"}
@@ -507,15 +511,16 @@ def operations_list(
     ds_list = _parse_int_list(datastore_id) if datastore_id else None
     result_list = _parse_comma_list(status) if status else None
 
-    all_ops = list_all_operations(
-        client,
-        datastore=ds_list,
-        operation_type=operation_type,
-        result=result_list,
-        start_date=start_date,
-        end_date=end_date,
-        sort_created="desc",
-    )
+    with progress.status("[bold cyan]Fetching operations...[/bold cyan]"):
+        all_ops = list_all_operations(
+            client,
+            datastore=ds_list,
+            operation_type=operation_type,
+            result=result_list,
+            start_date=start_date,
+            end_date=end_date,
+            sort_created="desc",
+        )
     print(f"[green]Found {len(all_ops)} operations.[/green]")
     print(format_for_display(all_ops, fmt))
 

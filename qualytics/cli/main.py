@@ -5,19 +5,46 @@ from typing import Annotated
 from rich import print
 
 from ..config import __version__
+from . import BRAND, SuggestGroup, print_banner
 
 
-app = typer.Typer()
+app = typer.Typer(cls=SuggestGroup)
 
 
 @app.callback(invoke_without_command=True)
 def version_callback(
+    ctx: typer.Context,
     version: Annotated[bool | None, typer.Option("--version", is_eager=True)] = None,
 ):
     """Display version information."""
     if version:
         print(f"Qualytics CLI Version: {__version__}")
         raise typer.Exit()
+
+    if ctx.invoked_subcommand is not None:
+        return
+
+    print_banner()
+
+    # Show available command groups when invoked without a subcommand
+    click_group = ctx.command
+    commands = click_group.list_commands(ctx)
+
+    visible = []
+    for name in commands:
+        cmd = click_group.get_command(ctx, name)
+        if cmd and not cmd.hidden:
+            help_text = cmd.get_short_help_str(limit=60) if cmd.help else ""
+            visible.append((name, help_text))
+
+    if visible:
+        print(f"[bold]Available commands:[/bold]\n")
+        max_name = max(len(name) for name, _ in visible)
+        for name, help_text in visible:
+            print(f"  [{BRAND}]{name:<{max_name}}[/{BRAND}]  {help_text}")
+
+    print("\nRun [bold]'qualytics --help'[/bold] for more details.\n")
+    raise typer.Exit()
 
 
 @app.command(hidden=True, deprecated=True)

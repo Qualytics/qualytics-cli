@@ -22,10 +22,13 @@ from ..services.containers import (
 )
 from ..utils import OutputFormat, format_for_display
 
+from . import add_suggestion_callback
+
 containers_app = typer.Typer(
     name="containers",
-    help="Create, get, update, delete, and manage containers",
+    help="Manage containers",
 )
+add_suggestion_callback(containers_app, "containers")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────

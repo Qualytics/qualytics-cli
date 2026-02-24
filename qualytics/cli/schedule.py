@@ -17,8 +17,11 @@ from ..config import (
 from ..utils import validate_and_format_url
 
 
+from . import add_suggestion_callback
+
 # Create Typer instance for schedule
-schedule_app = typer.Typer(name="schedule", help="Commands for handling schedules")
+schedule_app = typer.Typer(name="schedule", help="Manage scheduled operations")
+add_suggestion_callback(schedule_app, "schedule")
 
 
 @schedule_app.command("export-metadata")

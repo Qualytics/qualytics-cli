@@ -2,9 +2,10 @@
 
 import typer
 
-mcp_app = typer.Typer(
-    name="mcp", help="Model Context Protocol (MCP) server for LLM integrations"
-)
+from . import add_suggestion_callback
+
+mcp_app = typer.Typer(name="mcp", help="Start an MCP server for LLM integrations")
+add_suggestion_callback(mcp_app, "mcp")
 
 
 @mcp_app.command("serve")
@@ -13,24 +14,24 @@ def mcp_serve(
         "stdio",
         "--transport",
         "-t",
-        help="Transport protocol: stdio (default) or http",
+        help="Transport protocol: stdio (default) or streamable-http",
     ),
     host: str = typer.Option(
         "127.0.0.1",
         "--host",
-        help="Host for HTTP transport (default: 127.0.0.1)",
+        help="Host for streamable-http transport (default: 127.0.0.1)",
     ),
     port: int = typer.Option(
         8000,
         "--port",
         "-p",
-        help="Port for HTTP transport (default: 8000)",
+        help="Port for streamable-http transport (default: 8000)",
     ),
 ):
     """Start the Qualytics MCP server for Claude Code, Cursor, and other LLM tools.
 
     STDIO transport (default) is used by Claude Code and Cursor.
-    HTTP transport is available for network-accessible deployments.
+    Streamable-HTTP transport is available for network-accessible deployments.
 
     Setup for Claude Code (~/.claude.json):
 
@@ -45,7 +46,7 @@ def mcp_serve(
     """
     from ..mcp.server import mcp
 
-    if transport == "http":
-        mcp.run(transport="http", host=host, port=port)
+    if transport in ("streamable-http", "http", "sse"):
+        mcp.run(transport="streamable-http", host=host, port=port)
     else:
-        mcp.run()
+        mcp.run(transport="stdio")
