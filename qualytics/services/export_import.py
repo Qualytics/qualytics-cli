@@ -11,12 +11,14 @@ Folder structure produced by export::
                 containers/
                     <container_name>/
                         _container.yaml
+                        computed_fields/
+                            <field_name>.yaml
                 checks/
                     <container_slug>/
                         <rule_type>__<fields>.yaml
 
 Import reads the same structure in dependency order:
-connections → datastores → containers → quality checks.
+connections → datastores → containers → computed fields → quality checks.
 """
 
 import re
@@ -25,12 +27,17 @@ from pathlib import Path
 import yaml
 
 from ..api.client import QualyticsClient
+from ..api.computed_fields import (
+    create_computed_field,
+    update_computed_field,
+)
 from ..api.connections import (
     create_connection,
     update_connection,
 )
 from ..api.containers import (
     create_container,
+    get_container,
     list_all_containers,
     update_container,
 )
@@ -137,6 +144,11 @@ _DATASTORE_INTERNAL_FIELDS = frozenset(
         "uniqueness_score",
         "containers",
         "connection",
+        "connection_id",
+        "product_name",
+        "product_version",
+        "driver_name",
+        "driver_version",
     }
 )
 
@@ -155,7 +167,17 @@ _CONTAINER_INTERNAL_FIELDS = frozenset(
         "score",
         "cataloged",
         "datastore",
+        "favorite",
+        "deleted_at",
+        "last_editor",
+        "latest_observability_measurement",
+        "incremental_checkpoint",
     }
+)
+
+# Computed field internal fields to strip on export
+_COMPUTED_FIELD_INTERNAL_FIELDS = frozenset(
+    {"id", "container_id", "last_editor_id", "last_editor"}
 )
 
 # Computed container types
@@ -186,7 +208,7 @@ def strip_datastore_for_export(ds: dict) -> dict:
     """Convert an API datastore response into a portable YAML dict.
 
     Replaces ``connection`` object with ``connection_name`` string.
-    Replaces ``enrichment_datastore`` object with ``enrichment_datastore_name``.
+    Replaces ``enrich_datastore`` object with ``enrich_datastore_name``.
     """
     portable: dict = {}
 
@@ -195,15 +217,15 @@ def strip_datastore_for_export(ds: dict) -> dict:
     if conn and isinstance(conn, dict):
         portable["connection_name"] = conn.get("name", "")
 
-    # Enrichment reference → name
-    enrichment = ds.get("enrichment_datastore")
+    # Enrichment reference → name (API returns "enrich_datastore")
+    enrichment = ds.get("enrich_datastore")
     if enrichment and isinstance(enrichment, dict):
-        portable["enrichment_datastore_name"] = enrichment.get("name", "")
+        portable["enrich_datastore_name"] = enrichment.get("name", "")
 
     for key, value in ds.items():
         if key in _DATASTORE_INTERNAL_FIELDS:
             continue
-        if key == "enrichment_datastore":
+        if key == "enrich_datastore":
             continue
         portable[key] = value
 
@@ -245,6 +267,29 @@ def strip_container_for_export(container: dict, ds_name: str) -> dict:
     return portable
 
 
+def strip_computed_field_for_export(cf: dict) -> dict:
+    """Convert an API computed field into a portable YAML dict.
+
+    Strips internal IDs and resolves ``ref_container_id`` /
+    ``ref_datastore_id`` in properties to name-based references.
+    """
+    portable: dict = {}
+    for key, value in cf.items():
+        if key in _COMPUTED_FIELD_INTERNAL_FIELDS:
+            continue
+        # Normalize transformation key name
+        if key == "transformation_type":
+            portable["transformation"] = value
+            continue
+        portable[key] = value
+
+    # Ensure key is "transformation" not "transformation_type"
+    if "transformation" not in portable and "transformation_type" in cf:
+        portable["transformation"] = cf["transformation_type"]
+
+    return portable
+
+
 # ── Export orchestrator ──────────────────────────────────────────────────
 
 
@@ -262,18 +307,26 @@ def export_config(
         datastore_ids: Datastore IDs to export.
         output_dir: Root output directory.
         include: Resource types to include. ``None`` = all.
-            Valid values: ``{"connections", "datastores", "containers", "checks"}``.
+            Valid values: ``{"connections", "datastores", "containers",
+            "computed_fields", "checks"}``.
 
     Returns a summary dict with counts per resource type.
     """
     if include is None:
-        include = {"connections", "datastores", "containers", "checks"}
+        include = {
+            "connections",
+            "datastores",
+            "containers",
+            "computed_fields",
+            "checks",
+        }
 
     base = Path(output_dir)
     summary: dict = {
         "connections": 0,
         "datastores": 0,
         "containers": 0,
+        "computed_fields": 0,
         "checks": 0,
     }
     seen_connections: set[str] = set()
@@ -297,7 +350,7 @@ def export_config(
                     summary["connections"] += 1
 
             # Also export enrichment connection if present
-            enrichment_ds = ds.get("enrichment_datastore")
+            enrichment_ds = ds.get("enrich_datastore")
             if enrichment_ds and isinstance(enrichment_ds, dict):
                 enr_conn = enrichment_ds.get("connection")
                 if enr_conn and isinstance(enr_conn, dict):
@@ -318,28 +371,55 @@ def export_config(
             _write_yaml(ds_path, portable_ds)
             summary["datastores"] += 1
 
-        # ── Containers (computed only) ───────────────────────────────
-        if "containers" in include:
+        # ── Containers + computed fields ─────────────────────────────
+        export_containers = "containers" in include
+        export_cfields = "computed_fields" in include
+        if export_containers or export_cfields:
             all_containers = list_all_containers(client, datastore=[ds_id])
+
             for container in all_containers:
-                ct = container.get("container_type", "")
-                if ct not in _COMPUTED_TYPES:
-                    continue
                 c_name = container.get("name", "")
                 c_slug = (
                     _slugify(c_name) if c_name else f"container_{container.get('id')}"
                 )
-                portable_c = strip_container_for_export(container, ds_name)
-                c_path = (
-                    base
-                    / "datastores"
-                    / ds_slug
-                    / "containers"
-                    / c_slug
-                    / "_container.yaml"
-                )
-                _write_yaml(c_path, portable_c)
-                summary["containers"] += 1
+                ct = container.get("container_type", "")
+
+                # Export computed container definition
+                if export_containers and ct in _COMPUTED_TYPES:
+                    portable_c = strip_container_for_export(container, ds_name)
+                    c_path = (
+                        base
+                        / "datastores"
+                        / ds_slug
+                        / "containers"
+                        / c_slug
+                        / "_container.yaml"
+                    )
+                    _write_yaml(c_path, portable_c)
+                    summary["containers"] += 1
+
+                # Export computed fields (any container type)
+                if export_cfields:
+                    cfs = container.get("computed_fields") or []
+                    if not cfs:
+                        # List endpoint may not include full detail;
+                        # fetch individual container to get computed_fields
+                        detail = get_container(client, container["id"])
+                        cfs = detail.get("computed_fields") or []
+                    for cf in cfs:
+                        portable_cf = strip_computed_field_for_export(cf)
+                        cf_slug = _slugify(cf.get("name", "unknown"))
+                        cf_path = (
+                            base
+                            / "datastores"
+                            / ds_slug
+                            / "containers"
+                            / c_slug
+                            / "computed_fields"
+                            / f"{cf_slug}.yaml"
+                        )
+                        _write_yaml(cf_path, portable_cf)
+                        summary["computed_fields"] += 1
 
         # ── Quality checks ───────────────────────────────────────────
         if "checks" in include:
@@ -460,7 +540,7 @@ def _import_datastore(
 
         # Resolve connection_name → connection_id
         conn_name = data.pop("connection_name", None)
-        enrichment_ds_name = data.pop("enrichment_datastore_name", None)
+        enrichment_ds_name = data.pop("enrich_datastore_name", None)
 
         if conn_name and "connection_id" not in data:
             conn = get_connection_by_name(client, conn_name)
@@ -584,6 +664,92 @@ def _import_containers(
     return result
 
 
+def _import_computed_fields(
+    client: QualyticsClient,
+    ds_dir: Path,
+    datastore_id: int,
+    *,
+    dry_run: bool = False,
+) -> dict:
+    """Import computed fields from ``containers/<name>/computed_fields/*.yaml``.
+
+    Returns {created: N, updated: N, failed: N, errors: []}.
+    """
+    result: dict = {"created": 0, "updated": 0, "failed": 0, "errors": []}
+
+    containers_dir = ds_dir / "containers"
+    if not containers_dir.is_dir():
+        return result
+
+    for container_dir in sorted(containers_dir.iterdir()):
+        if not container_dir.is_dir():
+            continue
+        cf_dir = container_dir / "computed_fields"
+        if not cf_dir.is_dir():
+            continue
+
+        # Resolve container name from _container.yaml or directory name
+        c_name = container_dir.name
+        yaml_file = container_dir / "_container.yaml"
+        if yaml_file.exists():
+            with open(yaml_file) as f:
+                c_data = yaml.load(f, Loader=_SafeStringLoader)
+            if isinstance(c_data, dict) and "name" in c_data:
+                c_name = c_data["name"]
+
+        container = get_container_by_name(client, datastore_id, c_name)
+        if container is None:
+            result["errors"].append(
+                f"Container '{c_name}' not found — skipping computed fields"
+            )
+            result["failed"] += len(list(cf_dir.glob("*.yaml")))
+            continue
+
+        container_id = container["id"]
+
+        # Build existing computed field name → id lookup
+        detail = get_container(client, container_id)
+        existing_cfs: dict[str, int] = {}
+        for ecf in detail.get("computed_fields") or []:
+            if ecf.get("name"):
+                existing_cfs[ecf["name"]] = ecf["id"]
+
+        for cf_file in sorted(cf_dir.glob("*.yaml")):
+            try:
+                with open(cf_file) as f:
+                    data = yaml.load(f, Loader=_SafeStringLoader)
+                if not isinstance(data, dict) or "name" not in data:
+                    result["errors"].append(f"Skipped {cf_file.name}: no 'name'")
+                    result["failed"] += 1
+                    continue
+
+                cf_name = data["name"]
+
+                if dry_run:
+                    if cf_name in existing_cfs:
+                        result["updated"] += 1
+                    else:
+                        result["created"] += 1
+                    continue
+
+                if cf_name in existing_cfs:
+                    # Update — don't send container_id
+                    payload = {k: v for k, v in data.items() if k != "container_id"}
+                    update_computed_field(client, existing_cfs[cf_name], payload)
+                    result["updated"] += 1
+                else:
+                    # Create — needs container_id
+                    data["container_id"] = container_id
+                    create_computed_field(client, data)
+                    result["created"] += 1
+
+            except Exception as e:
+                result["errors"].append(f"{cf_file.name}: {e}")
+                result["failed"] += 1
+
+    return result
+
+
 def _resolve_container_refs(
     client: QualyticsClient, data: dict, datastore_id: int
 ) -> None:
@@ -615,9 +781,10 @@ def import_config(
     dry_run: bool = False,
     include: set[str] | None = None,
 ) -> dict:
-    """Import connections, datastores, containers, and checks from a folder tree.
+    """Import config from a folder tree.
 
-    Import order: connections → datastores → containers → quality checks.
+    Import order: connections → datastores → containers → computed fields
+    → quality checks.
 
     Args:
         client: Authenticated API client.
@@ -628,13 +795,20 @@ def import_config(
     Returns a summary dict with counts per resource type.
     """
     if include is None:
-        include = {"connections", "datastores", "containers", "checks"}
+        include = {
+            "connections",
+            "datastores",
+            "containers",
+            "computed_fields",
+            "checks",
+        }
 
     base = Path(input_dir)
     summary: dict = {
         "connections": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "datastores": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "containers": {"created": 0, "updated": 0, "failed": 0, "errors": []},
+        "computed_fields": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "checks": {"created": 0, "updated": 0, "failed": 0, "errors": []},
     }
 
@@ -685,6 +859,14 @@ def import_config(
             summary["containers"]["updated"] += c_result["updated"]
             summary["containers"]["failed"] += c_result["failed"]
             summary["containers"]["errors"].extend(c_result["errors"])
+
+        # Import computed fields (after containers exist)
+        if "computed_fields" in include and ds_id is not None:
+            cf_result = _import_computed_fields(client, ds_dir, ds_id, dry_run=dry_run)
+            summary["computed_fields"]["created"] += cf_result["created"]
+            summary["computed_fields"]["updated"] += cf_result["updated"]
+            summary["computed_fields"]["failed"] += cf_result["failed"]
+            summary["computed_fields"]["errors"].extend(cf_result["errors"])
 
         # Import checks
         if "checks" in include and ds_id is not None:

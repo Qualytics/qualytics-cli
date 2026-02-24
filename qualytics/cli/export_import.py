@@ -21,7 +21,13 @@ add_suggestion_callback(export_import_app, "config")
 
 console = Console()
 
-_VALID_RESOURCES = {"connections", "datastores", "containers", "checks"}
+_VALID_RESOURCES = {
+    "connections",
+    "datastores",
+    "containers",
+    "computed_fields",
+    "checks",
+}
 
 
 def _parse_include(value: str | None) -> set[str] | None:
@@ -61,14 +67,14 @@ def config_export(
     include: str | None = typer.Option(
         None,
         "--include",
-        help="Comma-separated resource types to include: connections,datastores,containers,checks (default: all)",
+        help="Comma-separated resource types: connections,datastores,containers,computed_fields,checks (default: all)",
     ),
 ):
     """Export Qualytics configuration to a hierarchical YAML folder structure.
 
-    Exports connections, datastores, computed containers, and quality checks
-    for the given datastore IDs.  The output is git-diff-friendly and designed
-    for config-as-code workflows.
+    Exports connections, datastores, computed containers, computed fields,
+    and quality checks for the given datastore IDs.  The output is
+    git-diff-friendly and designed for config-as-code workflows.
 
     \b
     Folder structure:
@@ -76,6 +82,7 @@ def config_export(
             connections/<name>.yaml
             datastores/<name>/_datastore.yaml
             datastores/<name>/containers/<name>/_container.yaml
+            datastores/<name>/containers/<name>/computed_fields/<field>.yaml
             datastores/<name>/checks/<container>/<rule>.yaml
 
     Secrets are replaced with ${ENV_VAR} placeholders.  Re-running export
@@ -114,7 +121,8 @@ def config_export(
 
     for resource, count in result.items():
         if include_set is None or resource in include_set:
-            table.add_row(resource.capitalize(), str(count))
+            label = resource.replace("_", " ").title()
+            table.add_row(label, str(count))
 
     console.print(table)
     print(f"[bold green]Export complete: {output}/[/bold green]")
@@ -139,20 +147,22 @@ def config_import(
     include: str | None = typer.Option(
         None,
         "--include",
-        help="Comma-separated resource types to include: connections,datastores,containers,checks (default: all)",
+        help="Comma-separated resource types: connections,datastores,containers,computed_fields,checks (default: all)",
     ),
 ):
     """Import Qualytics configuration from a hierarchical YAML folder structure.
 
-    Reads connections, datastores, containers, and quality checks from the
-    export directory and upserts them into the target Qualytics instance.
+    Reads connections, datastores, containers, computed fields, and quality
+    checks from the export directory and upserts them into the target
+    Qualytics instance.
 
     \b
     Import order (dependency-safe):
         1. Connections (matched by name)
         2. Datastores (matched by name, connection resolved by name)
         3. Computed containers (matched by name within datastore)
-        4. Quality checks (matched by _qualytics_check_uid)
+        4. Computed fields (matched by name within container)
+        5. Quality checks (matched by _qualytics_check_uid)
 
     Secrets in connection files use ${ENV_VAR} placeholders that are
     resolved from environment variables (or .env file) at import time.
@@ -193,11 +203,18 @@ def config_import(
     table.add_column("Updated", style="yellow")
     table.add_column("Failed", style="red")
 
-    for resource in ("connections", "datastores", "containers", "checks"):
+    for resource in (
+        "connections",
+        "datastores",
+        "containers",
+        "computed_fields",
+        "checks",
+    ):
         if include_set is None or resource in include_set:
             r = result[resource]
+            label = resource.replace("_", " ").title()
             table.add_row(
-                resource.capitalize(),
+                label,
                 str(r["created"]),
                 str(r["updated"]),
                 str(r["failed"]),
