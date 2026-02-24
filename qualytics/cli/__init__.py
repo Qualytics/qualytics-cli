@@ -6,12 +6,27 @@ import os
 import click
 import typer
 import typer.core
+import typer.rich_utils
 from rich import print
 
 from ..config import __version__
 
 # Qualytics brand color
 BRAND = "#FF9933"
+
+# ── Apply brand color to ALL Typer help output globally ──────────────────
+# Override the default "bold cyan" styles in typer.rich_utils so that every
+# --help page (root and all subcommands) uses the Qualytics brand color
+# instead of the default cyan.  These module-level variables are read at
+# render time, so setting them here is sufficient.
+typer.rich_utils.STYLE_OPTION = f"bold {BRAND}"
+typer.rich_utils.STYLE_SWITCH = f"bold {BRAND}"
+typer.rich_utils.STYLE_METAVAR = f"bold {BRAND}"
+typer.rich_utils.STYLE_METAVAR_SEPARATOR = "dim"
+typer.rich_utils.STYLE_USAGE = BRAND
+typer.rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"bold {BRAND}"
+typer.rich_utils.STYLE_OPTIONS_PANEL_BORDER = BRAND
+typer.rich_utils.STYLE_COMMANDS_PANEL_BORDER = BRAND
 
 
 class SuggestGroup(typer.core.TyperGroup):
