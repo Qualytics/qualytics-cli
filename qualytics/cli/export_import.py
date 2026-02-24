@@ -10,10 +10,14 @@ from rich.table import Table
 from ..api.client import get_client
 from ..services.export_import import export_config, import_config
 
+from . import add_suggestion_callback
+from .progress import status
+
 export_import_app = typer.Typer(
     name="config",
-    help="Export and import Qualytics configuration as YAML (config-as-code)",
+    help="Export and import configuration",
 )
+add_suggestion_callback(export_import_app, "config")
 
 console = Console()
 
@@ -89,17 +93,19 @@ def config_export(
 
     client = get_client()
 
+    ds_label = ", ".join(str(d) for d in datastore_id)
     print(
         f"[cyan]Exporting configuration for datastore(s) "
-        f"{', '.join(str(d) for d in datastore_id)} to {output}/...[/cyan]"
+        f"{ds_label} to {output}/...[/cyan]"
     )
 
-    result = export_config(
-        client,
-        datastore_id,
-        output,
-        include=include_set,
-    )
+    with status("[bold cyan]Exporting configuration...[/bold cyan]"):
+        result = export_config(
+            client,
+            datastore_id,
+            output,
+            include=include_set,
+        )
 
     # Summary table
     table = Table(title="Export Summary")
@@ -172,12 +178,13 @@ def config_import(
 
     print(f"[cyan]Importing configuration from {input_dir}/...[/cyan]")
 
-    result = import_config(
-        client,
-        input_dir,
-        dry_run=dry_run,
-        include=include_set,
-    )
+    with status("[bold cyan]Importing configuration...[/bold cyan]"):
+        result = import_config(
+            client,
+            input_dir,
+            dry_run=dry_run,
+            include=include_set,
+        )
 
     # Summary table
     table = Table(title="Import Summary")

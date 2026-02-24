@@ -23,9 +23,11 @@ from ..services.datastores import (
 )
 from ..utils import OutputFormat, format_for_display, redact_payload
 
-datastores_app = typer.Typer(
-    name="datastores", help="Create, get, update, delete, and manage datastores"
-)
+from . import add_suggestion_callback
+from .progress import status
+
+datastores_app = typer.Typer(name="datastores", help="Manage datastores")
+add_suggestion_callback(datastores_app, "datastores")
 
 _VALID_REMEDIATION = {"none", "append", "overwrite"}
 
@@ -319,13 +321,14 @@ def datastores_list(
         [t.strip() for t in datastore_type.split(",")] if datastore_type else None
     )
 
-    all_ds = list_all_datastores(
-        client,
-        name=name,
-        datastore_type=type_list,
-        tag=tag,
-        enrichment_only=enrichment_only,
-    )
+    with status("[bold cyan]Fetching datastores...[/bold cyan]"):
+        all_ds = list_all_datastores(
+            client,
+            name=name,
+            datastore_type=type_list,
+            tag=tag,
+            enrichment_only=enrichment_only,
+        )
 
     print(f"[green]Found {len(all_ds)} datastores.[/green]")
     print(format_for_display(all_ds, fmt))

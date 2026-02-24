@@ -15,9 +15,11 @@ from rich import print
 from ..config import is_token_valid, load_config, save_config, CONFIG_PATH
 from ..utils import validate_and_format_url
 
-auth_app = typer.Typer(
-    name="auth", help="Authenticate the CLI with a Qualytics instance"
-)
+from . import add_suggestion_callback
+from .progress import status
+
+auth_app = typer.Typer(name="auth", help="Authenticate with Qualytics")
+add_suggestion_callback(auth_app, "auth")
 
 _DEFAULT_TIMEOUT = 120
 
@@ -80,7 +82,8 @@ def auth_login(
     webbrowser.open(authorize_url)
 
     # Wait for the callback (single request, then shut down)
-    server_thread.join(timeout=timeout + 1)
+    with status("[bold cyan]Waiting for browser authentication...[/bold cyan]"):
+        server_thread.join(timeout=timeout + 1)
 
     server.server_close()
 

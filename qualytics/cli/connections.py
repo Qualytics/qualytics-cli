@@ -26,10 +26,14 @@ from ..utils import (
     resolve_env_vars,
 )
 
+from . import add_suggestion_callback
+from .progress import status
+
 connections_app = typer.Typer(
     name="connections",
-    help="Create, get, update, delete, test, and manage connections",
+    help="Manage connections",
 )
+add_suggestion_callback(connections_app, "connections")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -337,11 +341,12 @@ def connections_list(
 
     type_list = _parse_comma_list(connection_type) if connection_type else None
 
-    all_conns = list_all_connections(
-        client,
-        name=name,
-        connection_type=type_list,
-    )
+    with status("[bold cyan]Fetching connections...[/bold cyan]"):
+        all_conns = list_all_connections(
+            client,
+            name=name,
+            connection_type=type_list,
+        )
 
     # Redact each connection in the list
     redacted = [redact_payload(c) for c in all_conns]

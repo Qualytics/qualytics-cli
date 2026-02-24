@@ -14,7 +14,11 @@ from ..api.anomalies import (
 )
 from ..utils import OutputFormat, format_for_display
 
-anomalies_app = typer.Typer(name="anomalies", help="Commands for handling anomalies")
+from . import add_suggestion_callback
+from . import progress
+
+anomalies_app = typer.Typer(name="anomalies", help="Manage anomalies")
+add_suggestion_callback(anomalies_app, "anomalies")
 
 # Valid statuses for update (open) and archive
 _OPEN_STATUSES = {"Active", "Acknowledged"}
@@ -100,18 +104,19 @@ def anomalies_list(
 
     tag_list = [tag] if tag else None
 
-    all_anomalies = list_all_anomalies(
-        client,
-        datastore=datastore_id,
-        container=container,
-        quality_check=check_id,
-        status=api_status,
-        anomaly_type=anomaly_type,
-        tag=tag_list,
-        start_date=start_date,
-        end_date=end_date,
-        archived=archived,
-    )
+    with progress.status("[bold cyan]Fetching anomalies...[/bold cyan]"):
+        all_anomalies = list_all_anomalies(
+            client,
+            datastore=datastore_id,
+            container=container,
+            quality_check=check_id,
+            status=api_status,
+            anomaly_type=anomaly_type,
+            tag=tag_list,
+            start_date=start_date,
+            end_date=end_date,
+            archived=archived,
+        )
 
     print(f"[green]Found {len(all_anomalies)} anomalies.[/green]")
     print(format_for_display(all_anomalies, fmt))

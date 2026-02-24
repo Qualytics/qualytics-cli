@@ -34,8 +34,11 @@ from ..services.quality_checks import (
 )
 from ..services.containers import get_table_ids
 
+from . import add_suggestion_callback
+
 # Create Typer instance for checks
-checks_app = typer.Typer(name="checks", help="Commands for handling checks")
+checks_app = typer.Typer(name="checks", help="Manage quality checks")
+add_suggestion_callback(checks_app, "checks")
 
 console = Console()
 

@@ -2,9 +2,10 @@
 
 import typer
 
-mcp_app = typer.Typer(
-    name="mcp", help="Model Context Protocol (MCP) server for LLM integrations"
-)
+from . import add_suggestion_callback
+
+mcp_app = typer.Typer(name="mcp", help="Start an MCP server for LLM integrations")
+add_suggestion_callback(mcp_app, "mcp")
 
 
 @mcp_app.command("serve")
