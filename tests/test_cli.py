@@ -253,8 +253,10 @@ class TestCommandSuggestions:
         assert "Available commands" in output
         assert "serve" in output
 
-    def test_banner_shows_logo_and_version(self, cli_runner):
+    def test_banner_shows_logo_and_version(self, cli_runner, monkeypatch):
         """qualytics (no subcommand) displays the ASCII wordmark and version."""
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.delenv("QUALYTICS_NO_BANNER", raising=False)
         result = cli_runner.invoke(app, [])
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
@@ -499,6 +501,8 @@ class TestDoctorCommand:
         self, cli_runner, tmp_path, monkeypatch
     ):
         """doctor command shows banner with 'Doctor' subtitle."""
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.delenv("QUALYTICS_NO_BANNER", raising=False)
         monkeypatch.setattr(
             "qualytics.cli.doctor.CONFIG_PATH",
             str(tmp_path / "nonexistent.yaml"),
