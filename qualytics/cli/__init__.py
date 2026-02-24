@@ -1,14 +1,41 @@
 """CLI command modules for Qualytics CLI."""
 
+import difflib
 import os
 
+import click
 import typer
+import typer.core
 from rich import print
 
 from ..config import __version__
 
 # Qualytics brand color
 BRAND = "#FF9933"
+
+
+class SuggestGroup(typer.core.TyperGroup):
+    """Typer group that suggests similar commands on typos."""
+
+    def resolve_command(self, ctx: click.Context, args: list[str]):
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError:
+            cmd_name = args[0] if args else None
+            if cmd_name:
+                valid = self.list_commands(ctx)
+                matches = difflib.get_close_matches(cmd_name, valid, n=3, cutoff=0.6)
+                if matches:
+                    hint = ", ".join(f"'{m}'" for m in matches)
+                    raise click.UsageError(
+                        f"No such command '{cmd_name}'. Did you mean: {hint}?"
+                    )
+                raise click.UsageError(
+                    f"No such command '{cmd_name}'. "
+                    f"Run 'qualytics --help' to see available commands."
+                )
+            raise
+
 
 # fmt: off
 # Wordmark traced from official SVG (qualytics-word-mark.svg).
@@ -67,9 +94,11 @@ def add_suggestion_callback(app: typer.Typer, group_name: str) -> None:
 
     Replaces the unhelpful "Missing command." error with a list of
     available subcommands and a pointer to ``--help``.
+    Also enables fuzzy "did you mean?" suggestions for invalid subcommands.
 
     Must be called **before** the app is registered via ``add_typer``.
     """
+    app.info.cls = SuggestGroup
 
     @app.callback(invoke_without_command=True)
     def _show_commands(ctx: typer.Context) -> None:

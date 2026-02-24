@@ -258,10 +258,10 @@ class TestCommandSuggestions:
         result = cli_runner.invoke(app, [])
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
-        # SVG-based wordmark: Q logomark + lowercase ualytics
-        assert "▄████▄" in output  # Q top
-        assert "▀████ █▄" in output  # Q bottom with tail
-        assert "▀██▀" in output  # lowercase letters
+        # SVG-traced wordmark: Q logomark + lowercase ualytics
+        assert "▄▄███▀" in output  # Q top
+        assert "▀██▄▄▄▄▄▄▄██▀" in output  # Q bottom
+        assert "▀▀▀▀▀▀▀▀" in output  # baseline
         # Version below wordmark
         assert f"v{__version__}" in output
 
@@ -271,7 +271,7 @@ class TestCommandSuggestions:
         result = cli_runner.invoke(app, [])
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
-        assert "▄█████▄" not in output
+        assert "▄▄███▀" not in output
         assert "Available commands" in output
 
     def test_banner_hidden_in_ci(self, cli_runner, monkeypatch):
@@ -280,7 +280,7 @@ class TestCommandSuggestions:
         result = cli_runner.invoke(app, [])
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
-        assert "▄█████▄" not in output
+        assert "▄▄███▀" not in output
         assert "Available commands" in output
 
     def test_banner_not_shown_with_subcommand(self, cli_runner):
@@ -288,7 +288,7 @@ class TestCommandSuggestions:
         result = cli_runner.invoke(app, ["auth", "--help"])
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
-        assert "▄█████▄" not in output
+        assert "▄▄███▀" not in output
 
     def test_typo_suggestion_still_works(self, cli_runner):
         """Typer's built-in fuzzy matching for typos still works."""
@@ -308,6 +308,21 @@ class TestCommandSuggestions:
         result = cli_runner.invoke(app, ["auth", "--help"])
         assert result.exit_code == 0
         assert "login" in result.output.lower()
+
+    def test_main_typo_suggests_similar(self, cli_runner):
+        """Typo at top level should suggest similar commands."""
+        result = cli_runner.invoke(app, ["datastore"])
+        assert result.exit_code != 0
+        output = _strip_ansi(result.output)
+        assert "datastores" in output
+        assert "Did you mean" in output
+
+    def test_main_unknown_shows_help_hint(self, cli_runner):
+        """Completely unknown command shows --help hint."""
+        result = cli_runner.invoke(app, ["foobar"])
+        assert result.exit_code != 0
+        output = _strip_ansi(result.output)
+        assert "qualytics --help" in output
 
     def test_doctor_visible_in_top_level(self, cli_runner):
         """doctor command should appear in top-level command list."""
@@ -491,4 +506,4 @@ class TestDoctorCommand:
         result = cli_runner.invoke(app, ["doctor"])
         output = _strip_ansi(result.output)
         assert "Doctor" in output
-        assert "▄████▄" in output  # Wordmark present
+        assert "▄▄███▀" in output  # Wordmark present

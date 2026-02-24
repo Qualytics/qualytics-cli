@@ -5,10 +5,10 @@ from typing import Annotated
 from rich import print
 
 from ..config import __version__
-from . import BRAND, print_banner
+from . import BRAND, SuggestGroup, print_banner
 
 
-app = typer.Typer()
+app = typer.Typer(cls=SuggestGroup)
 
 
 @app.callback(invoke_without_command=True)
