@@ -77,16 +77,30 @@ def checks_create(
     failed = 0
     total = len(items)
 
+    # Build reverse lookup (id → name) for validation when container_id is provided
+    id_to_name = {v: k for k, v in table_ids.items()}
+
     for i, check in enumerate(items, 1):
-        container_name = check.get("container", "")
-        container_id = table_ids.get(container_name)
-        if container_id is None:
-            print(
-                f"[red]({i}/{total}) Container '{container_name}' not found "
-                f"in datastore {datastore_id}. Skipping.[/red]"
-            )
-            failed += 1
-            continue
+        # Support both container name (portable format) and container_id (API format)
+        container_id = check.get("container_id")
+        if container_id is not None:
+            if container_id not in id_to_name:
+                print(
+                    f"[red]({i}/{total}) Container ID {container_id} not found "
+                    f"in datastore {datastore_id}. Skipping.[/red]"
+                )
+                failed += 1
+                continue
+        else:
+            container_name = check.get("container", "")
+            container_id = table_ids.get(container_name)
+            if container_id is None:
+                print(
+                    f"[red]({i}/{total}) Container '{container_name}' not found "
+                    f"in datastore {datastore_id}. Skipping.[/red]"
+                )
+                failed += 1
+                continue
         try:
             payload = _build_create_payload(check, container_id)
             result = create_quality_check(client, payload)
