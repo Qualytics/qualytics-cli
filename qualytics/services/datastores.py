@@ -93,6 +93,34 @@ def build_create_datastore_payload(
     return payload
 
 
+def flatten_datastore_for_put(datastore: dict) -> dict:
+    """Flatten a GET /datastores/{id} response into a shape the PUT endpoint accepts.
+
+    The GET response returns nested objects for teams, tags, and connection,
+    but PUT expects simple scalars/strings.
+    """
+    flat = dict(datastore)
+
+    # teams: [{id, name, ...}] → ["name1", "name2"]
+    if "teams" in flat and flat["teams"]:
+        flat["teams"] = [
+            t["name"] if isinstance(t, dict) else t for t in flat["teams"]
+        ]
+
+    # tags: [{id, name, ...}] or [{"name": ...}] → ["name1", "name2"]
+    if "tags" in flat and flat["tags"]:
+        flat["tags"] = [
+            t["name"] if isinstance(t, dict) else t for t in flat["tags"]
+        ]
+
+    # connection: {id, ...} → connection_id (flat key the PUT expects)
+    if "connection" in flat and isinstance(flat["connection"], dict):
+        flat.setdefault("connection_id", flat["connection"]["id"])
+        del flat["connection"]
+
+    return flat
+
+
 def build_update_datastore_payload(
     *,
     name: str | None = None,

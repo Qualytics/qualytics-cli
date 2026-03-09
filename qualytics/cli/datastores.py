@@ -19,6 +19,7 @@ from ..services.connections import get_connection_by
 from ..services.datastores import (
     build_create_datastore_payload,
     build_update_datastore_payload,
+    flatten_datastore_for_put,
     get_datastore_by,
 )
 from ..utils import OutputFormat, format_for_display, redact_payload
@@ -248,7 +249,14 @@ def datastores_update(
         raise typer.Exit(code=1)
 
     client = get_client()
-    result = update_datastore(client, datastore_id, payload)
+
+    with status("[bold cyan]Fetching current datastore...[/bold cyan]"):
+        current = get_datastore(client, datastore_id)
+
+    # PUT requires a full payload — merge user changes on top of current state
+    full_payload = {**flatten_datastore_for_put(current), **payload}
+
+    result = update_datastore(client, datastore_id, full_payload)
     print(f"[green]Datastore {datastore_id} updated successfully.[/green]")
     print(format_for_display(result, fmt))
 
