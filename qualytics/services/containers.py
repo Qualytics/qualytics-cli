@@ -150,6 +150,11 @@ def build_create_container_payload(
         if group_by_clause is not None:
             payload["group_by_clause"] = group_by_clause
 
+    if description is not None:
+        payload["description"] = description
+    if tags is not None:
+        payload["tags"] = tags
+
     return payload
 
 
