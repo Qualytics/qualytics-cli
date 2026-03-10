@@ -162,8 +162,20 @@ def containers_create(
 
     client = get_client()
     result = create_container(client, payload)
+
+    # The create endpoint ignores description and tags — apply via a follow-up PUT
+    container_id = result["id"]
+    needs_update = {}
+    if description is not None:
+        needs_update["description"] = description
+    if tag_list is not None:
+        needs_update["tags"] = tag_list
+    if needs_update:
+        update_payload = build_update_container_payload(result, **needs_update)
+        result = update_container(client, container_id, update_payload)
+
     print("[green]Container created successfully![/green]")
-    print(f"[green]Container ID: {result.get('id')}[/green]")
+    print(f"[green]Container ID: {container_id}[/green]")
     print(f"[green]Container Name: {result.get('name')}[/green]")
     print(f"[green]Container Type: {result.get('container_type')}[/green]")
 
