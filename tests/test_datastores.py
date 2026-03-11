@@ -393,10 +393,27 @@ class TestDatastoresCreateCLI:
 
 
 class TestDatastoresUpdateCLI:
+    _EXISTING_DS = {
+        "id": 1,
+        "name": "old_name",
+        "jdbc": {
+            "connection_id": 10,
+            "enrichment_only": False,
+            "enrichment_prefix": "",
+        },
+        "database": "old_db",
+        "schema": "old_sc",
+        "teams": [{"id": -1, "name": "Public", "permission": "Reporter"}],
+        "tags": [{"id": 1, "name": "prod"}],
+        "connection": {"id": 10, "name": "my_conn"},
+    }
+
     @patch("qualytics.cli.datastores.update_datastore")
+    @patch("qualytics.cli.datastores.get_datastore")
     @patch("qualytics.cli.datastores.get_client")
-    def test_update_basic(self, mock_gc, mock_update, cli_runner):
+    def test_update_basic(self, mock_gc, mock_get, mock_update, cli_runner):
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = self._EXISTING_DS.copy()
         mock_update.return_value = {"id": 1, "name": "new_name"}
         result = cli_runner.invoke(
             app, ["datastores", "update", "--id", "1", "--name", "new_name"]
@@ -404,11 +421,22 @@ class TestDatastoresUpdateCLI:
         assert result.exit_code == 0
         assert "updated successfully" in result.output
         mock_update.assert_called_once()
+        # Verify the payload merges current state with user changes
+        payload = mock_update.call_args.args[2]
+        assert payload["name"] == "new_name"
+        assert payload["jdbc"] == self._EXISTING_DS["jdbc"]
+        # Verify nested objects were flattened to strings
+        assert payload["teams"] == ["Public"]
+        assert payload["tags"] == ["prod"]
+        assert payload["connection_id"] == 10
+        assert "connection" not in payload
 
     @patch("qualytics.cli.datastores.update_datastore")
+    @patch("qualytics.cli.datastores.get_datastore")
     @patch("qualytics.cli.datastores.get_client")
-    def test_update_all_flags(self, mock_gc, mock_update, cli_runner):
+    def test_update_all_flags(self, mock_gc, mock_get, mock_update, cli_runner):
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = self._EXISTING_DS.copy()
         mock_update.return_value = {"id": 1, "name": "n"}
         result = cli_runner.invoke(
             app,

@@ -21,7 +21,9 @@ from ..api.containers import (
     create_container as api_create_container,
     get_field_profiles as api_get_field_profiles,
     list_containers_listing,
+    update_container as api_update_container,
 )
+from ..services.containers import build_update_container_payload
 from ..api.operations import get_operation, list_operations
 from ..api.quality_checks import create_quality_check
 from ..config import BASE_PATH
@@ -495,6 +497,17 @@ def _create_computed_table(
         return None
 
     _debug_log(f"Created computed table: {name} (ID: {result.get('id')})")
+
+    # The create endpoint ignores description — apply via a follow-up PUT
+    if description:
+        try:
+            update_payload = build_update_container_payload(
+                result, description=description
+            )
+            result = api_update_container(client, result["id"], update_payload)
+            _debug_log(f"Applied description to computed table: {name}")
+        except QualyticsAPIError as e:
+            _debug_log(f"Warning: Failed to apply description to '{name}': {e}")
 
     log_file = _write_debug_log(
         log_type="computed_table",

@@ -77,16 +77,30 @@ def checks_create(
     failed = 0
     total = len(items)
 
+    # Build reverse lookup (id → name) for validation when container_id is provided
+    id_to_name = {v: k for k, v in table_ids.items()}
+
     for i, check in enumerate(items, 1):
-        container_name = check.get("container", "")
-        container_id = table_ids.get(container_name)
-        if container_id is None:
-            print(
-                f"[red]({i}/{total}) Container '{container_name}' not found "
-                f"in datastore {datastore_id}. Skipping.[/red]"
-            )
-            failed += 1
-            continue
+        # Support both container name (portable format) and container_id (API format)
+        container_id = check.get("container_id")
+        if container_id is not None:
+            if container_id not in id_to_name:
+                print(
+                    f"[red]({i}/{total}) Container ID {container_id} not found "
+                    f"in datastore {datastore_id}. Skipping.[/red]"
+                )
+                failed += 1
+                continue
+        else:
+            container_name = check.get("container", "")
+            container_id = table_ids.get(container_name)
+            if container_id is None:
+                print(
+                    f"[red]({i}/{total}) Container '{container_name}' not found "
+                    f"in datastore {datastore_id}. Skipping.[/red]"
+                )
+                failed += 1
+                continue
         try:
             payload = _build_create_payload(check, container_id)
             result = create_quality_check(client, payload)
@@ -243,6 +257,60 @@ def checks_delete(
         bulk_delete_quality_checks(client, items)
         action = "Archived" if archive else "Deleted"
         print(f"[green]{action} {len(id_list)} quality checks.[/green]")
+
+
+# ── Activate (restore archived checks) ────────────────────────────────────
+
+
+@checks_app.command("activate")
+def checks_activate(
+    check_id: int | None = typer.Option(
+        None, "--id", help="Single quality check ID to activate"
+    ),
+    ids: str | None = typer.Option(
+        None, "--ids", help='Comma-separated check IDs. Example: "1,2,3"'
+    ),
+):
+    """Activate (unarchive) quality check(s)."""
+    if not check_id and not ids:
+        print("[red]Must specify --id or --ids.[/red]")
+        raise typer.Exit(code=1)
+
+    client = get_client()
+
+    id_list: list[int] = []
+    if check_id:
+        id_list.append(check_id)
+    if ids:
+        id_list.extend(int(x) for x in _parse_comma_list(ids))
+
+    activated = 0
+    failed = 0
+    total = len(id_list)
+
+    for i, cid in enumerate(id_list, 1):
+        try:
+            existing = get_quality_check(client, cid)
+            payload = {
+                "description": existing.get("description", ""),
+                "fields": [f["name"] for f in existing.get("fields", [])],
+                "coverage": existing.get("coverage"),
+                "filter": existing.get("filter"),
+                "properties": existing.get("properties") or {},
+                "tags": [t["name"] for t in existing.get("global_tags", [])],
+                "additional_metadata": existing.get("additional_metadata") or {},
+                "status": "Active",
+            }
+            update_quality_check(client, cid, payload)
+            print(f"[green]({i}/{total}) Activated quality check {cid}.[/green]")
+            activated += 1
+        except QualyticsAPIError as e:
+            print(
+                f"[red]({i}/{total}) Failed to activate check {cid}: {e.message}[/red]"
+            )
+            failed += 1
+
+    print(f"\n[bold]Activated {activated}, failed {failed} of {total} checks.[/bold]")
 
 
 # ── Export (git-friendly, directory-based) ────────────────────────────────

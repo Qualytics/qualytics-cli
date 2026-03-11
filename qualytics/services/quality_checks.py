@@ -192,7 +192,7 @@ def _build_create_payload(check: dict, container_id: int) -> dict:
     """Convert a portable check dict into a POST /quality-checks payload."""
     return {
         "container_id": container_id,
-        "rule": check["rule_type"],
+        "rule": check.get("rule_type") or check.get("rule", ""),
         "description": check.get("description", ""),
         "fields": check.get("fields") or [],
         "coverage": check.get("coverage"),
@@ -247,17 +247,30 @@ def import_checks_to_datastore(
     failed = 0
     errors: list[str] = []
 
+    # Build reverse lookup for validating container_id when provided directly
+    id_to_name = {v: k for k, v in table_ids.items()}
+
     for check in checks:
-        container_name = check.get("container", "")
         source = check.get("_source_file", "unknown")
 
-        container_id = table_ids.get(container_name)
-        if container_id is None:
-            errors.append(
-                f"Container '{container_name}' not found in datastore {datastore_id} ({source})"
-            )
-            failed += 1
-            continue
+        # Support both container name (portable format) and container_id (API format)
+        container_id = check.get("container_id")
+        if container_id is not None:
+            if container_id not in id_to_name:
+                errors.append(
+                    f"Container ID {container_id} not found in datastore {datastore_id} ({source})"
+                )
+                failed += 1
+                continue
+        else:
+            container_name = check.get("container", "")
+            container_id = table_ids.get(container_name)
+            if container_id is None:
+                errors.append(
+                    f"Container '{container_name}' not found in datastore {datastore_id} ({source})"
+                )
+                failed += 1
+                continue
 
         uid = (check.get("additional_metadata") or {}).get(_UID_KEY)
 

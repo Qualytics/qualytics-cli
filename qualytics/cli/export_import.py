@@ -206,13 +206,17 @@ def config_import(
     for resource in (
         "connections",
         "datastores",
+        "catalog",
         "containers",
         "computed_fields",
         "checks",
     ):
-        if include_set is None or resource in include_set:
+        # Catalog/sync is always shown (it's automatic), others depend on include
+        if resource == "catalog" or include_set is None or resource in include_set:
             r = result[resource]
-            label = resource.replace("_", " ").title()
+            label = (
+                "Sync" if resource == "catalog" else resource.replace("_", " ").title()
+            )
             table.add_row(
                 label,
                 str(r["created"]),

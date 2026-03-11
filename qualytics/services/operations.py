@@ -112,7 +112,9 @@ def _run_for_datastores(
     """Shared runner that iterates over datastores, triggers an operation, and optionally waits."""
     for datastore_id in track(datastore_ids, description="Processing..."):
         try:
-            payload = build_payload(datastore_id)
+            payload = {
+                k: v for k, v in build_payload(datastore_id).items() if v is not None
+            }
             result = run_operation(client, payload)
             op_id = result["id"]
             print(
@@ -237,18 +239,21 @@ def run_scan(
     """Run scan operation for specified datastores."""
 
     def build_payload(datastore_id):
-        return {
+        payload = {
             "datastore_id": datastore_id,
             "type": "scan",
-            "container_names": container_names,
-            "container_tags": container_tags,
-            "incremental": incremental,
+            "incremental": incremental if incremental is not None else False,
             "remediation": remediation,
             "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
             "enrichment_source_record_limit": enrichment_source_record_limit,
             "greater_than_time": greater_than_time,
             "greater_than_batch": greater_than_batch,
         }
+        if container_names:
+            payload["container_names"] = container_names
+        if container_tags:
+            payload["container_tags"] = container_tags
+        return payload
 
     _run_for_datastores(
         client, "Scan", datastore_ids, build_payload, background, poll_interval, timeout
