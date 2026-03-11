@@ -112,7 +112,9 @@ def _run_for_datastores(
     """Shared runner that iterates over datastores, triggers an operation, and optionally waits."""
     for datastore_id in track(datastore_ids, description="Processing..."):
         try:
-            payload = {k: v for k, v in build_payload(datastore_id).items() if v is not None}
+            payload = {
+                k: v for k, v in build_payload(datastore_id).items() if v is not None
+            }
             result = run_operation(client, payload)
             op_id = result["id"]
             print(

@@ -140,38 +140,41 @@ _DATASTORE_READONLY_FIELDS = frozenset(
 )
 
 # Internal-only datastore fields to strip on export
-_DATASTORE_INTERNAL_FIELDS = frozenset(
-    {
-        "id",
-        "created",
-        "connected",
-        "favorite",
-        "latest_operation",
-        "metrics",
-        "anomaly_count",
-        "check_count",
-        "container_count",
-        "field_count",
-        "record_count",
-        "score",
-        "overall_score",
-        "completeness_score",
-        "conformity_score",
-        "consistency_score",
-        "precision_score",
-        "timeliness_score",
-        "volume_score",
-        "accuracy_score",
-        "uniqueness_score",
-        "containers",
-        "connection",
-        "connection_id",
-        "product_name",
-        "product_version",
-        "driver_name",
-        "driver_version",
-    }
-) | _DATASTORE_READONLY_FIELDS
+_DATASTORE_INTERNAL_FIELDS = (
+    frozenset(
+        {
+            "id",
+            "created",
+            "connected",
+            "favorite",
+            "latest_operation",
+            "metrics",
+            "anomaly_count",
+            "check_count",
+            "container_count",
+            "field_count",
+            "record_count",
+            "score",
+            "overall_score",
+            "completeness_score",
+            "conformity_score",
+            "consistency_score",
+            "precision_score",
+            "timeliness_score",
+            "volume_score",
+            "accuracy_score",
+            "uniqueness_score",
+            "containers",
+            "connection",
+            "connection_id",
+            "product_name",
+            "product_version",
+            "driver_name",
+            "driver_version",
+        }
+    )
+    | _DATASTORE_READONLY_FIELDS
+)
 
 # Container internal fields to strip
 _CONTAINER_INTERNAL_FIELDS = frozenset(
@@ -241,7 +244,10 @@ def _run_catalog_for_import(
     while True:
         elapsed = time.monotonic() - start
         if elapsed >= timeout:
-            return {"success": False, "error": f"Catalog timed out after {int(elapsed)}s"}
+            return {
+                "success": False,
+                "error": f"Catalog timed out after {int(elapsed)}s",
+            }
 
         response = get_operation(client, op_id)
         if response.get("end_time"):
@@ -307,14 +313,10 @@ def strip_datastore_for_export(ds: dict) -> dict:
             continue
         # Flatten object lists to name strings
         if key == "teams" and isinstance(value, list):
-            portable[key] = [
-                t["name"] if isinstance(t, dict) else t for t in value
-            ]
+            portable[key] = [t["name"] if isinstance(t, dict) else t for t in value]
             continue
         if key == "global_tags" and isinstance(value, list):
-            portable[key] = [
-                t["name"] if isinstance(t, dict) else t for t in value
-            ]
+            portable[key] = [t["name"] if isinstance(t, dict) else t for t in value]
             continue
         portable[key] = value
 
@@ -668,6 +670,7 @@ def _import_datastore(
             data.pop("trigger_catalog", None)
             # PUT requires full payload — merge import data on top of current state
             from .datastores import flatten_datastore_for_put
+
             full_payload = {**flatten_datastore_for_put(full_existing), **data}
             # Strip read-only fields that flatten may have carried over
             for field in _DATASTORE_READONLY_FIELDS:
@@ -995,7 +998,9 @@ def import_config(
                 summary["catalog"]["errors"].append(
                     f"{ds_dir.name}: {cat_result['error']}"
                 )
-                rprint(f"[red]Sync failed for {ds_dir.name}: {cat_result['error']}[/red]")
+                rprint(
+                    f"[red]Sync failed for {ds_dir.name}: {cat_result['error']}[/red]"
+                )
 
         # Import containers
         if "containers" in include and ds_id is not None:

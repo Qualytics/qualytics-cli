@@ -103,15 +103,11 @@ def flatten_datastore_for_put(datastore: dict) -> dict:
 
     # teams: [{id, name, ...}] → ["name1", "name2"]
     if "teams" in flat and flat["teams"]:
-        flat["teams"] = [
-            t["name"] if isinstance(t, dict) else t for t in flat["teams"]
-        ]
+        flat["teams"] = [t["name"] if isinstance(t, dict) else t for t in flat["teams"]]
 
     # tags: [{id, name, ...}] or [{"name": ...}] → ["name1", "name2"]
     if "tags" in flat and flat["tags"]:
-        flat["tags"] = [
-            t["name"] if isinstance(t, dict) else t for t in flat["tags"]
-        ]
+        flat["tags"] = [t["name"] if isinstance(t, dict) else t for t in flat["tags"]]
 
     # connection: {id, ...} → connection_id (flat key the PUT expects)
     if "connection" in flat and isinstance(flat["connection"], dict):

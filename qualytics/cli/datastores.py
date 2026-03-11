@@ -54,7 +54,9 @@ def datastores_create(
         help="Name of an existing connection in Qualytics (required if --connection-id is not set)",
     ),
     connection_id: int | None = typer.Option(
-        None, "--connection-id", help="Existing connection ID (required if --connection-name is not set)"
+        None,
+        "--connection-id",
+        help="Existing connection ID (required if --connection-name is not set)",
     ),
     database: str = typer.Option(
         ...,

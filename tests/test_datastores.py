@@ -396,7 +396,11 @@ class TestDatastoresUpdateCLI:
     _EXISTING_DS = {
         "id": 1,
         "name": "old_name",
-        "jdbc": {"connection_id": 10, "enrichment_only": False, "enrichment_prefix": ""},
+        "jdbc": {
+            "connection_id": 10,
+            "enrichment_only": False,
+            "enrichment_prefix": "",
+        },
         "database": "old_db",
         "schema": "old_sc",
         "teams": [{"id": -1, "name": "Public", "permission": "Reporter"}],

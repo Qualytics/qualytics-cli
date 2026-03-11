@@ -305,7 +305,9 @@ def checks_activate(
             print(f"[green]({i}/{total}) Activated quality check {cid}.[/green]")
             activated += 1
         except QualyticsAPIError as e:
-            print(f"[red]({i}/{total}) Failed to activate check {cid}: {e.message}[/red]")
+            print(
+                f"[red]({i}/{total}) Failed to activate check {cid}: {e.message}[/red]"
+            )
             failed += 1
 
     print(f"\n[bold]Activated {activated}, failed {failed} of {total} checks.[/bold]")
