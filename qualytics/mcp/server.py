@@ -633,21 +633,24 @@ def run_catalog(
     datastore_ids: list[int],
     prune: bool = False,
     recreate: bool = False,
-) -> dict:
+) -> list[dict]:
     """Trigger a catalog operation to discover containers in datastores.
 
-    Returns the operation details. Use get_operation to check progress.
+    Returns the operation details for each datastore. Use get_operation to check progress.
     """
     from ..api.operations import run_operation
 
     client = _client()
-    payload = {
-        "type": "catalog",
-        "datastore_ids": datastore_ids,
-        "prune": prune,
-        "recreate": recreate,
-    }
-    return _api_call(run_operation, client, payload)
+    results = []
+    for ds_id in datastore_ids:
+        payload = {
+            "type": "catalog",
+            "datastore_id": ds_id,
+            "prune": prune,
+            "recreate": recreate,
+        }
+        results.append(_api_call(run_operation, client, payload))
+    return results
 
 
 @mcp.tool
@@ -656,27 +659,30 @@ def run_profile(
     container_names: list[str] | None = None,
     container_tags: list[str] | None = None,
     max_records_analyzed_per_partition: int | None = None,
-) -> dict:
+) -> list[dict]:
     """Trigger a profile operation to infer quality checks.
 
-    Returns the operation details. Use get_operation to check progress.
+    Returns the operation details for each datastore. Use get_operation to check progress.
     """
     from ..api.operations import run_operation
 
     client = _client()
-    payload: dict = {
-        "type": "profile",
-        "datastore_ids": datastore_ids,
-    }
-    if container_names:
-        payload["container_names"] = container_names
-    if container_tags:
-        payload["container_tags"] = container_tags
-    if max_records_analyzed_per_partition is not None:
-        payload["max_records_analyzed_per_partition"] = (
-            max_records_analyzed_per_partition
-        )
-    return _api_call(run_operation, client, payload)
+    results = []
+    for ds_id in datastore_ids:
+        payload: dict = {
+            "type": "profile",
+            "datastore_id": ds_id,
+        }
+        if container_names:
+            payload["container_names"] = container_names
+        if container_tags:
+            payload["container_tags"] = container_tags
+        if max_records_analyzed_per_partition is not None:
+            payload["max_records_analyzed_per_partition"] = (
+                max_records_analyzed_per_partition
+            )
+        results.append(_api_call(run_operation, client, payload))
+    return results
 
 
 @mcp.tool
@@ -686,29 +692,32 @@ def run_scan(
     container_tags: list[str] | None = None,
     incremental: bool | None = None,
     max_records_analyzed_per_partition: int | None = None,
-) -> dict:
+) -> list[dict]:
     """Trigger a scan operation to detect anomalies.
 
-    Returns the operation details. Use get_operation to check progress.
+    Returns the operation details for each datastore. Use get_operation to check progress.
     """
     from ..api.operations import run_operation
 
     client = _client()
-    payload: dict = {
-        "type": "scan",
-        "datastore_ids": datastore_ids,
-    }
-    if container_names:
-        payload["container_names"] = container_names
-    if container_tags:
-        payload["container_tags"] = container_tags
-    if incremental is not None:
-        payload["incremental"] = incremental
-    if max_records_analyzed_per_partition is not None:
-        payload["max_records_analyzed_per_partition"] = (
-            max_records_analyzed_per_partition
-        )
-    return _api_call(run_operation, client, payload)
+    results = []
+    for ds_id in datastore_ids:
+        payload: dict = {
+            "type": "scan",
+            "datastore_id": ds_id,
+        }
+        if container_names:
+            payload["container_names"] = container_names
+        if container_tags:
+            payload["container_tags"] = container_tags
+        if incremental is not None:
+            payload["incremental"] = incremental
+        if max_records_analyzed_per_partition is not None:
+            payload["max_records_analyzed_per_partition"] = (
+                max_records_analyzed_per_partition
+            )
+        results.append(_api_call(run_operation, client, payload))
+    return results
 
 
 @mcp.tool
@@ -716,23 +725,26 @@ def run_materialize(
     datastore_ids: list[int],
     container_names: list[str] | None = None,
     container_tags: list[str] | None = None,
-) -> dict:
+) -> list[dict]:
     """Trigger a materialize operation for computed containers.
 
-    Returns the operation details. Use get_operation to check progress.
+    Returns the operation details for each datastore. Use get_operation to check progress.
     """
     from ..api.operations import run_operation
 
     client = _client()
-    payload: dict = {
-        "type": "materialize",
-        "datastore_ids": datastore_ids,
-    }
-    if container_names:
-        payload["container_names"] = container_names
-    if container_tags:
-        payload["container_tags"] = container_tags
-    return _api_call(run_operation, client, payload)
+    results = []
+    for ds_id in datastore_ids:
+        payload: dict = {
+            "type": "materialize",
+            "datastore_id": ds_id,
+        }
+        if container_names:
+            payload["container_names"] = container_names
+        if container_tags:
+            payload["container_tags"] = container_tags
+        results.append(_api_call(run_operation, client, payload))
+    return results
 
 
 @mcp.tool
