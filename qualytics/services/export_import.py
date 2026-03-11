@@ -47,6 +47,7 @@ from ..api.datastores import (
     get_datastore,
     update_datastore,
 )
+from ..api.operations import run_operation, get_operation
 from ..api.quality_checks import list_all_quality_checks
 from ..services.connections import get_connection_by_name
 from ..services.containers import get_container_by_name
@@ -118,6 +119,26 @@ _CONNECTION_INTERNAL_FIELDS = frozenset(
     }
 )
 
+# Connection-level read-only fields (derived from the connection object,
+# not accepted by the datastore PUT endpoint)
+_DATASTORE_READONLY_FIELDS = frozenset(
+    {
+        "jdbc_url",
+        "host",
+        "port",
+        "username",
+        "parameters",
+        "jdbc_fetch_size",
+        "max_parallelization",
+        "secrets_manager",
+        "store_type",
+        "type",
+        "group",
+        "linked_datastores",
+        "has_scheduled_operations",
+    }
+)
+
 # Internal-only datastore fields to strip on export
 _DATASTORE_INTERNAL_FIELDS = frozenset(
     {
@@ -150,7 +171,7 @@ _DATASTORE_INTERNAL_FIELDS = frozenset(
         "driver_name",
         "driver_version",
     }
-)
+) | _DATASTORE_READONLY_FIELDS
 
 # Container internal fields to strip
 _CONTAINER_INTERNAL_FIELDS = frozenset(
@@ -183,6 +204,55 @@ _COMPUTED_FIELD_INTERNAL_FIELDS = frozenset(
 # Computed container types
 _COMPUTED_TYPES = frozenset({"computed_table", "computed_file", "computed_join"})
 
+# ── Catalog helper ────────────────────────────────────────────────────────
+
+# Default catalog timeout for import (10 minutes)
+_CATALOG_TIMEOUT = 600
+_CATALOG_POLL_INTERVAL = 10
+
+
+def _run_catalog_for_import(
+    client: QualyticsClient,
+    datastore_id: int,
+    *,
+    timeout: int = _CATALOG_TIMEOUT,
+    poll_interval: int = _CATALOG_POLL_INTERVAL,
+) -> dict:
+    """Run a catalog operation for a datastore and wait for completion.
+
+    Returns {success: bool, error: str | None}.
+    """
+    import time
+
+    payload = {
+        "datastore_id": datastore_id,
+        "type": "catalog",
+        "prune": False,
+        "recreate": False,
+    }
+
+    try:
+        result = run_operation(client, payload)
+        op_id = result["id"]
+    except Exception as e:
+        return {"success": False, "error": f"Failed to start catalog: {e}"}
+
+    start = time.monotonic()
+    while True:
+        elapsed = time.monotonic() - start
+        if elapsed >= timeout:
+            return {"success": False, "error": f"Catalog timed out after {int(elapsed)}s"}
+
+        response = get_operation(client, op_id)
+        if response.get("end_time"):
+            if response.get("result") == "success":
+                return {"success": True, "error": None}
+            msg = response.get("message") or response.get("result", "unknown error")
+            return {"success": False, "error": f"Catalog failed: {msg}"}
+
+        time.sleep(poll_interval)
+
+
 # ── Strip functions ──────────────────────────────────────────────────────
 
 
@@ -212,10 +282,18 @@ def strip_datastore_for_export(ds: dict) -> dict:
     """
     portable: dict = {}
 
-    # Connection reference → name
+    # Connection reference → name (with fallbacks)
     conn = ds.get("connection")
     if conn and isinstance(conn, dict):
-        portable["connection_name"] = conn.get("name", "")
+        conn_name = conn.get("name")
+        if conn_name:
+            portable["connection_name"] = conn_name
+        elif conn.get("id"):
+            portable["connection_id"] = conn["id"]
+    elif isinstance(conn, int):
+        portable["connection_id"] = conn
+    elif ds.get("connection_id"):
+        portable["connection_id"] = ds["connection_id"]
 
     # Enrichment reference → name (API returns "enrich_datastore")
     enrichment = ds.get("enrich_datastore")
@@ -226,6 +304,17 @@ def strip_datastore_for_export(ds: dict) -> dict:
         if key in _DATASTORE_INTERNAL_FIELDS:
             continue
         if key == "enrich_datastore":
+            continue
+        # Flatten object lists to name strings
+        if key == "teams" and isinstance(value, list):
+            portable[key] = [
+                t["name"] if isinstance(t, dict) else t for t in value
+            ]
+            continue
+        if key == "global_tags" and isinstance(value, list):
+            portable[key] = [
+                t["name"] if isinstance(t, dict) else t for t in value
+            ]
             continue
         portable[key] = value
 
@@ -546,12 +635,7 @@ def _import_datastore(
             conn = get_connection_by_name(client, conn_name)
             if conn:
                 data["connection_id"] = conn["id"]
-            else:
-                result["errors"].append(
-                    f"Connection '{conn_name}' not found for datastore '{ds_name}'"
-                )
-                result["failed"] += 1
-                return result
+            # Don't fail here — updates can fall back to existing connection
 
         if dry_run:
             existing = get_datastore_by_name(client, ds_name)
@@ -562,16 +646,44 @@ def _import_datastore(
                 result["created"] += 1
             return result
 
+        # Strip read-only connection-level fields (from older exports)
+        for field in _DATASTORE_READONLY_FIELDS:
+            data.pop(field, None)
+
+        # Flatten teams/tags that may be stored as objects in older exports
+        for list_key in ("teams", "global_tags"):
+            if list_key in data and isinstance(data[list_key], list):
+                data[list_key] = [
+                    t["name"] if isinstance(t, dict) else t for t in data[list_key]
+                ]
+
         # Upsert: find by name
         existing = get_datastore_by_name(client, ds_name)
         if existing:
             ds_id = existing["id"]
+            # Fetch full datastore (list endpoint returns lightweight objects
+            # missing the connection object needed for proper merging)
+            full_existing = get_datastore(client, ds_id)
             # Don't send trigger_catalog on update
             data.pop("trigger_catalog", None)
-            update_datastore(client, ds_id, data)
+            # PUT requires full payload — merge import data on top of current state
+            from .datastores import flatten_datastore_for_put
+            full_payload = {**flatten_datastore_for_put(full_existing), **data}
+            # Strip read-only fields that flatten may have carried over
+            for field in _DATASTORE_READONLY_FIELDS:
+                full_payload.pop(field, None)
+            update_datastore(client, ds_id, full_payload)
             result["updated"] += 1
             result["datastore_id"] = ds_id
         else:
+            # Creating requires a connection reference
+            if "connection_id" not in data:
+                ref = conn_name or "(not specified)"
+                result["errors"].append(
+                    f"Connection '{ref}' not found for datastore '{ds_name}'"
+                )
+                result["failed"] += 1
+                return result
             resp = create_datastore(client, data)
             ds_id = resp.get("id")
             result["created"] += 1
@@ -804,9 +916,23 @@ def import_config(
         }
 
     base = Path(input_dir)
+
+    # Auto-detect if the user pointed to a single datastore directory
+    # (contains _datastore.yaml) or the datastores/ parent, and adjust
+    # the base path so the standard layout discovery works.
+    if (base / "_datastore.yaml").exists():
+        # User pointed directly to a datastore dir, e.g. ./datastores/my_ds
+        base = base.parent.parent
+    elif not (base / "datastores").is_dir() and any(
+        (d / "_datastore.yaml").exists() for d in base.iterdir() if d.is_dir()
+    ):
+        # User pointed to the datastores/ folder itself
+        base = base.parent
+
     summary: dict = {
         "connections": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "datastores": {"created": 0, "updated": 0, "failed": 0, "errors": []},
+        "catalog": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "containers": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "computed_fields": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "checks": {"created": 0, "updated": 0, "failed": 0, "errors": []},
@@ -851,6 +977,25 @@ def import_config(
                 f"Could not resolve datastore ID for {ds_dir.name}"
             )
             continue
+
+        # Run sync (catalog) to discover tables/views before importing containers/checks
+        if ds_id is not None and not dry_run:
+            from rich import print as rprint
+
+            rprint(
+                f"[cyan]Syncing datastore {ds_dir.name} (ID: {ds_id})... "
+                f"this may take a few minutes.[/cyan]"
+            )
+            cat_result = _run_catalog_for_import(client, ds_id)
+            if cat_result["success"]:
+                summary["catalog"]["created"] += 1
+                rprint(f"[green]Sync completed for {ds_dir.name}.[/green]")
+            else:
+                summary["catalog"]["failed"] += 1
+                summary["catalog"]["errors"].append(
+                    f"{ds_dir.name}: {cat_result['error']}"
+                )
+                rprint(f"[red]Sync failed for {ds_dir.name}: {cat_result['error']}[/red]")
 
         # Import containers
         if "containers" in include and ds_id is not None:

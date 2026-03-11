@@ -1337,6 +1337,12 @@ class TestConfigImportCLI:
                         "failed": 0,
                         "errors": [],
                     },
+                    "catalog": {
+                        "created": 0,
+                        "updated": 0,
+                        "failed": 0,
+                        "errors": [],
+                    },
                     "containers": {
                         "created": 0,
                         "updated": 0,
@@ -1380,6 +1386,12 @@ class TestConfigImportCLI:
                         "errors": [],
                     },
                     "datastores": {
+                        "created": 0,
+                        "updated": 0,
+                        "failed": 0,
+                        "errors": [],
+                    },
+                    "catalog": {
                         "created": 0,
                         "updated": 0,
                         "failed": 0,
@@ -1429,6 +1441,12 @@ class TestConfigImportCLI:
                         "errors": ["Connection 'bad' failed: 500"],
                     },
                     "datastores": {
+                        "created": 0,
+                        "updated": 0,
+                        "failed": 0,
+                        "errors": [],
+                    },
+                    "catalog": {
                         "created": 0,
                         "updated": 0,
                         "failed": 0,
