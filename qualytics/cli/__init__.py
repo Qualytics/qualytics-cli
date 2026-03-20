@@ -10,7 +10,7 @@ import typer.rich_utils
 from rich import print
 
 from ..config import __version__
-from .logo import LOGO
+from .logo import logo_lines
 
 # Qualytics brand color
 BRAND = "#FF9933"
@@ -83,12 +83,16 @@ def print_banner(subtitle: str | None = None) -> None:
                 display_url = url.rstrip("/") if url else ""
                 subtitle = f"[{BRAND}]✓[/{BRAND}] [dim]Connected to[/dim] {display_url}"
 
-    print()
-    for line in LOGO:
-        print(f"[bold {BRAND}]{line}[/bold {BRAND}]")
-    print()
-    print(f"  [bold]v{__version__}[/bold]  [dim]·[/dim]  {subtitle}")
-    print()
+    from rich.console import Console
+
+    console = Console()
+
+    console.print()
+    for line in logo_lines():
+        console.print(line)
+    console.print()
+    console.print(f"  [bold]v{__version__}[/bold]  [dim]·[/dim]  {subtitle}")
+    console.print()
 
 
 def add_suggestion_callback(app: typer.Typer, group_name: str) -> None:
