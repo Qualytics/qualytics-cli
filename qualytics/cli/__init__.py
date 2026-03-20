@@ -10,7 +10,7 @@ import typer.rich_utils
 from rich import print
 
 from ..config import __version__
-from .logo import logo_lines
+from .logo import MIN_LOGO_WIDTH, compact_logo, logo_lines
 
 # Qualytics brand color
 BRAND = "#FF9933"
@@ -87,7 +87,7 @@ def print_banner(subtitle: str | None = None) -> None:
     console = Console()
 
     console.print()
-    for line in logo_lines():
+    for line in logo_lines() if console.width >= MIN_LOGO_WIDTH else compact_logo():
         console.print(line)
     console.print()
     console.print(f"  [bold]v{__version__}[/bold]  [dim]·[/dim]  {subtitle}")
