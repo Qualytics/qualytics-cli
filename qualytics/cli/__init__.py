@@ -10,6 +10,7 @@ import typer.rich_utils
 from rich import print
 
 from ..config import __version__
+from .logo import LOGO
 
 # Qualytics brand color
 BRAND = "#FF9933"
@@ -51,20 +52,6 @@ class SuggestGroup(typer.core.TyperGroup):
                 )
             raise
 
-
-# fmt: off
-# Wordmark traced from official SVG (qualytics-word-mark.svg).
-# Each letter rendered independently to guarantee vertical alignment.
-LOGO = [
-    "   ▄▄███▀ ▄▄▄▄",
-    "  ██▀       ▀██▄                      ██            ███   ▀█",
-    " ██           ██ ██     ██  ▄█▀▀▀▀███ ██ ▀█▄   ▄██▀▀███▀▀ ██  ██▀▀▀██▄ ▄██▀▀██▄",
-    " ██▄         ▄██ ██     ██ ██      ██ ██  ██▄  ██   ███   ██ ██     ▀▀  ▀██▄▄▄▄",
-    "  ▀██▄▄▄▄▄▄▄██▀  ▀█▄▄  ▄██ ▀█▄▄  ▄▄██ ██   ██▄██    ███   ██ ▀█▄▄  ▄██ ██▄  ▄██",
-    "     ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀   ▀▀▀▀▀▀▀▀ ▀▀    ▀██▀    ▀▀▀   ▀▀   ▀▀▀▀▀▀   ▀▀▀▀▀▀",
-    "                                            ▄█▀",
-]
-# fmt: on
 
 
 def print_banner(subtitle: str | None = None) -> None:
