@@ -53,7 +53,6 @@ class SuggestGroup(typer.core.TyperGroup):
             raise
 
 
-
 def print_banner(subtitle: str | None = None) -> None:
     """Print the Qualytics logo banner.
 
