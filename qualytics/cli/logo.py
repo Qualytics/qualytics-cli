@@ -50,6 +50,10 @@ def _gradient_color(t: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+# Minimum terminal width needed for the full ASCII logo.
+MIN_LOGO_WIDTH = max(len(line) for line in _LINES) + 2
+
+
 def logo_lines() -> list[Text]:
     """Return the logo with a horizontal gradient on the Q icon.
 
@@ -62,5 +66,29 @@ def logo_lines() -> list[Text]:
         for col in range(min(_SPLIT, len(line))):
             color = _gradient_color(col / max(_SPLIT - 1, 1))
             t.stylize(f"bold {color}", col, col + 1)
+        result.append(t)
+    return result
+
+
+# fmt: off
+# Compact block-letter wordmark (~37 cols wide).
+_COMPACT_Q_SPLIT = 5  # width of the "Q" character
+_COMPACT_LINES = [
+    " ▄▀▀▄  █  █ ▄▀▀█ █ █ █ ▄█▄ ▀ ▄▀▀ ▄▀▀",
+    " █  █  █  █ █  █ █ ▀▄▀  █  █ █    ▀▄",
+    " ▀▄▄█▄ ▀▄▄█ ▀▄▄█ █  █   █  █ ▀▄▄ ▄▄▀",
+]
+# fmt: on
+
+
+def compact_logo() -> list[Text]:
+    """Return a compact block-letter logo for narrow terminals."""
+    result = []
+    for line in _COMPACT_LINES:
+        t = Text(line)
+        for col in range(min(_COMPACT_Q_SPLIT, len(line))):
+            color = _gradient_color(col / max(_COMPACT_Q_SPLIT - 1, 1))
+            t.stylize(f"bold {color}", col, col + 1)
+        t.stylize("bold", _COMPACT_Q_SPLIT)
         result.append(t)
     return result

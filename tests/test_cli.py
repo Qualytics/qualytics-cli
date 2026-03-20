@@ -260,9 +260,8 @@ class TestCommandSuggestions:
         result = cli_runner.invoke(app, [])
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
-        # SVG-traced wordmark: Q logomark + lowercase ualytics
-        assert "▄█████" in output  # Q top
-        assert "▀██████████▄▄" in output  # Q bottom
+        # Logo present (full or compact depending on terminal width)
+        assert "▄█████" in output or "▄▀▀▄" in output
         # Version below wordmark
         assert f"v{__version__}" in output
 
@@ -509,4 +508,4 @@ class TestDoctorCommand:
         result = cli_runner.invoke(app, ["doctor"])
         output = _strip_ansi(result.output)
         assert "Doctor" in output
-        assert "▄█████" in output  # Wordmark present
+        assert "▄█████" in output or "▄▀▀▄" in output  # Logo present
