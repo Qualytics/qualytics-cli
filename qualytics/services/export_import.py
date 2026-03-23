@@ -207,21 +207,21 @@ _COMPUTED_FIELD_INTERNAL_FIELDS = frozenset(
 # Computed container types
 _COMPUTED_TYPES = frozenset({"computed_table", "computed_file", "computed_join"})
 
-# ── Catalog helper ────────────────────────────────────────────────────────
+# ── Sync helper ──────────────────────────────────────────────────────────
 
-# Default catalog timeout for import (10 minutes)
-_CATALOG_TIMEOUT = 600
-_CATALOG_POLL_INTERVAL = 10
+# Default sync timeout for import (10 minutes)
+_SYNC_TIMEOUT = 600
+_SYNC_POLL_INTERVAL = 10
 
 
-def _run_catalog_for_import(
+def _run_sync_for_import(
     client: QualyticsClient,
     datastore_id: int,
     *,
-    timeout: int = _CATALOG_TIMEOUT,
-    poll_interval: int = _CATALOG_POLL_INTERVAL,
+    timeout: int = _SYNC_TIMEOUT,
+    poll_interval: int = _SYNC_POLL_INTERVAL,
 ) -> dict:
-    """Run a catalog operation for a datastore and wait for completion.
+    """Run a sync operation for a datastore and wait for completion.
 
     Returns {success: bool, error: str | None}.
     """
@@ -229,7 +229,7 @@ def _run_catalog_for_import(
 
     payload = {
         "datastore_id": datastore_id,
-        "type": "catalog",
+        "type": "sync",
         "prune": False,
         "recreate": False,
     }
@@ -238,7 +238,7 @@ def _run_catalog_for_import(
         result = run_operation(client, payload)
         op_id = result["id"]
     except Exception as e:
-        return {"success": False, "error": f"Failed to start catalog: {e}"}
+        return {"success": False, "error": f"Failed to start sync: {e}"}
 
     start = time.monotonic()
     while True:
@@ -246,7 +246,7 @@ def _run_catalog_for_import(
         if elapsed >= timeout:
             return {
                 "success": False,
-                "error": f"Catalog timed out after {int(elapsed)}s",
+                "error": f"Sync timed out after {int(elapsed)}s",
             }
 
         response = get_operation(client, op_id)
@@ -254,7 +254,7 @@ def _run_catalog_for_import(
             if response.get("result") == "success":
                 return {"success": True, "error": None}
             msg = response.get("message") or response.get("result", "unknown error")
-            return {"success": False, "error": f"Catalog failed: {msg}"}
+            return {"success": False, "error": f"Sync failed: {msg}"}
 
         time.sleep(poll_interval)
 
@@ -326,7 +326,7 @@ def strip_datastore_for_export(ds: dict) -> dict:
 def strip_container_for_export(container: dict, ds_name: str) -> dict:
     """Convert an API container response into a portable YAML dict.
 
-    Only computed containers are exported (table/view/file are cataloged).
+    Only computed containers are exported (table/view/file are discovered by sync).
     Replaces ID references with name references.
     """
     portable: dict = {}
@@ -935,7 +935,7 @@ def import_config(
     summary: dict = {
         "connections": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "datastores": {"created": 0, "updated": 0, "failed": 0, "errors": []},
-        "catalog": {"created": 0, "updated": 0, "failed": 0, "errors": []},
+        "sync": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "containers": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "computed_fields": {"created": 0, "updated": 0, "failed": 0, "errors": []},
         "checks": {"created": 0, "updated": 0, "failed": 0, "errors": []},
@@ -981,7 +981,7 @@ def import_config(
             )
             continue
 
-        # Run sync (catalog) to discover tables/views before importing containers/checks
+        # Run sync to discover tables/views before importing containers/checks
         if ds_id is not None and not dry_run:
             from rich import print as rprint
 
@@ -989,17 +989,17 @@ def import_config(
                 f"[cyan]Syncing datastore {ds_dir.name} (ID: {ds_id})... "
                 f"this may take a few minutes.[/cyan]"
             )
-            cat_result = _run_catalog_for_import(client, ds_id)
-            if cat_result["success"]:
-                summary["catalog"]["created"] += 1
+            sync_result = _run_sync_for_import(client, ds_id)
+            if sync_result["success"]:
+                summary["sync"]["created"] += 1
                 rprint(f"[green]Sync completed for {ds_dir.name}.[/green]")
             else:
-                summary["catalog"]["failed"] += 1
-                summary["catalog"]["errors"].append(
-                    f"{ds_dir.name}: {cat_result['error']}"
+                summary["sync"]["failed"] += 1
+                summary["sync"]["errors"].append(
+                    f"{ds_dir.name}: {sync_result['error']}"
                 )
                 rprint(
-                    f"[red]Sync failed for {ds_dir.name}: {cat_result['error']}[/red]"
+                    f"[red]Sync failed for {ds_dir.name}: {sync_result['error']}[/red]"
                 )
 
         # Import containers

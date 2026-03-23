@@ -1,12 +1,12 @@
 # Operations
 
-Operations are the data processing workflows in Qualytics. The standard lifecycle is: **catalog** (discover containers) then **profile** (infer checks) then **scan** (detect anomalies).
+Operations are the data processing workflows in Qualytics. The standard lifecycle is: **sync** (discover containers) then **profile** (infer checks) then **scan** (detect anomalies).
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `operations catalog` | Trigger a catalog operation (discover containers) |
+| `operations sync` | Trigger a sync operation (discover containers) |
 | `operations profile` | Trigger a profile operation (infer quality checks) |
 | `operations scan` | Trigger a scan operation (detect anomalies) |
 | `operations materialize` | Trigger a materialize operation (computed containers) |
@@ -17,10 +17,10 @@ Operations are the data processing workflows in Qualytics. The standard lifecycl
 
 ## Standard Lifecycle
 
-### 1. Catalog (discover containers)
+### 1. Sync (discover containers)
 
 ```bash
-qualytics operations catalog --datastore-id 1
+qualytics operations sync --datastore-id 1
 ```
 
 Discovers tables, views, and files in the datastore and creates container records.
@@ -63,7 +63,7 @@ qualytics operations scan --datastore-id 1 --background
 Run operations across multiple datastores at once:
 
 ```bash
-qualytics operations catalog --datastore-id 1,2,3
+qualytics operations sync --datastore-id 1,2,3
 ```
 
 ## Monitoring Operations

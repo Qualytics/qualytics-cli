@@ -36,9 +36,9 @@ class TestRunOperation:
     def test_posts_payload_to_operations_run(self):
         client = _mock_client()
         client.post.return_value = _mock_response(
-            {"id": 1, "type": "catalog", "result": "running"}
+            {"id": 1, "type": "sync", "result": "running"}
         )
-        payload = {"type": "catalog", "datastore_id": 42}
+        payload = {"type": "sync", "datastore_id": 42}
         result = run_operation(client, payload)
         client.post.assert_called_once_with("operations/run", json=payload)
         assert result["id"] == 1
@@ -216,14 +216,14 @@ class TestWaitForOperation:
 class TestRunForDatastores:
     @patch("qualytics.services.operations.run_operation")
     @patch("qualytics.services.operations.wait_for_operation")
-    def test_catalog_foreground(self, mock_wait, mock_run):
+    def test_sync_foreground(self, mock_wait, mock_run):
         mock_run.return_value = {"id": 100}
         mock_wait.return_value = {"result": "success", "message": None}
 
-        from qualytics.services.operations import run_catalog
+        from qualytics.services.operations import run_sync
 
         client = _mock_client()
-        run_catalog(
+        run_sync(
             client, [42], ["table"], False, False, False, poll_interval=1, timeout=10
         )
         mock_run.assert_called_once()
@@ -231,13 +231,13 @@ class TestRunForDatastores:
 
     @patch("qualytics.services.operations.run_operation")
     @patch("qualytics.services.operations.wait_for_operation")
-    def test_catalog_background_skips_polling(self, mock_wait, mock_run):
+    def test_sync_background_skips_polling(self, mock_wait, mock_run):
         mock_run.return_value = {"id": 100}
 
-        from qualytics.services.operations import run_catalog
+        from qualytics.services.operations import run_sync
 
         client = _mock_client()
-        run_catalog(client, [42], None, False, False, True)
+        run_sync(client, [42], None, False, False, True)
         mock_run.assert_called_once()
         mock_wait.assert_not_called()
 
@@ -250,10 +250,10 @@ class TestRunForDatastores:
             {"result": "success", "message": None},
         ]
 
-        from qualytics.services.operations import run_catalog
+        from qualytics.services.operations import run_sync
 
         client = _mock_client()
-        run_catalog(
+        run_sync(
             client, [10, 20], None, False, False, False, poll_interval=1, timeout=10
         )
         assert mock_run.call_count == 2
@@ -371,16 +371,16 @@ class TestRunForDatastores:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestOperationsCatalogCLI:
+class TestOperationsSyncCLI:
     @patch("qualytics.cli.operations.get_client")
-    @patch("qualytics.cli.operations.run_catalog")
-    def test_basic_catalog(self, mock_run, mock_get_client, cli_runner):
+    @patch("qualytics.cli.operations.run_sync")
+    def test_basic_sync(self, mock_run, mock_get_client, cli_runner):
         mock_get_client.return_value = _mock_client()
         result = cli_runner.invoke(
             app,
             [
                 "operations",
-                "catalog",
+                "sync",
                 "--datastore-id",
                 "42",
             ],
@@ -392,14 +392,14 @@ class TestOperationsCatalogCLI:
         assert args.args[4] is False  # recreate
 
     @patch("qualytics.cli.operations.get_client")
-    @patch("qualytics.cli.operations.run_catalog")
-    def test_catalog_with_all_flags(self, mock_run, mock_get_client, cli_runner):
+    @patch("qualytics.cli.operations.run_sync")
+    def test_sync_with_all_flags(self, mock_run, mock_get_client, cli_runner):
         mock_get_client.return_value = _mock_client()
         result = cli_runner.invoke(
             app,
             [
                 "operations",
-                "catalog",
+                "sync",
                 "--datastore-id",
                 "1,2,3",
                 "--include",

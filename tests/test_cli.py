@@ -42,7 +42,7 @@ def test_operations_command_registered(cli_runner):
     """Test that the 'operations' command group is registered."""
     result = cli_runner.invoke(app, ["operations", "--help"])
     assert result.exit_code == 0
-    assert "catalog" in result.output.lower()
+    assert "sync" in result.output.lower()
     assert "profile" in result.output.lower()
     assert "scan" in result.output.lower()
     assert "materialize" in result.output.lower()
@@ -233,7 +233,7 @@ class TestCommandSuggestions:
         assert result.exit_code == 0
         output = _strip_ansi(result.output)
         assert "Available commands" in output
-        assert "catalog" in output
+        assert "sync" in output
         assert "scan" in output
 
     def test_config_shows_available_commands(self, cli_runner):

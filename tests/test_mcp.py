@@ -322,7 +322,7 @@ class TestOperationTools:
         """Test list_operations tool."""
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
-        expected = [{"id": 1, "type": "catalog"}]
+        expected = [{"id": 1, "type": "sync"}]
 
         with patch(
             "qualytics.api.operations.list_all_operations", return_value=expected

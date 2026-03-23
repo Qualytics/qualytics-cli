@@ -1337,7 +1337,7 @@ class TestConfigImportCLI:
                         "failed": 0,
                         "errors": [],
                     },
-                    "catalog": {
+                    "sync": {
                         "created": 0,
                         "updated": 0,
                         "failed": 0,
@@ -1391,7 +1391,7 @@ class TestConfigImportCLI:
                         "failed": 0,
                         "errors": [],
                     },
-                    "catalog": {
+                    "sync": {
                         "created": 0,
                         "updated": 0,
                         "failed": 0,
@@ -1446,7 +1446,7 @@ class TestConfigImportCLI:
                         "failed": 0,
                         "errors": [],
                     },
-                    "catalog": {
+                    "sync": {
                         "created": 0,
                         "updated": 0,
                         "failed": 0,

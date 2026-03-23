@@ -46,7 +46,7 @@ qualytics-config/
 
 - **Secrets** are replaced with `${ENV_VAR}` placeholders (never exported in plaintext)
 - **Connections** are deduplicated across datastores (exported once by name)
-- **Computed containers** are exported with their SQL definitions (tables/views/files are created by catalog)
+- **Computed containers** are exported with their SQL definitions (tables/views/files are created by sync)
 - **Computed fields** are exported per container under `computed_fields/`
 - **ID references** are replaced with name references for cross-environment portability
 - **Re-export** produces zero git diff when nothing has changed

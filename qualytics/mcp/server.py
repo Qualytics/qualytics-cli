@@ -234,7 +234,7 @@ def create_datastore(
     schema: str,
     tags: list[str] | None = None,
     teams: list[str] | None = None,
-    trigger_catalog: bool = True,
+    trigger_sync: bool = True,
 ) -> dict:
     """Create a new datastore linked to an existing connection."""
     from ..api.datastores import create_datastore as api_create
@@ -247,7 +247,7 @@ def create_datastore(
         schema=schema,
         tags=tags,
         teams=teams,
-        trigger_catalog=trigger_catalog,
+        trigger_catalog=trigger_sync,
     )
     client = _client()
     return _api_call(api_create, client, payload)
@@ -629,12 +629,12 @@ def delete_anomaly(id: int) -> None:
 
 
 @mcp.tool
-def run_catalog(
+def run_sync(
     datastore_ids: list[int],
     prune: bool = False,
     recreate: bool = False,
 ) -> list[dict]:
-    """Trigger a catalog operation to discover containers in datastores.
+    """Trigger a sync operation to discover containers in datastores.
 
     Returns the operation details for each datastore. Use get_operation to check progress.
     """
@@ -644,7 +644,7 @@ def run_catalog(
     results = []
     for ds_id in datastore_ids:
         payload = {
-            "type": "catalog",
+            "type": "sync",
             "datastore_id": ds_id,
             "prune": prune,
             "recreate": recreate,

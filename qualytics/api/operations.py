@@ -4,7 +4,7 @@ from ..api.client import QualyticsClient
 
 
 def run_operation(client: QualyticsClient, payload: dict) -> dict:
-    """Trigger an operation (catalog, profile, scan, materialize, export).
+    """Trigger an operation (sync, profile, scan, materialize, export).
 
     Payload must include ``type`` and ``datastore_id`` plus type-specific params.
     Returns the created operation object.

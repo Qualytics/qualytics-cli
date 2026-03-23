@@ -62,7 +62,7 @@ qualytics mcp serve --transport streamable-http --port 8000
 - **Connections**: `list_connections`, `get_connection`, `create_connection`, `update_connection`, `delete_connection`, `test_connection`
 - **Quality Checks**: `list_checks`, `get_check`, `create_check`, `update_check`, `delete_check`
 - **Anomalies**: `list_anomalies`, `get_anomaly`, `update_anomaly`, `archive_anomaly`, `delete_anomaly`
-- **Operations**: `catalog`, `profile`, `scan`, `get_operation`, `list_operations`, `abort_operation`
+- **Operations**: `sync`, `profile`, `scan`, `get_operation`, `list_operations`, `abort_operation`
 - **Config**: `export_config`, `import_config`
 
 Run `qualytics mcp serve --help` for details.

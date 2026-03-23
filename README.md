@@ -49,7 +49,7 @@ qualytics config import --input ./qualytics-config --dry-run
 | `containers` | Create and manage computed containers |
 | `checks` | Create and manage quality checks |
 | `anomalies` | View and manage detected anomalies |
-| `operations` | Trigger catalog, profile, and scan operations |
+| `operations` | Trigger sync, profile, and scan operations |
 | `config` | Export and import configuration as code |
 | `schedule` | Schedule recurring operations |
 | `mcp` | Start the MCP server for LLM integration |
@@ -65,7 +65,7 @@ Run `qualytics <command> --help` for full details on any command.
 | [Connections](docs/connections.md) | Creating and managing database connections |
 | [Datastores](docs/datastores.md) | Creating and managing datastores |
 | [Quality Checks](docs/checks.md) | Creating checks from YAML (single and bulk) |
-| [Operations](docs/operations.md) | Catalog, profile, scan workflows |
+| [Operations](docs/operations.md) | Sync, profile, scan workflows |
 | [Export/Import](docs/export-import.md) | Config-as-code: export, import, CI/CD promotion |
 | [Anomalies](docs/anomalies.md) | Viewing and managing anomalies |
 | [Computed Fields](docs/computed-fields.md) | User-defined computed fields in export/import |

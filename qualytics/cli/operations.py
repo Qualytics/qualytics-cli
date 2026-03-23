@@ -1,4 +1,4 @@
-"""CLI commands for datastore operations (catalog, profile, scan, materialize, export)."""
+"""CLI commands for datastore operations (sync, profile, scan, materialize, export)."""
 
 from datetime import datetime
 
@@ -10,7 +10,7 @@ from ..api.operations import abort_operation, get_operation, list_all_operations
 from ..services.operations import (
     DEFAULT_POLL_INTERVAL,
     DEFAULT_TIMEOUT,
-    run_catalog,
+    run_sync,
     run_export,
     run_materialize,
     run_profile,
@@ -44,11 +44,11 @@ def _parse_int_list(value: str) -> list[int]:
     return [int(x) for x in _parse_comma_list(value)]
 
 
-# ── catalog ──────────────────────────────────────────────────────────────
+# ── sync ────────────────────────────────────────────────────────────────
 
 
-@operations_app.command("catalog")
-def catalog_operation(
+@operations_app.command("sync")
+def sync_operation(
     datastore_id: str = typer.Option(
         ...,
         "--datastore-id",
@@ -62,7 +62,7 @@ def catalog_operation(
     prune: bool = typer.Option(
         False,
         "--prune",
-        help="Prune containers not found in catalog",
+        help="Prune containers not found during sync",
     ),
     recreate: bool = typer.Option(
         False,
@@ -85,11 +85,11 @@ def catalog_operation(
         help="Maximum seconds to wait for completion (default: 1800 = 30 min)",
     ),
 ):
-    """Trigger a catalog operation for the specified datastores."""
+    """Trigger a sync operation for the specified datastores."""
     datastore_ids = _parse_int_list(datastore_id)
     client = get_client()
     include_list = _parse_comma_list(include) if include else None
-    run_catalog(
+    run_sync(
         client,
         datastore_ids,
         include_list,
@@ -489,7 +489,7 @@ def operations_list(
     operation_type: str | None = typer.Option(
         None,
         "--type",
-        help="Operation type: catalog, profile, scan, materialize, export",
+        help="Operation type: sync, profile, scan, materialize, export",
     ),
     status: str | None = typer.Option(
         None,

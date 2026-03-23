@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Qualytics CLI** is a command-line interface for the Qualytics data quality platform. It wraps the Qualytics controlplane REST API, enabling users to manage quality checks, datastores, containers, and operations (catalog, profile, scan) programmatically.
+**Qualytics CLI** is a command-line interface for the Qualytics data quality platform. It wraps the Qualytics controlplane REST API, enabling users to manage quality checks, datastores, containers, and operations (sync, profile, scan) programmatically.
 
 **License:** MIT
 **Language:** Python 3.10+
@@ -40,7 +40,7 @@ qualytics-cli/
 │   │   ├── containers.py     # containers create/update/get/list/delete/validate/import/preview commands
 │   │   ├── datastores.py     # datastores create/update/get/list/delete/verify/enrichment commands
 │   │   ├── export_import.py  # config export/import (config-as-code)
-│   │   ├── operations.py     # operations catalog/profile/scan/materialize/export/get/list/abort commands
+│   │   ├── operations.py     # operations sync/profile/scan/materialize/export/get/list/abort commands
 │   │   ├── mcp_cmd.py        # mcp serve CLI command
 │   │   ├── computed_tables.py # Internal helpers for computed table import and preview (used by containers.py)
 │   │   └── schedule.py       # schedule export-metadata command
@@ -109,7 +109,7 @@ from qualytics.api.client import get_client
 
 client = get_client()           # Loads config, validates token, returns client
 response = client.get("quality-checks", params={"datastore": 1})
-response = client.post("operations/run", json={"type": "catalog", ...})
+response = client.post("operations/run", json={"type": "sync", ...})
 ```
 
 The client provides:
@@ -145,11 +145,11 @@ SSL verification is **secure by default** (`True`) and configurable per installa
 
 Full operation lifecycle management — trigger, monitor, list, and abort operations.
 
-**Supported operation types:** `catalog`, `profile`, `scan`, `materialize`, `export`
+**Supported operation types:** `sync`, `profile`, `scan`, `materialize`, `export`
 
 **Architecture:**
 - `api/operations.py` — 5 thin HTTP wrappers: `run_operation`, `get_operation`, `list_operations`, `list_all_operations`, `abort_operation`
-- `services/operations.py` — business logic: `run_catalog`, `run_profile`, `run_scan`, `run_materialize`, `run_export`, `wait_for_operation`, `_handle_operation_result`
+- `services/operations.py` — business logic: `run_sync`, `run_profile`, `run_scan`, `run_materialize`, `run_export`, `wait_for_operation`, `_handle_operation_result`
 - `cli/operations.py` — 8 CLI commands under `qualytics operations`
 
 **Polling behavior:**
@@ -266,7 +266,7 @@ qualytics-export/
 - `export_config()` fetches connections, datastores, computed containers, computed fields, and quality checks for given datastore IDs
 - Connections are deduplicated across datastores (exported once by name)
 - Secret fields (password, secret_key, etc.) are replaced with `${ENV_VAR}` placeholders
-- Only computed containers are exported (table/view/file are created by catalog operations)
+- Only computed containers are exported (table/view/file are discovered by sync operations)
 - `_write_yaml()` only writes when content changes — re-export produces zero git diff
 - ID references are replaced with name references for portability
 
@@ -312,7 +312,7 @@ Full datastore lifecycle management — create, update, get, list, delete, verif
 
 Full container lifecycle management — create computed containers, update, get, list, delete, and validate definitions.
 
-**Container types:** 6 total (`table`, `view`, `file`, `computed_table`, `computed_file`, `computed_join`). Only the 3 computed types can be created/updated via CLI — non-computed types are created during catalog operations.
+**Container types:** 6 total (`table`, `view`, `file`, `computed_table`, `computed_file`, `computed_join`). Only the 3 computed types can be created/updated via CLI — non-computed types are created during sync operations.
 
 **Architecture:**
 - `api/containers.py` — 9 thin HTTP wrappers: `create_container`, `update_container`, `get_container`, `list_containers`, `list_all_containers`, `delete_container`, `validate_container`, `get_field_profiles`, `list_containers_listing`
@@ -418,7 +418,7 @@ JWT tokens are validated for expiration before each operation. Expired tokens pr
 | `connections` | `create`, `update`, `get`, `list`, `delete`, `test` | Connection CRUD with secrets management + connectivity testing |
 | `containers` | `create`, `update`, `get`, `list`, `delete`, `validate`, `import`, `preview` | Container CRUD + validation + bulk import |
 | `datastores` | `create`, `update`, `get`, `list`, `delete`, `verify`, `enrichment` | Datastore CRUD + connection verification + enrichment linking |
-| `operations` | `catalog`, `profile`, `scan`, `materialize`, `export`, `get`, `list`, `abort` | Operation lifecycle (trigger, monitor, abort) |
+| `operations` | `sync`, `profile`, `scan`, `materialize`, `export`, `get`, `list`, `abort` | Operation lifecycle (trigger, monitor, abort) |
 | `mcp` | `serve` | MCP server for Claude Code, Cursor, and other LLM tools |
 | `schedule` | `export-metadata` | Cron-based export scheduling |
 | ~~`init`~~ | — | **Deprecated** → `auth init` |
@@ -517,7 +517,7 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 | `test_export_import.py` | Helpers (slugify, write_yaml, env var names), strip functions (connections, datastores, containers), import functions (connections, datastores, containers with upsert), export orchestrator (full, filtered, deduplication), import orchestrator (full, filtered), CLI commands (export, import, dry-run, error display) |
 | `test_containers.py` | API layer (create, update, get, list, list_all, delete, validate, field_profiles, listing), service layer (get_container_by_name, build payloads), CLI commands (create, update, get, list, delete, validate), polymorphic create, 409 handling |
 | `test_datastores.py` | API layer (create, update, get, list, list_all, delete, verify, validate, enrichment connect/disconnect), service layer (get_datastore_by, build payloads), CLI commands (create, update, get, list, delete, verify, enrichment), validation |
-| `test_operations.py` | API layer (run, get, list, list_all, abort), service layer (polling, multi-datastore, background mode, payload construction), CLI commands (catalog, profile, scan, materialize, export, get, list, abort), validation |
+| `test_operations.py` | API layer (run, get, list, list_all, abort), service layer (polling, multi-datastore, background mode, payload construction), CLI commands (sync, profile, scan, materialize, export, get, list, abort), validation |
 | `test_quality_checks.py` | API layer (endpoints, params, pagination), CLI commands (all 9), service import (upsert, dry-run, multi-datastore), promotion workflow, edge cases |
 | `test_serialization.py` | Format detection, YAML/JSON load/dump, datetime preservation, display formatting |
 
@@ -625,7 +625,7 @@ uv version --short                   # Show current version
 | POST | `/containers/validate` | Validate computed container definition |
 | GET | `/containers/{id}/field-profiles` | Get field profiles |
 | GET | `/containers/listing` | Lightweight container listing (non-paginated) |
-| POST | `/operations/run` | Trigger operations (catalog, profile, scan, materialize, export) |
+| POST | `/operations/run` | Trigger operations (sync, profile, scan, materialize, export) |
 | GET | `/operations/{id}` | Get operation detail with progress counters |
 | GET | `/operations` | List operations (paginated, with filters) |
 | PUT | `/operations/abort/{id}` | Abort a running operation (best-effort) |

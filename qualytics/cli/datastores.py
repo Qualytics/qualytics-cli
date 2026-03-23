@@ -88,10 +88,10 @@ def datastores_create(
     high_count_rollup_threshold: int | None = typer.Option(
         None, "--high-count-rollup-threshold", min=1
     ),
-    trigger_catalog: bool = typer.Option(
+    trigger_sync: bool = typer.Option(
         True,
-        "--trigger-catalog/--no-trigger-catalog",
-        help="Whether to trigger catalog. Default is TRUE",
+        "--trigger-sync/--no-trigger-sync",
+        help="Whether to trigger sync. Default is TRUE",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print payload only; no HTTP"
@@ -144,7 +144,7 @@ def datastores_create(
             enrichment_source_record_limit=enrichment_source_record_limit,
             enrichment_remediation_strategy=enrichment_remediation_strategy,
             high_count_rollup_threshold=high_count_rollup_threshold,
-            trigger_catalog=trigger_catalog,
+            trigger_catalog=trigger_sync,
             database=database,
             schema=schema,
         )

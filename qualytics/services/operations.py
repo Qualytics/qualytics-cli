@@ -1,4 +1,4 @@
-"""Operations service functions for catalog, profile, scan, materialize, and export."""
+"""Operations service functions for sync, profile, scan, materialize, and export."""
 
 import time
 from datetime import datetime
@@ -16,7 +16,7 @@ DEFAULT_POLL_INTERVAL = 10  # seconds between polls
 DEFAULT_TIMEOUT = 1800  # 30 minutes max wait
 
 # Valid operation types
-VALID_OPERATION_TYPES = {"catalog", "profile", "scan", "materialize", "export"}
+VALID_OPERATION_TYPES = {"sync", "profile", "scan", "materialize", "export"}
 
 
 def wait_for_operation(
@@ -141,7 +141,7 @@ def _run_for_datastores(
             )
 
 
-def run_catalog(
+def run_sync(
     client: QualyticsClient,
     datastore_ids: list[int],
     include: list[str] | None,
@@ -151,12 +151,12 @@ def run_catalog(
     poll_interval: int = DEFAULT_POLL_INTERVAL,
     timeout: int = DEFAULT_TIMEOUT,
 ):
-    """Run catalog operation for specified datastores."""
+    """Run sync operation for specified datastores."""
 
     def build_payload(datastore_id):
         return {
             "datastore_id": datastore_id,
-            "type": "catalog",
+            "type": "sync",
             "include": include,
             "prune": prune,
             "recreate": recreate,
@@ -164,7 +164,7 @@ def run_catalog(
 
     _run_for_datastores(
         client,
-        "Catalog",
+        "Sync",
         datastore_ids,
         build_payload,
         background,
