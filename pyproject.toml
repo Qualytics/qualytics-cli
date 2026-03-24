@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qualytics-cli"
-version = "0.4.0"
+version = "1.0.0"
 description = "Qualytics CLI - Command-line interface for the Qualytics data quality platform"
 readme = "README.md"
 license = "MIT"
