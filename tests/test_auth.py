@@ -431,23 +431,18 @@ class TestAuthInitCommand:
 # ── deprecated command tests ─────────────────────────────────────────────
 
 
-class TestDeprecatedCommands:
-    """Tests for deprecated command wrappers."""
+class TestDeprecatedCommandsRemoved:
+    """Tests that deprecated commands have been removed for V1."""
 
-    @patch("qualytics.cli.auth.save_config")
-    @patch("qualytics.cli.auth.is_token_valid", return_value="valid-token")
-    def test_deprecated_init_delegates(self, mock_valid, mock_save):
-        """Test that deprecated 'init' delegates to 'auth init'."""
+    def test_init_removed(self):
+        """The deprecated 'init' root command is no longer available."""
         result = runner.invoke(
             app,
             ["init", "--url", "https://test.qualytics.io", "--token", "my-token"],
         )
-        assert result.exit_code == 0
-        assert "deprecated" in result.output.lower()
-        mock_save.assert_called_once()
+        assert result.exit_code != 0
 
-    def test_deprecated_show_config_delegates(self):
-        """Test that deprecated 'show-config' delegates to 'auth status'."""
-        with patch("qualytics.cli.auth.load_config", return_value=None):
-            result = runner.invoke(app, ["show-config"])
-            assert "deprecated" in result.output.lower()
+    def test_show_config_removed(self):
+        """The deprecated 'show-config' root command is no longer available."""
+        result = runner.invoke(app, ["show-config"])
+        assert result.exit_code != 0

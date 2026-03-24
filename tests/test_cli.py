@@ -154,11 +154,10 @@ class TestCommandSuggestions:
         assert "datastores" in output
         assert "qualytics --help" in output
 
-    def test_top_level_hides_deprecated_commands(self, cli_runner):
-        """Top-level suggestions should not show hidden/deprecated commands."""
+    def test_top_level_does_not_show_removed_commands(self, cli_runner):
+        """Removed deprecated commands should not appear in top-level listing."""
         result = cli_runner.invoke(app, [])
         output = _strip_ansi(result.output)
-        # show-config and init are hidden/deprecated
         assert "show-config" not in output
         # 'init' appears in 'qualytics --help' hint, check it's not listed as a command
         lines = [
@@ -169,7 +168,6 @@ class TestCommandSuggestions:
         command_lines = [
             line for line in lines if line and not line.startswith("Available")
         ]
-        # None of the command lines should be just 'init' (it may appear as part of help text)
         command_names = [line.split()[0] for line in command_lines if line.split()]
         assert "init" not in command_names
         assert "show-config" not in command_names
@@ -296,6 +294,80 @@ class TestCommandSuggestions:
         assert result.exit_code != 0
         output = _strip_ansi(result.output)
         assert "login" in output.lower()
+
+    def test_users_shows_available_commands(self, cli_runner):
+        """qualytics users (no subcommand) lists subcommands."""
+        result = cli_runner.invoke(app, ["users"])
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Available commands" in output
+        assert "list" in output
+        assert "get" in output
+
+    def test_teams_shows_available_commands(self, cli_runner):
+        """qualytics teams (no subcommand) lists subcommands."""
+        result = cli_runner.invoke(app, ["teams"])
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Available commands" in output
+        assert "list" in output
+        assert "get" in output
+
+    def test_tags_shows_available_commands(self, cli_runner):
+        """qualytics tags (no subcommand) lists subcommands."""
+        result = cli_runner.invoke(app, ["tags"])
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "Available commands" in output
+        assert "list" in output
+        assert "get" in output
+        assert "create" in output
+        assert "delete" in output
+
+
+# ── New command group registration tests ─────────────────────────────────
+
+
+def test_users_command_registered(cli_runner):
+    """Test that the 'users' command group is registered."""
+    result = cli_runner.invoke(app, ["users", "--help"])
+    assert result.exit_code == 0
+    assert "list" in result.output.lower()
+    assert "get" in result.output.lower()
+
+
+def test_teams_command_registered(cli_runner):
+    """Test that the 'teams' command group is registered."""
+    result = cli_runner.invoke(app, ["teams", "--help"])
+    assert result.exit_code == 0
+    assert "list" in result.output.lower()
+    assert "get" in result.output.lower()
+
+
+def test_tags_command_registered(cli_runner):
+    """Test that the 'tags' command group is registered with all subcommands."""
+    result = cli_runner.invoke(app, ["tags", "--help"])
+    assert result.exit_code == 0
+    assert "list" in result.output.lower()
+    assert "get" in result.output.lower()
+    assert "create" in result.output.lower()
+    assert "delete" in result.output.lower()
+
+
+def test_deprecated_commands_removed(cli_runner):
+    """Deprecated 'init' and 'show-config' root commands are no longer available."""
+    result = cli_runner.invoke(app, ["show-config"])
+    assert result.exit_code != 0
+
+    result = cli_runner.invoke(app, ["init", "--url", "x", "--token", "x"])
+    assert result.exit_code != 0
+
+
+def test_checks_activate_visible(cli_runner):
+    """The 'checks activate' command is registered and visible."""
+    result = cli_runner.invoke(app, ["checks", "--help"])
+    assert result.exit_code == 0
+    assert "activate" in result.output.lower()
 
     def test_version_flag_still_works(self, cli_runner):
         """--version should still work after callback changes."""

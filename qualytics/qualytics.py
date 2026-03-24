@@ -19,6 +19,9 @@ from .cli.auth import auth_app
 from .cli.export_import import export_import_app
 from .cli.mcp_cmd import mcp_app
 from .cli.doctor import doctor
+from .cli.users import users_app
+from .cli.teams import teams_app
+from .cli.tags import tags_app
 
 # Import config for environment setup
 from .config import DOTENV_PATH
@@ -39,6 +42,9 @@ app.add_typer(anomalies_app, name="anomalies")
 app.add_typer(auth_app, name="auth")
 app.add_typer(export_import_app, name="config")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(users_app, name="users")
+app.add_typer(teams_app, name="teams")
+app.add_typer(tags_app, name="tags")
 app.command("doctor", help="Check CLI health and connectivity")(doctor)
 
 
