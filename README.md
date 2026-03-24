@@ -51,6 +51,9 @@ qualytics config import --input ./qualytics-config --dry-run
 | `anomalies` | View and manage detected anomalies |
 | `operations` | Trigger sync, profile, and scan operations |
 | `config` | Export and import configuration as code |
+| `users` | List and view users |
+| `teams` | List and view teams |
+| `tags` | Manage tags (list, create, delete) |
 | `schedule` | Schedule recurring operations |
 | `mcp` | Start the MCP server for LLM integration |
 | `doctor` | Check CLI health and connectivity |
@@ -84,6 +87,39 @@ uv run pre-commit run --all-files    # Lint, format, type checks
 ```
 
 For architecture details and contribution guidelines, see [AGENTS.md](AGENTS.md).
+
+## Releasing
+
+Releases are automated via GitHub Actions. The version lives in `pyproject.toml` and is managed by `uv version`.
+
+### Steps to release a new version
+
+1. **Ensure `main` is green** -- CI (lint + tests across Python 3.10-3.14 + pre-commit) must pass.
+
+2. **Trigger the Release workflow** -- Go to [Actions > Release](../../actions/workflows/release.yml) and click **Run workflow**. Select the bump type:
+   - `patch` -- bug fixes (1.0.0 → 1.0.1)
+   - `minor` -- new features (1.0.0 → 1.1.0)
+   - `major` -- breaking changes (1.0.0 → 2.0.0)
+
+3. **The workflow automatically:**
+   - Bumps the version in `pyproject.toml` via `uv version --bump <type>`
+   - Commits the change and creates a `v{version}` git tag
+   - Pushes the commit and tag to `main`
+
+4. **The tag push triggers the Publish workflow**, which:
+   - Builds the package (`uv build`)
+   - Publishes to [PyPI](https://pypi.org/project/qualytics-cli/) via OIDC trusted publishing (no API tokens needed)
+   - Creates a GitHub Release with auto-generated release notes and attached artifacts
+
+### Manual version check
+
+```bash
+# Current version in pyproject.toml
+uv version --short
+
+# Installed version
+qualytics --version
+```
 
 ## License
 
