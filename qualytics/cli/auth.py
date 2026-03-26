@@ -184,6 +184,7 @@ def auth_status():
     ssl_label = "[green]enabled[/green]" if ssl_verify else "[yellow]disabled[/yellow]"
 
     print(f"[bold]{host}[/bold]")
+    print(f"  URL:              {url}")
     print(f"  Status:           {status_icon}")
     print(f"  Token:            {masked_token}")
     if expiry_line:
