@@ -107,12 +107,18 @@ class TestMCPCommand:
         import jwt as _jwt
 
         token = _jwt.encode({"sub": "u"}, key="", algorithm="HS256")
-        config = {"url": "https://demo.qualytics.io/api", "token": token, "ssl_verify": True}
+        config = {
+            "url": "https://demo.qualytics.io/api",
+            "token": token,
+            "ssl_verify": True,
+        }
 
         with patch("qualytics.cli.mcp_cmd.load_config", return_value=config):
             with patch("qualytics.cli.mcp_cmd.create_proxy") as mock_proxy:
                 with patch("qualytics.cli.mcp_cmd.Client"):
-                    with patch("qualytics.cli.mcp_cmd.StreamableHttpTransport") as mock_transport:
+                    with patch(
+                        "qualytics.cli.mcp_cmd.StreamableHttpTransport"
+                    ) as mock_transport:
                         mock_server = MagicMock()
                         mock_proxy.return_value = mock_server
 
@@ -123,5 +129,8 @@ class TestMCPCommand:
 
                         mock_transport.assert_called_once()
                         call_kwargs = mock_transport.call_args
-                        assert call_kwargs.kwargs["url"] == "https://demo.qualytics.io/api/mcp"  # config url already includes /api
+                        assert (
+                            call_kwargs.kwargs["url"]
+                            == "https://demo.qualytics.io/api/mcp"
+                        )  # config url already includes /api
                         assert call_kwargs.kwargs["auth"] == token
