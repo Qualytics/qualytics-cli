@@ -102,6 +102,28 @@ class TestMCPCommand:
             result = cli_runner.invoke(app, ["mcp", "serve"])
             assert result.exit_code != 0
 
+    def test_mcp_serve_exits_when_url_empty(self, cli_runner):
+        """Test that mcp serve fails when config url is empty."""
+        from qualytics.qualytics import app
+
+        config = {"url": "", "token": "some-token", "ssl_verify": True}
+        with patch("qualytics.cli.mcp_cmd.load_config", return_value=config):
+            result = cli_runner.invoke(app, ["mcp", "serve"])
+            assert result.exit_code != 0
+
+    def test_mcp_serve_exits_when_token_empty(self, cli_runner):
+        """Test that mcp serve fails when config token is empty."""
+        from qualytics.qualytics import app
+
+        config = {
+            "url": "https://demo.qualytics.io/api",
+            "token": "",
+            "ssl_verify": True,
+        }
+        with patch("qualytics.cli.mcp_cmd.load_config", return_value=config):
+            result = cli_runner.invoke(app, ["mcp", "serve"])
+            assert result.exit_code != 0
+
     def test_mcp_serve_builds_proxy_with_correct_url(self, cli_runner):
         """Test that mcp serve constructs the proxy URL from config."""
         import jwt as _jwt
@@ -134,3 +156,38 @@ class TestMCPCommand:
                             == "https://demo.qualytics.io/api/mcp"
                         )  # config url already includes /api
                         assert call_kwargs.kwargs["auth"] == token
+
+    def test_mcp_serve_forwards_ssl_verify_false(self, cli_runner):
+        """Test that ssl_verify=False is wired into the httpx client factory."""
+        import jwt as _jwt
+
+        token = _jwt.encode({"sub": "u"}, key="", algorithm="HS256")
+        config = {
+            "url": "https://demo.qualytics.io/api",
+            "token": token,
+            "ssl_verify": False,
+        }
+
+        with patch("qualytics.cli.mcp_cmd.load_config", return_value=config):
+            with patch("qualytics.cli.mcp_cmd.create_proxy") as mock_proxy:
+                with patch("qualytics.cli.mcp_cmd.Client"):
+                    with patch(
+                        "qualytics.cli.mcp_cmd.StreamableHttpTransport"
+                    ) as mock_transport:
+                        mock_server = MagicMock()
+                        mock_proxy.return_value = mock_server
+
+                        cli_runner.invoke(
+                            __import__("qualytics.qualytics", fromlist=["app"]).app,
+                            ["mcp", "serve"],
+                        )
+
+                        mock_transport.assert_called_once()
+                        factory = mock_transport.call_args.kwargs[
+                            "httpx_client_factory"
+                        ]
+                        with patch(
+                            "qualytics.cli.mcp_cmd.httpx.AsyncClient"
+                        ) as mock_async:
+                            factory()
+                            mock_async.assert_called_once_with(verify=False)

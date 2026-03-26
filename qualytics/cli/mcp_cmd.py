@@ -66,6 +66,13 @@ def mcp_serve(
     token = config.get("token", "")
     ssl_verify = config.get("ssl_verify", True)
 
+    if not url or not token:
+        raise typer.BadParameter(
+            f"Config at {CONFIG_PATH} is missing 'url' or 'token'. "
+            f"Run 'qualytics auth login' to re-authenticate.",
+            param_hint="authentication",
+        )
+
     remote_transport = StreamableHttpTransport(
         url=f"{url}/mcp",
         auth=token,
