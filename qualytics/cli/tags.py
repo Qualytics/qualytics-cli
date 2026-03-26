@@ -39,16 +39,16 @@ def tags_list(
 
 @tags_app.command("get")
 def tags_get(
-    tag_id: int = typer.Option(..., "--id", help="Tag ID"),
+    name: str = typer.Option(..., "--name", "-n", help="Tag name"),
     fmt: OutputFormat = typer.Option(
         OutputFormat.YAML, "--format", "-f", help="Output format: yaml or json"
     ),
 ):
-    """Get a single tag by ID."""
+    """Get a single tag by name."""
     client = get_client()
 
     with status("[bold cyan]Fetching tag...[/bold cyan]"):
-        result = get_tag(client, tag_id)
+        result = get_tag(client, name)
 
     print(format_for_display(result, fmt))
 
@@ -56,30 +56,48 @@ def tags_get(
 @tags_app.command("create")
 def tags_create(
     name: str = typer.Option(..., "--name", "-n", help="Tag name"),
+    color: str | None = typer.Option(
+        None, "--color", help="Tag color (hex, e.g. #FF2000)"
+    ),
+    description: str | None = typer.Option(
+        None, "--description", "-d", help="Tag description"
+    ),
+    category: str | None = typer.Option(None, "--category", help="Tag category"),
+    weight_modifier: int | None = typer.Option(
+        None, "--weight-modifier", help="Weight modifier (-10 to 10)"
+    ),
     fmt: OutputFormat = typer.Option(
         OutputFormat.YAML, "--format", "-f", help="Output format: yaml or json"
     ),
 ):
     """Create a new tag."""
     client = get_client()
-    payload = {"name": name}
+    payload: dict = {"type": "global", "name": name}
+    if color is not None:
+        payload["color"] = color
+    if description is not None:
+        payload["description"] = description
+    if category is not None:
+        payload["category"] = category
+    if weight_modifier is not None:
+        payload["weight_modifier"] = weight_modifier
 
     result = create_tag(client, payload)
-    print(f"[green]Tag created successfully![/green]")
-    print(f"[green]Tag ID: {result.get('id')}[/green]\n")
+    print("[green]Tag created successfully![/green]")
+    print(f"[green]Tag name: {result.get('name')}[/green]\n")
     print(format_for_display(result, fmt))
 
 
 @tags_app.command("delete")
 def tags_delete(
-    tag_id: int = typer.Option(..., "--id", help="Tag ID to delete"),
+    name: str = typer.Option(..., "--name", "-n", help="Tag name to delete"),
 ):
-    """Delete a tag by ID."""
+    """Delete a tag by name."""
     client = get_client()
 
     try:
-        delete_tag(client, tag_id)
-        print(f"[green]Tag {tag_id} deleted successfully.[/green]")
+        delete_tag(client, name)
+        print(f"[green]Tag '{name}' deleted successfully.[/green]")
     except QualyticsAPIError as e:
-        print(f"[red]Failed to delete tag {tag_id}: {e.message}[/red]")
+        print(f"[red]Failed to delete tag '{name}': {e.message}[/red]")
         raise typer.Exit(code=1)

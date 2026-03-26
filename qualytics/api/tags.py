@@ -3,9 +3,9 @@
 from ..api.client import QualyticsClient
 
 
-def get_tag(client: QualyticsClient, tag_id: int) -> dict:
-    """Get a single tag by ID."""
-    response = client.get(f"tags/{tag_id}")
+def get_tag(client: QualyticsClient, tag_name: str) -> dict:
+    """Get a single tag by name."""
+    response = client.get(f"global-tags/{tag_name}")
     return response.json()
 
 
@@ -20,7 +20,7 @@ def list_tags(
     Returns the raw paginated response: {items, total, page, size}.
     """
     params: dict = {"page": page, "size": size}
-    response = client.get("tags", params=params)
+    response = client.get("global-tags", params=params)
     return response.json()
 
 
@@ -43,14 +43,14 @@ def list_all_tags(client: QualyticsClient) -> list[dict]:
 
 
 def create_tag(client: QualyticsClient, payload: dict) -> dict:
-    """Create a new tag. Returns the created tag with ID."""
-    response = client.post("tags", json=payload)
+    """Create a new tag. Returns the created tag."""
+    response = client.post("global-tags", json=payload)
     return response.json()
 
 
-def delete_tag(client: QualyticsClient, tag_id: int) -> dict:
-    """Delete a tag by ID."""
-    response = client.delete(f"tags/{tag_id}")
+def delete_tag(client: QualyticsClient, tag_name: str) -> dict:
+    """Delete a tag by name."""
+    response = client.delete(f"global-tags/{tag_name}")
     if not response.content or response.status_code == 204:
         return {"success": True, "message": "Tag deleted successfully"}
     return response.json()
