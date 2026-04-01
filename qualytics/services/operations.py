@@ -4,7 +4,13 @@ import time
 from datetime import datetime
 
 from rich import print
-from rich.progress import track
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from ..api.client import QualyticsAPIError, QualyticsClient
 from ..api.operations import get_operation, run_operation
@@ -28,42 +34,71 @@ def wait_for_operation(
     """Wait for an operation to finish executing.
 
     Uses elapsed-time based timeout instead of fixed retry count.
-    Shows progress counters for profile/scan operations.
+    Shows a progress bar based on containers_analyzed/total_containers
+    when available, otherwise shows a spinner.
 
     Returns the operation response dict, or None on timeout.
     """
     start_time = time.monotonic()
-    last_status_time = start_time
+    has_container_info = False
 
-    while True:
-        elapsed = time.monotonic() - start_time
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        TextColumn("{task.fields[detail]}"),
+    ) as progress:
+        task = progress.add_task(
+            f"Operation {operation_id}",
+            total=None,
+            detail="starting...",
+        )
 
-        if elapsed >= timeout:
-            print(
-                f"[bold red] Operation {operation_id} timed out after {int(elapsed)}s [/bold red]"
-            )
-            return None
+        while True:
+            elapsed = time.monotonic() - start_time
 
-        response = get_operation(client, operation_id)
+            if elapsed >= timeout:
+                progress.stop()
+                print(
+                    f"[bold red] Operation {operation_id} timed out after {int(elapsed)}s [/bold red]"
+                )
+                return None
 
-        if response.get("end_time"):
-            return response
+            response = get_operation(client, operation_id)
 
-        # Show progress counters for profile/scan
-        now = time.monotonic()
-        if now - last_status_time >= 60:
+            if response.get("end_time"):
+                # Complete the bar before finishing
+                if has_container_info:
+                    progress.update(task, completed=progress.tasks[0].total)
+                return response
+
+            # Update progress from container info if available
             status_info = response.get("status", {})
-            total = status_info.get("total_containers", "?")
-            analyzed = status_info.get("containers_analyzed", "?")
-            records = status_info.get("records_processed", "?")
-            print(
-                f"  [dim]Operation {operation_id} still running... "
-                f"({int(elapsed)}s elapsed, {analyzed}/{total} containers, "
-                f"{records} records)[/dim]"
-            )
-            last_status_time = now
+            total = status_info.get("total_containers")
+            analyzed = status_info.get("containers_analyzed")
+            records = status_info.get("records_processed", 0)
 
-        time.sleep(poll_interval)
+            if total is not None and analyzed is not None and total > 0:
+                if not has_container_info:
+                    has_container_info = True
+                    progress.update(task, total=total)
+                else:
+                    # total_containers can change during operation
+                    progress.update(task, total=total)
+                progress.update(
+                    task,
+                    completed=analyzed,
+                    detail=f"{analyzed}/{total} containers, {records:,} records",
+                )
+            else:
+                progress.update(
+                    task,
+                    detail=f"running... ({int(elapsed)}s elapsed)",
+                )
+
+            time.sleep(poll_interval)
 
 
 # Keep legacy name as alias for backward compat within the codebase
@@ -110,7 +145,7 @@ def _run_for_datastores(
     timeout: int = DEFAULT_TIMEOUT,
 ):
     """Shared runner that iterates over datastores, triggers an operation, and optionally waits."""
-    for datastore_id in track(datastore_ids, description="Processing..."):
+    for datastore_id in datastore_ids:
         try:
             payload = {
                 k: v for k, v in build_payload(datastore_id).items() if v is not None
