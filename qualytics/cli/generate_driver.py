@@ -572,10 +572,55 @@ def _derive_url_metadata(jdbc_url: str) -> tuple[int | None, str, set[str]]:
     return None, "", url_components
 
 
+# Known Spark built-in JdbcDialect implementations (Spark 3.x, package org.apache.spark.sql.jdbc)
+_SPARK_BUILTIN_DIALECTS: dict[str, str] = {
+    "postgresql": "org.apache.spark.sql.jdbc.PostgresDialect$",
+    "mysql":      "org.apache.spark.sql.jdbc.MySQLDialect$",
+    "mariadb":    "org.apache.spark.sql.jdbc.MySQLDialect$",
+    "oracle":     "org.apache.spark.sql.jdbc.OracleDialect$",
+    "sqlserver":  "org.apache.spark.sql.jdbc.MsSqlServerDialect$",
+    "jtds":       "org.apache.spark.sql.jdbc.MsSqlServerDialect$",
+    "db2":        "org.apache.spark.sql.jdbc.DB2Dialect$",
+    "derby":      "org.apache.spark.sql.jdbc.DerbyDialect$",
+    "teradata":   "org.apache.spark.sql.jdbc.TeradataDialect$",
+}
+
+
+def _detect_dialect_class(prefix: str, jar_path: str) -> str | None:
+    """
+    Return the fully-qualified JdbcDialect class name to use for dialectClass, or None.
+
+    Priority:
+      1. Driver JAR ServiceLoader registration:
+         META-INF/services/org.apache.spark.sql.jdbc.JdbcDialect
+      2. Known Spark built-in dialect for this JDBC prefix.
+    """
+    import zipfile as _zf
+
+    # 1. Scan the JAR for a ServiceLoader registration file
+    try:
+        with _zf.ZipFile(jar_path, "r") as zf:
+            service_entry = "META-INF/services/org.apache.spark.sql.jdbc.JdbcDialect"
+            if service_entry in zf.namelist():
+                content = zf.read(service_entry).decode("utf-8", errors="replace").strip()
+                # Take the first non-comment, non-blank line
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        return line
+    except Exception:
+        pass  # JAR unreadable or not a zip — fall through
+
+    # 2. Static built-in lookup by prefix
+    return _SPARK_BUILTIN_DIALECTS.get(prefix.lower())
+
+
 def _build_yaml(
     prefix: str,
     probes: dict,
     jdbc_url: str,
+    *,
+    dialect_class: str | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """
     Build the complete YAML content string from the probes dict.
@@ -933,10 +978,15 @@ def _build_yaml(
 
     # ── Spark JdbcDialect ─────────────────────────────────────────────────────
     lines.append("# ── Spark JdbcDialect ────────────────────────────────────────────────")
-    lines.append(field("dialectClass", None,
-                       "TODO: fully-qualified JdbcDialect Scala object class to register with Spark "
-                       "(e.g. com.example.MyDialect$); null if no custom Spark dialect is needed"))
-    todo_fields.append("dialectClass")
+    if dialect_class is not None:
+        lines.append(field("dialectClass", dialect_class,
+                           "Auto-detected Spark JdbcDialect subclass"))
+        detected_fields.append("dialectClass")
+    else:
+        lines.append(field("dialectClass", None,
+                           "TODO: fully-qualified JdbcDialect Scala object class to register with Spark "
+                           "(e.g. com.example.MyDialect$); null if no custom Spark dialect is needed"))
+        todo_fields.append("dialectClass")
     lines.append("")
 
     # ── URL construction ──────────────────────────────────────────────────────
@@ -1269,7 +1319,8 @@ def generate_driver(
         )
 
     # ── Build YAML ───────────────────────────────────────────────────────
-    yaml_content, detected_fields, todo_fields = _build_yaml(prefix, probes, url)
+    detected_dialect = _detect_dialect_class(prefix, jar_path)
+    yaml_content, detected_fields, todo_fields = _build_yaml(prefix, probes, url, dialect_class=detected_dialect)
 
     # ── Write output ─────────────────────────────────────────────────────
     try:
