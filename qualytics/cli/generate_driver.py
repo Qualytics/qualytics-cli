@@ -876,7 +876,10 @@ def _build_yaml(
              "INT_MAX for older 32-bit drivers (SQL Server, Redshift, Db2)"
     )
     lines.append(field("dataSizeLimit", _data_size_default, _data_size_comment))
-    todo_fields.append("dataSizeLimit")
+    if _data_size_default == "INT_MAX":
+        detected_fields.append("dataSizeLimit")
+    else:
+        todo_fields.append("dataSizeLimit")
     lines.append("")
 
     # ── Schema / catalog filtering ────────────────────────────────────────────
