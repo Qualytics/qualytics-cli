@@ -867,9 +867,15 @@ def _build_yaml(
                        "Set 1 for DBs that struggle with concurrent connections (e.g. BigQuery, "
                        "single-threaded embedded drivers)"))
     todo_fields.append("maxPartitionParallelism")
-    lines.append(field("dataSizeLimit", "LONG_MAX",
-                       "TODO: max data the driver can handle. LONG_MAX (default, most DBs) or "
-                       "INT_MAX for older 32-bit drivers (SQL Server, Redshift, Db2)"))
+    _int_max_prefixes = ("redshift", "sqlserver", "db2")
+    _data_size_default = "INT_MAX" if any(p in prefix.lower() for p in _int_max_prefixes) else "LONG_MAX"
+    _data_size_comment = (
+        "INT_MAX: older 32-bit driver (SQL Server, Redshift, Db2)"
+        if _data_size_default == "INT_MAX"
+        else "TODO: max data the driver can handle. LONG_MAX (default, most DBs) or "
+             "INT_MAX for older 32-bit drivers (SQL Server, Redshift, Db2)"
+    )
+    lines.append(field("dataSizeLimit", _data_size_default, _data_size_comment))
     todo_fields.append("dataSizeLimit")
     lines.append("")
 
