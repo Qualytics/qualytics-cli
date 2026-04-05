@@ -868,7 +868,7 @@ def _build_yaml(
                        "single-threaded embedded drivers)"))
     todo_fields.append("maxPartitionParallelism")
     _int_max_prefixes = ("redshift", "sqlserver", "db2")
-    _data_size_default = "INT_MAX" if any(p in prefix.lower() for p in _int_max_prefixes) else "LONG_MAX"
+    _data_size_default = "INT_MAX" if prefix.lower() in _int_max_prefixes else "LONG_MAX"
     _data_size_comment = (
         "INT_MAX: older 32-bit driver (SQL Server, Redshift, Db2)"
         if _data_size_default == "INT_MAX"
