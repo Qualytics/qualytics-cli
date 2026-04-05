@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import textwrap
 import zipfile
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 import yaml
@@ -1457,7 +1457,7 @@ def generate_driver(
         ),
     ],
     user: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--user",
             help="Database username.",
@@ -1465,7 +1465,7 @@ def generate_driver(
         ),
     ] = None,
     password: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--password",
             help="Database password.",
@@ -1473,7 +1473,7 @@ def generate_driver(
         ),
     ] = None,
     properties: Annotated[
-        Optional[list[str]],
+        list[str] | None,
         typer.Option(
             "--properties",
             help="Extra JDBC connection properties as key=value pairs (repeatable).",
@@ -1481,7 +1481,7 @@ def generate_driver(
         ),
     ] = None,
     output: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--output",
             "-o",
@@ -1804,7 +1804,7 @@ def package_drivers(
         ),
     ] = "dist",
     output: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--output",
             "-o",
