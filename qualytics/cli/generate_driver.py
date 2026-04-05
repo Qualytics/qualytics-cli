@@ -18,7 +18,7 @@ from rich import print
 from rich.console import Console
 from rich.table import Table
 
-from . import BRAND, print_banner
+from . import BRAND, add_suggestion_callback, print_banner
 from .progress import status
 
 # ---------------------------------------------------------------------------
@@ -1174,17 +1174,17 @@ def _update_index(drivers_dir: str, yaml_filename: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# CLI command
+# CLI commands — drivers group
 # ---------------------------------------------------------------------------
 
-generate_driver_app = typer.Typer(
-    name="generate-driver",
-    help="Generate a YAML driver definition by probing a JDBC driver JAR.",
-    invoke_without_command=True,
+drivers_app = typer.Typer(
+    name="drivers",
+    help="Manage pluggable JDBC drivers for Qualytics.",
 )
+add_suggestion_callback(drivers_app, "drivers")
 
 
-@generate_driver_app.callback(invoke_without_command=True)
+@drivers_app.command("generate")
 def generate_driver(
     ctx: typer.Context,
     jar: Annotated[
@@ -1254,7 +1254,7 @@ def generate_driver(
     dist/META-INF/jdbc-drivers/<prefix>.yaml by default, and an index file is
     created or updated in the same directory.
 
-    Run ``qualytics package-drivers`` afterwards to bundle all generated YAMLs
+    Run ``qualytics drivers package`` afterwards to bundle all generated YAMLs
     into a single deployable JAR.
 
     Requires a JDK (java + javac) on PATH.
@@ -1262,20 +1262,17 @@ def generate_driver(
     Examples:
 
     \\b
-        qualytics generate-driver \\
+        qualytics drivers generate \\
             --jar ./postgresql-42.7.3.jar \\
             --url jdbc:postgresql://localhost:5432/mydb \\
             --user alice --password secret
 
-        qualytics generate-driver \\
+        qualytics drivers generate \\
             --jar ./custom-driver.jar \\
             --url jdbc:customdb://host:1234/catalog \\
             --properties loginTimeout=30 \\
             --output custom.yaml
     """
-    # Skip if invoked as part of a help display
-    if ctx.invoked_subcommand is not None:
-        return
 
     print_banner(subtitle="[bold]Generate Driver[/bold]")
 
@@ -1487,29 +1484,22 @@ def generate_driver(
         print(f"  [bold]Index:[/bold]   {index_path} (already present — no change)")
     print(
         "\n  [dim]Review the YAML, fill in the TODO fields, then run:[/dim]"
-        "\n  [dim]  qualytics package-drivers[/dim]"
+        "\n  [dim]  qualytics drivers package[/dim]"
         "\n  [dim]to bundle all drivers into custom-drivers.jar[/dim]\n"
     )
 
 # ---------------------------------------------------------------------------
-# package-drivers command
+# drivers package command
 # ---------------------------------------------------------------------------
 
-package_drivers_app = typer.Typer(
-    name="package-drivers",
-    help="Bundle generated driver YAMLs into a deployable JAR file.",
-    invoke_without_command=True,
-)
 
-
-@package_drivers_app.callback(invoke_without_command=True)
+@drivers_app.command("package")
 def package_drivers(
-    ctx: typer.Context,
     dist_dir: Annotated[
         str,
         typer.Option(
             "--dist-dir",
-            help="Root dist directory produced by generate-driver. "
+            help="Root dist directory produced by 'drivers generate'. "
                  "Must contain META-INF/jdbc-drivers/.",
             show_default=True,
         ),
@@ -1534,13 +1524,11 @@ def package_drivers(
 
     \\b
         # Default — reads dist/, writes custom-drivers.jar
-        qualytics package-drivers
+        qualytics drivers package
 
         # Custom paths
-        qualytics package-drivers --dist-dir ./build --output my-drivers.jar
+        qualytics drivers package --dist-dir ./build --output my-drivers.jar
     """
-    if ctx.invoked_subcommand is not None:
-        return
 
     print_banner(subtitle="[bold]Package Drivers[/bold]")
 
@@ -1551,7 +1539,7 @@ def package_drivers(
     if not os.path.isdir(drivers_dir):
         print(
             f"[red]No jdbc-drivers directory found at: {drivers_dir}[/red]\n"
-            "[yellow]Run [bold]qualytics generate-driver[/bold] first to populate it.[/yellow]"
+            "[yellow]Run [bold]qualytics drivers generate[/bold] first to populate it.[/yellow]"
         )
         raise typer.Exit(code=1)
 
@@ -1559,7 +1547,7 @@ def package_drivers(
     if not os.path.isfile(index_path):
         print(
             f"[red]No index file found at: {index_path}[/red]\n"
-            "[yellow]Run [bold]qualytics generate-driver[/bold] first to create it.[/yellow]"
+            "[yellow]Run [bold]qualytics drivers generate[/bold] first to create it.[/yellow]"
         )
         raise typer.Exit(code=1)
 
