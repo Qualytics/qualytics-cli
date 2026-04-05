@@ -425,9 +425,7 @@ def _compile_probe(tmpdir: str) -> str:
         text=True,
     )
     if result.returncode != 0:
-        print(
-            f"[red]Failed to compile Java probe:[/red]\n{result.stderr}"
-        )
+        print(f"[red]Failed to compile Java probe:[/red]\n{result.stderr}")
         raise typer.Exit(code=1)
     return tmpdir
 
@@ -473,17 +471,23 @@ def _run_probe(
         if result.stderr.strip():
             for line in result.stderr.strip().splitlines():
                 if line.startswith("CONNECTION_ERROR:"):
-                    print(f"[red]JDBC connection failed: {line[len('CONNECTION_ERROR:'):].strip()}[/red]")
+                    print(
+                        f"[red]JDBC connection failed: {line[len('CONNECTION_ERROR:') :].strip()}[/red]"
+                    )
                     raise typer.Exit(code=1)
                 if line.startswith("ERROR:"):
-                    print(f"[red]{line[len('ERROR:'):].strip()}[/red]")
+                    print(f"[red]{line[len('ERROR:') :].strip()}[/red]")
                     raise typer.Exit(code=1)
 
         if result.returncode == 4:
-            print("[red]Could not connect to the database. Check --url, --user, and --password.[/red]")
+            print(
+                "[red]Could not connect to the database. Check --url, --user, and --password.[/red]"
+            )
             raise typer.Exit(code=1)
         if result.returncode == 3:
-            print("[red]No compatible JDBC driver found in the provided JAR for the given URL.[/red]")
+            print(
+                "[red]No compatible JDBC driver found in the provided JAR for the given URL.[/red]"
+            )
             raise typer.Exit(code=1)
         if result.returncode != 0:
             print(f"[red]Probe exited with code {result.returncode}.[/red]")
@@ -535,9 +539,9 @@ def _derive_url_metadata(jdbc_url: str) -> tuple[int | None, str, set[str]]:
         rest = m.group(3)
 
         # host — present if authority is non-empty after stripping credentials/port/params
-        host_part = re.sub(r"^[^@]+@", "", authority)   # strip user:pass@
+        host_part = re.sub(r"^[^@]+@", "", authority)  # strip user:pass@
         host_part = re.sub(r":\d+(?:$|;)", "", host_part)  # strip :port
-        host_part = re.sub(r";.*$", "", host_part)       # strip ;params (SQL Server style)
+        host_part = re.sub(r";.*$", "", host_part)  # strip ;params (SQL Server style)
         if host_part.strip():
             url_components.add("host")
 
@@ -575,14 +579,14 @@ def _derive_url_metadata(jdbc_url: str) -> tuple[int | None, str, set[str]]:
 # Known Spark built-in JdbcDialect implementations (Spark 3.x, package org.apache.spark.sql.jdbc)
 _SPARK_BUILTIN_DIALECTS: dict[str, str] = {
     "postgresql": "org.apache.spark.sql.jdbc.PostgresDialect$",
-    "mysql":      "org.apache.spark.sql.jdbc.MySQLDialect$",
-    "mariadb":    "org.apache.spark.sql.jdbc.MySQLDialect$",
-    "oracle":     "org.apache.spark.sql.jdbc.OracleDialect$",
-    "sqlserver":  "org.apache.spark.sql.jdbc.MsSqlServerDialect$",
-    "jtds":       "org.apache.spark.sql.jdbc.MsSqlServerDialect$",
-    "db2":        "org.apache.spark.sql.jdbc.DB2Dialect$",
-    "derby":      "org.apache.spark.sql.jdbc.DerbyDialect$",
-    "teradata":   "org.apache.spark.sql.jdbc.TeradataDialect$",
+    "mysql": "org.apache.spark.sql.jdbc.MySQLDialect$",
+    "mariadb": "org.apache.spark.sql.jdbc.MySQLDialect$",
+    "oracle": "org.apache.spark.sql.jdbc.OracleDialect$",
+    "sqlserver": "org.apache.spark.sql.jdbc.MsSqlServerDialect$",
+    "jtds": "org.apache.spark.sql.jdbc.MsSqlServerDialect$",
+    "db2": "org.apache.spark.sql.jdbc.DB2Dialect$",
+    "derby": "org.apache.spark.sql.jdbc.DerbyDialect$",
+    "teradata": "org.apache.spark.sql.jdbc.TeradataDialect$",
 }
 
 
@@ -602,7 +606,9 @@ def _detect_dialect_class(prefix: str, jar_path: str) -> str | None:
         with _zf.ZipFile(jar_path, "r") as zf:
             service_entry = "META-INF/services/org.apache.spark.sql.jdbc.JdbcDialect"
             if service_entry in zf.namelist():
-                content = zf.read(service_entry).decode("utf-8", errors="replace").strip()
+                content = (
+                    zf.read(service_entry).decode("utf-8", errors="replace").strip()
+                )
                 # Take the first non-comment, non-blank line
                 for line in content.splitlines():
                     line = line.strip()
@@ -647,12 +653,37 @@ def _build_yaml(
         sv = str(value)
         if sv == "null":
             return "null"
-        if any(c in sv for c in [':', '#', '[', ']', '{', '}', ',', '&', '*', '?', '|',
-                                   '-', '<', '>', '=', '!', '%', '@', '`', '"', "'", '\n']):
+        if any(
+            c in sv
+            for c in [
+                ":",
+                "#",
+                "[",
+                "]",
+                "{",
+                "}",
+                ",",
+                "&",
+                "*",
+                "?",
+                "|",
+                "-",
+                "<",
+                ">",
+                "=",
+                "!",
+                "%",
+                "@",
+                "`",
+                '"',
+                "'",
+                "\n",
+            ]
+        ):
             dumped = yaml.dump(sv, default_flow_style=True).strip()
             # yaml.dump may append a YAML document-end marker on a new line — strip it
-            if '\n' in dumped:
-                dumped = dumped.split('\n')[0]
+            if "\n" in dumped:
+                dumped = dumped.split("\n")[0]
             return dumped
         return sv
 
@@ -672,7 +703,8 @@ def _build_yaml(
     )
 
     # ── Header ──────────────────────────────────────────────────────────────
-    lines.append(textwrap.dedent(f"""\
+    lines.append(
+        textwrap.dedent(f"""\
         # Generated by: qualytics generate-driver
         #
         # "# auto-detected"  — probed from the live JDBC connection.
@@ -685,81 +717,134 @@ def _build_yaml(
         # Keys equal to their DriverDefinition default are omitted to keep this file concise.
         #
         # Deploy this file to:  META-INF/jdbc-drivers/{prefix}.yaml
-        """))
+        """)
+    )
 
     # ── Identity ─────────────────────────────────────────────────────────────
-    lines.append(field("prefix", prefix,
-                       "review — must match the jdbc:<prefix>: scheme in the JDBC URL"))
+    lines.append(
+        field(
+            "prefix",
+            prefix,
+            "review — must match the jdbc:<prefix>: scheme in the JDBC URL",
+        )
+    )
     todo_fields.append("prefix")
-    lines.append(field("className", probes.get("className"),
-                       "auto-detected — fully-qualified JDBC Driver class name"))
+    lines.append(
+        field(
+            "className",
+            probes.get("className"),
+            "auto-detected — fully-qualified JDBC Driver class name",
+        )
+    )
     detected_fields.append("className")
     lines.append("")
 
     # ── SQL dialect ───────────────────────────────────────────────────────────
-    lines.append("# ── SQL dialect ──────────────────────────────────────────────────────")
+    lines.append(
+        "# ── SQL dialect ──────────────────────────────────────────────────────"
+    )
 
     # displayName — always emit (default is raw prefix; capitalised form is user-friendly)
-    lines.append(field("displayName", display_name,
-                       "auto-detected from DB product name — human-readable name shown in the UI"))
+    lines.append(
+        field(
+            "displayName",
+            display_name,
+            "auto-detected from DB product name — human-readable name shown in the UI",
+        )
+    )
     detected_fields.append("displayName")
 
     # defaultPort — emit only when probe URL contained an explicit port number.
     # If the driver uses a portless URL scheme (e.g. jdbc:sqlite:, jdbc:h2:mem:),
     # leave as TODO so the user knows to set it (or omit if the driver truly has no port).
     if default_port is not None:
-        lines.append(field("defaultPort", default_port,
-                           "auto-detected from JDBC URL — default port shown in the connection form"))
+        lines.append(
+            field(
+                "defaultPort",
+                default_port,
+                "auto-detected from JDBC URL — default port shown in the connection form",
+            )
+        )
         detected_fields.append("defaultPort")
     else:
-        lines.append(field("defaultPort", None,
-                           "TODO: default TCP port for this driver "
-                           "(e.g. 5432 PostgreSQL, 3306 MySQL, 1521 Oracle, 1433 SQL Server). "
-                           "Omit this key entirely if the driver does not use TCP ports."))
+        lines.append(
+            field(
+                "defaultPort",
+                None,
+                "TODO: default TCP port for this driver "
+                "(e.g. 5432 PostgreSQL, 3306 MySQL, 1521 Oracle, 1433 SQL Server). "
+                "Omit this key entirely if the driver does not use TCP ports.",
+            )
+        )
         todo_fields.append("defaultPort")
 
     # transactionIsolation — omit if READ_UNCOMMITTED (default)
     tx = probes.get("transactionIsolation")
     if tx and tx != "READ_UNCOMMITTED":
-        lines.append(field("transactionIsolation", tx,
-                           "auto-detected — valid: NONE, READ_UNCOMMITTED (default), "
-                           "READ_COMMITTED, SERIALIZABLE"))
+        lines.append(
+            field(
+                "transactionIsolation",
+                tx,
+                "auto-detected — valid: NONE, READ_UNCOMMITTED (default), "
+                "READ_COMMITTED, SERIALIZABLE",
+            )
+        )
         detected_fields.append("transactionIsolation")
     elif tx:
-        detected_fields.append("transactionIsolation")   # default — omitted
+        detected_fields.append("transactionIsolation")  # default — omitted
 
     # identifierQuoteChar — omit if " (default)
     quote_char = probes.get("identifierQuoteChar")
     if quote_char and quote_char != '"':
-        lines.append(field("identifierQuoteChar", quote_char,
-                           'auto-detected — char used to quote identifiers; default " — MySQL/MariaDB use `'))
+        lines.append(
+            field(
+                "identifierQuoteChar",
+                quote_char,
+                'auto-detected — char used to quote identifiers; default " — MySQL/MariaDB use `',
+            )
+        )
         detected_fields.append("identifierQuoteChar")
     elif quote_char:
-        detected_fields.append("identifierQuoteChar")    # default — omitted
+        detected_fields.append("identifierQuoteChar")  # default — omitted
 
     # tableNameCasing — omit if asis (default)
     casing = probes.get("tableNameCasing", "asis")
     if casing != "asis":
-        lines.append(field("tableNameCasing", casing,
-                           "auto-detected — valid: upper (DB2/Oracle), lower (PostgreSQL), "
-                           "asis (default, most others)"))
+        lines.append(
+            field(
+                "tableNameCasing",
+                casing,
+                "auto-detected — valid: upper (DB2/Oracle), lower (PostgreSQL), "
+                "asis (default, most others)",
+            )
+        )
         detected_fields.append("tableNameCasing")
     else:
-        detected_fields.append("tableNameCasing")        # default — omitted
+        detected_fields.append("tableNameCasing")  # default — omitted
 
     # rowLimitSyntax — omit if LIMIT (default); TODO if probe couldn't determine
     row_limit = probes.get("rowLimitSyntax")
     if row_limit and row_limit != "LIMIT":
-        lines.append(field("rowLimitSyntax", row_limit,
-                           "auto-detected — valid: LIMIT (default), TOP (SQL Server), "
-                           "ROWNUM (Oracle), FETCH_FIRST (DB2/Informix)"))
+        lines.append(
+            field(
+                "rowLimitSyntax",
+                row_limit,
+                "auto-detected — valid: LIMIT (default), TOP (SQL Server), "
+                "ROWNUM (Oracle), FETCH_FIRST (DB2/Informix)",
+            )
+        )
         detected_fields.append("rowLimitSyntax")
     elif row_limit == "LIMIT":
-        detected_fields.append("rowLimitSyntax")         # default — omitted
+        detected_fields.append("rowLimitSyntax")  # default — omitted
     else:
-        lines.append(field("rowLimitSyntax", "LIMIT",
-                           "TODO: valid: LIMIT (default, MySQL/PG/SQLite), TOP (SQL Server), "
-                           "ROWNUM (Oracle), FETCH_FIRST (DB2/Informix/Spark)"))
+        lines.append(
+            field(
+                "rowLimitSyntax",
+                "LIMIT",
+                "TODO: valid: LIMIT (default, MySQL/PG/SQLite), TOP (SQL Server), "
+                "ROWNUM (Oracle), FETCH_FIRST (DB2/Informix/Spark)",
+            )
+        )
         todo_fields.append("rowLimitSyntax")
 
     # subqueryRequiresAlias — omit if true (default); emit false if probe confirmed no alias needed
@@ -767,9 +852,14 @@ def _build_yaml(
     if isinstance(sub_alias, str):
         sub_alias = sub_alias.lower() != "false"
     if not sub_alias:
-        lines.append(field("subqueryRequiresAlias", False,
-                           "auto-detected — false: subqueries do NOT need an AS alias "
-                           "(rare; historically Oracle)"))
+        lines.append(
+            field(
+                "subqueryRequiresAlias",
+                False,
+                "auto-detected — false: subqueries do NOT need an AS alias "
+                "(rare; historically Oracle)",
+            )
+        )
         detected_fields.append("subqueryRequiresAlias")
     else:
         detected_fields.append("subqueryRequiresAlias")  # default true — omitted
@@ -777,10 +867,15 @@ def _build_yaml(
     # timestampLiteralStyle — omit if PLAIN (default)
     ts_style = probes.get("timestampLiteralStyle", "PLAIN")
     if ts_style != "PLAIN":
-        lines.append(field("timestampLiteralStyle", ts_style,
-                           "auto-detected — valid: PLAIN (default), TIMESTAMP_PREFIX (standard SQL), "
-                           "CAST_AS_TIMESTAMP (Hive), CAST_DATE_FORMAT (Databricks), "
-                           "TO_TIMESTAMP (Oracle), CAST_DATETIME2 (SQL Server)"))
+        lines.append(
+            field(
+                "timestampLiteralStyle",
+                ts_style,
+                "auto-detected — valid: PLAIN (default), TIMESTAMP_PREFIX (standard SQL), "
+                "CAST_AS_TIMESTAMP (Hive), CAST_DATE_FORMAT (Databricks), "
+                "TO_TIMESTAMP (Oracle), CAST_DATETIME2 (SQL Server)",
+            )
+        )
         detected_fields.append("timestampLiteralStyle")
     else:
         detected_fields.append("timestampLiteralStyle")  # default — omitted
@@ -789,57 +884,87 @@ def _build_yaml(
     # dateLiteralStyle — omit if PLAIN (default)
     dt_style = probes.get("dateLiteralStyle", "PLAIN")
     if dt_style != "PLAIN":
-        lines.append(field("dateLiteralStyle", dt_style,
-                           "auto-detected — valid: PLAIN (default), DATE_PREFIX, TO_DATE (Oracle)"))
+        lines.append(
+            field(
+                "dateLiteralStyle",
+                dt_style,
+                "auto-detected — valid: PLAIN (default), DATE_PREFIX, TO_DATE (Oracle)",
+            )
+        )
         detected_fields.append("dateLiteralStyle")
     else:
-        detected_fields.append("dateLiteralStyle")       # default — omitted
+        detected_fields.append("dateLiteralStyle")  # default — omitted
     # dateLiteralTemplate: escape hatch — omit unless enum styles are insufficient
 
     # schemaOnlyQueryStyle — if CTE (probe fallback, unconfirmed) → TODO; else emit as detected
     schema_only = probes.get("schemaOnlyQueryStyle", "CTE")
     if schema_only != "CTE":
-        lines.append(field("schemaOnlyQueryStyle", schema_only,
-                           "auto-detected — how to wrap a query to return 0 rows for schema inspection. "
-                           "Valid: CTE (default), PG_CTE (PostgreSQL), SQLSERVER_TOP0 (SQL Server), "
-                           "WHERE_FALSE_QUERYA (generic WHERE 1=0), ORACLE_WHERE_FALSE (Oracle), "
-                           "HIVE_LIMIT0 (Hive/Spark)"))
+        lines.append(
+            field(
+                "schemaOnlyQueryStyle",
+                schema_only,
+                "auto-detected — how to wrap a query to return 0 rows for schema inspection. "
+                "Valid: CTE (default), PG_CTE (PostgreSQL), SQLSERVER_TOP0 (SQL Server), "
+                "WHERE_FALSE_QUERYA (generic WHERE 1=0), ORACLE_WHERE_FALSE (Oracle), "
+                "HIVE_LIMIT0 (Hive/Spark)",
+            )
+        )
         detected_fields.append("schemaOnlyQueryStyle")
     else:
-        lines.append(field("schemaOnlyQueryStyle", "CTE",
-                           "TODO: how to wrap a query to return 0 rows for schema inspection. "
-                           "Valid: CTE (default, most modern DBs with WITH support), PG_CTE (PostgreSQL), "
-                           "SQLSERVER_TOP0 (SQL Server/Synapse), WHERE_FALSE_QUERYA (generic WHERE 1=0), "
-                           "ORACLE_WHERE_FALSE (Oracle), HIVE_LIMIT0 (Hive/Spark)"))
+        lines.append(
+            field(
+                "schemaOnlyQueryStyle",
+                "CTE",
+                "TODO: how to wrap a query to return 0 rows for schema inspection. "
+                "Valid: CTE (default, most modern DBs with WITH support), PG_CTE (PostgreSQL), "
+                "SQLSERVER_TOP0 (SQL Server/Synapse), WHERE_FALSE_QUERYA (generic WHERE 1=0), "
+                "ORACLE_WHERE_FALSE (Oracle), HIVE_LIMIT0 (Hive/Spark)",
+            )
+        )
         todo_fields.append("schemaOnlyQueryStyle")
 
     # tableSampleTemplate — omit if null (not supported = default "no template")
     sample_tmpl = probes.get("tableSampleTemplate")
     if sample_tmpl and sample_tmpl != "null":
-        lines.append(field("tableSampleTemplate", sample_tmpl,
-                           "auto-detected — TABLESAMPLE syntax; {pct} = percent, {rows} = row count"))
+        lines.append(
+            field(
+                "tableSampleTemplate",
+                sample_tmpl,
+                "auto-detected — TABLESAMPLE syntax; {pct} = percent, {rows} = row count",
+            )
+        )
         detected_fields.append("tableSampleTemplate")
     else:
-        detected_fields.append("tableSampleTemplate")    # null/not supported — omitted
+        detected_fields.append("tableSampleTemplate")  # null/not supported — omitted
 
     # viewSampleFallback — omit if RAND (default)
     vsf = probes.get("viewSampleFallback", "RAND")
     if vsf != "RAND":
-        lines.append(field("viewSampleFallback", vsf,
-                           "auto-detected — random fn for view sampling. "
-                           "Valid: RAND (default), RANDOM (PostgreSQL/Redshift), "
-                           "NEWID (SQL Server), DBMS_RANDOM (Oracle), SAMPLE_N (Teradata), "
-                           "NONE (BigQuery)"))
+        lines.append(
+            field(
+                "viewSampleFallback",
+                vsf,
+                "auto-detected — random fn for view sampling. "
+                "Valid: RAND (default), RANDOM (PostgreSQL/Redshift), "
+                "NEWID (SQL Server), DBMS_RANDOM (Oracle), SAMPLE_N (Teradata), "
+                "NONE (BigQuery)",
+            )
+        )
         detected_fields.append("viewSampleFallback")
     else:
-        detected_fields.append("viewSampleFallback")     # default — omitted
+        detected_fields.append("viewSampleFallback")  # default — omitted
     # viewSampleFallbackSql: escape hatch — omit unless enum styles are insufficient
 
     # approxCountDistinctFunction — omit if null (not supported, falls back to COUNT DISTINCT)
     approx = probes.get("approxCountDistinctFunction")
     if approx and approx != "null":
-        lines.append(field("approxCountDistinctFunction", approx,
-                           "auto-detected — SQL function name for approximate COUNT DISTINCT"))
+        lines.append(
+            field(
+                "approxCountDistinctFunction",
+                approx,
+                "auto-detected — SQL function name for approximate COUNT DISTINCT",
+            )
+        )
         detected_fields.append("approxCountDistinctFunction")
     else:
         detected_fields.append("approxCountDistinctFunction")  # null — omitted
@@ -847,88 +972,141 @@ def _build_yaml(
     # validationQuery — omit if SELECT 1 (default)
     val_q = probes.get("validationQuery")
     if val_q and val_q != "SELECT 1":
-        lines.append(field("validationQuery", val_q,
-                           "auto-detected — minimal SQL to test a pooled connection is alive"))
+        lines.append(
+            field(
+                "validationQuery",
+                val_q,
+                "auto-detected — minimal SQL to test a pooled connection is alive",
+            )
+        )
         detected_fields.append("validationQuery")
     elif val_q:
-        detected_fields.append("validationQuery")        # default — omitted
+        detected_fields.append("validationQuery")  # default — omitted
     else:
-        lines.append(field("validationQuery", "SELECT 1",
-                           "TODO: SQL to verify a live connection; try SELECT 1 FROM DUAL (Oracle), "
-                           "VALUES 1 (DB2/H2)"))
+        lines.append(
+            field(
+                "validationQuery",
+                "SELECT 1",
+                "TODO: SQL to verify a live connection; try SELECT 1 FROM DUAL (Oracle), "
+                "VALUES 1 (DB2/H2)",
+            )
+        )
         todo_fields.append("validationQuery")
 
     lines.append("")
 
     # ── Performance ───────────────────────────────────────────────────────────
-    lines.append("# ── Performance ──────────────────────────────────────────────────────")
-    lines.append(field("maxPartitionParallelism", 10,
-                       "TODO: max parallel partitions for scan operations; default 10. "
-                       "Set 1 for DBs that struggle with concurrent connections (e.g. BigQuery, "
-                       "single-threaded embedded drivers)"))
+    lines.append(
+        "# ── Performance ──────────────────────────────────────────────────────"
+    )
+    lines.append(
+        field(
+            "maxPartitionParallelism",
+            10,
+            "TODO: max parallel partitions for scan operations; default 10. "
+            "Set 1 for DBs that struggle with concurrent connections (e.g. BigQuery, "
+            "single-threaded embedded drivers)",
+        )
+    )
     todo_fields.append("maxPartitionParallelism")
     _int_max_prefixes = ("redshift", "sqlserver", "db2")
-    _data_size_default = "INT_MAX" if any(p in prefix.lower() for p in _int_max_prefixes) else "LONG_MAX"
+    _data_size_default = (
+        "INT_MAX" if any(p in prefix.lower() for p in _int_max_prefixes) else "LONG_MAX"
+    )
     _data_size_comment = (
         "INT_MAX: older 32-bit driver (SQL Server, Redshift, Db2)"
         if _data_size_default == "INT_MAX"
         else "TODO: max data the driver can handle. LONG_MAX (default, most DBs) or "
-             "INT_MAX for older 32-bit drivers (SQL Server, Redshift, Db2)"
+        "INT_MAX for older 32-bit drivers (SQL Server, Redshift, Db2)"
     )
     lines.append(field("dataSizeLimit", _data_size_default, _data_size_comment))
     todo_fields.append("dataSizeLimit")
     lines.append("")
 
     # ── Schema / catalog filtering ────────────────────────────────────────────
-    lines.append("# ── Schema / catalog filtering ───────────────────────────────────────")
-    lines.append("systemSchemaExclusions: []"
-                 "      # TODO: exact schema names to exclude from catalog scans "
-                 "(e.g. [information_schema, pg_catalog])")
-    lines.append("systemSchemaExclusionPrefixes: []"
-                 "  # TODO: schema name prefixes to exclude (e.g. [pg_temp_, pg_toast_temp_])")
-    lines.append("systemCatalogExclusions: []"
-                 "     # TODO: catalog names to exclude "
-                 "(e.g. [admin, local, config] for MongoDB; [information_schema, mysql] for MySQL)")
-    todo_fields += ["systemSchemaExclusions", "systemSchemaExclusionPrefixes", "systemCatalogExclusions"]
+    lines.append(
+        "# ── Schema / catalog filtering ───────────────────────────────────────"
+    )
+    lines.append(
+        "systemSchemaExclusions: []"
+        "      # TODO: exact schema names to exclude from catalog scans "
+        "(e.g. [information_schema, pg_catalog])"
+    )
+    lines.append(
+        "systemSchemaExclusionPrefixes: []"
+        "  # TODO: schema name prefixes to exclude (e.g. [pg_temp_, pg_toast_temp_])"
+    )
+    lines.append(
+        "systemCatalogExclusions: []"
+        "     # TODO: catalog names to exclude "
+        "(e.g. [admin, local, config] for MongoDB; [information_schema, mysql] for MySQL)"
+    )
+    todo_fields += [
+        "systemSchemaExclusions",
+        "systemSchemaExclusionPrefixes",
+        "systemCatalogExclusions",
+    ]
 
     # getTablesUsesNullCatalog — omit if false (default); emit if true
     get_tables_null = probes.get("getTablesUsesNullCatalog", False)
     if isinstance(get_tables_null, str):
         get_tables_null = get_tables_null.lower() == "true"
     if get_tables_null:
-        lines.append(field("getTablesUsesNullCatalog", True,
-                           "auto-detected — pass null as catalog arg to DatabaseMetaData.getTables(); "
-                           "required for Db2"))
+        lines.append(
+            field(
+                "getTablesUsesNullCatalog",
+                True,
+                "auto-detected — pass null as catalog arg to DatabaseMetaData.getTables(); "
+                "required for Db2",
+            )
+        )
         detected_fields.append("getTablesUsesNullCatalog")
     else:
         detected_fields.append("getTablesUsesNullCatalog")  # default false — omitted
     lines.append("")
 
     # ── Style selectors ────────────────────────────────────────────────────────
-    lines.append("# ── Style selectors ──────────────────────────────────────────────────")
+    lines.append(
+        "# ── Style selectors ──────────────────────────────────────────────────"
+    )
 
     # rowCountQueryStyle — emit as TODO if COUNT_STAR (default/unconfirmed), else auto-detected
     row_count_style = probes.get("rowCountQueryStyle", "COUNT_STAR")
     if row_count_style and row_count_style != "COUNT_STAR":
-        lines.append(field("rowCountQueryStyle", row_count_style,
-                           "auto-detected — row count strategy"))
+        lines.append(
+            field(
+                "rowCountQueryStyle",
+                row_count_style,
+                "auto-detected — row count strategy",
+            )
+        )
         detected_fields.append("rowCountQueryStyle")
     else:
-        lines.append(field("rowCountQueryStyle", "COUNT_STAR",
-                           "TODO: row count strategy. Valid: COUNT_STAR (default, always works), "
-                           "BQ_TABLES (BigQuery), INFORMATION_SCHEMA_ROW_COUNT (MySQL/MariaDB), "
-                           "ALL_TABLES (Oracle), INFORMATION_SCHEMA_TABLES_WITH_SIZE (MySQL/MariaDB)"))
+        lines.append(
+            field(
+                "rowCountQueryStyle",
+                "COUNT_STAR",
+                "TODO: row count strategy. Valid: COUNT_STAR (default, always works), "
+                "BQ_TABLES (BigQuery), INFORMATION_SCHEMA_ROW_COUNT (MySQL/MariaDB), "
+                "ALL_TABLES (Oracle), INFORMATION_SCHEMA_TABLES_WITH_SIZE (MySQL/MariaDB)",
+            )
+        )
         todo_fields.append("rowCountQueryStyle")
     # countStarNullSizeBytesExpr — almost always null (default); omit; user adds manually for Dremio
 
     # schemaExistenceQueryStyle — omit if NONE (default)
     schema_style = probes.get("schemaExistenceQueryStyle", "NONE")
     if schema_style != "NONE":
-        lines.append(field("schemaExistenceQueryStyle", schema_style,
-                           "auto-detected — schema enumeration style. "
-                           "Valid: NONE (default), INFORMATION_SCHEMA, SHOW_SCHEMAS_LIKE, "
-                           "SHOW_SCHEMAS_ITERATE (Hive/Trino), SYSCAT (DB2), "
-                           "ALTER_SESSION (Oracle), SYS_SCHEMAS (SQL Server)"))
+        lines.append(
+            field(
+                "schemaExistenceQueryStyle",
+                schema_style,
+                "auto-detected — schema enumeration style. "
+                "Valid: NONE (default), INFORMATION_SCHEMA, SHOW_SCHEMAS_LIKE, "
+                "SHOW_SCHEMAS_ITERATE (Hive/Trino), SYSCAT (DB2), "
+                "ALTER_SESSION (Oracle), SYS_SCHEMAS (SQL Server)",
+            )
+        )
         detected_fields.append("schemaExistenceQueryStyle")
     else:
         detected_fields.append("schemaExistenceQueryStyle")  # default — omitted
@@ -936,95 +1114,156 @@ def _build_yaml(
     # dateArithmeticStyle — omit if STANDARD (default)
     date_arith = probes.get("dateArithmeticStyle", "STANDARD")
     if date_arith != "STANDARD":
-        lines.append(field("dateArithmeticStyle", date_arith,
-                           "auto-detected — date arithmetic strategy. "
-                           "Valid: STANDARD (default, ANSI fallback), DATEADD_DATEDIFF (SQL Server), "
-                           "NUMTODSINTERVAL (Oracle), TIMESTAMP_ADD (BigQuery), TIMESTAMPDIFF_DB2 (Db2)"))
+        lines.append(
+            field(
+                "dateArithmeticStyle",
+                date_arith,
+                "auto-detected — date arithmetic strategy. "
+                "Valid: STANDARD (default, ANSI fallback), DATEADD_DATEDIFF (SQL Server), "
+                "NUMTODSINTERVAL (Oracle), TIMESTAMP_ADD (BigQuery), TIMESTAMPDIFF_DB2 (Db2)",
+            )
+        )
         detected_fields.append("dateArithmeticStyle")
     else:
-        detected_fields.append("dateArithmeticStyle")       # default — omitted
+        detected_fields.append("dateArithmeticStyle")  # default — omitted
     lines.append("")
 
     # ── Date arithmetic templates (only when non-null) ────────────────────────
     int_ts = probes.get("intervalCalcDatetimeTimestampTemplate")
     int_dt = probes.get("intervalCalcDatetimeDateTemplate")
-    up_ts  = probes.get("upperBoundDatetimeTimestampTemplate")
-    up_dt  = probes.get("upperBoundDatetimeDateTemplate")
+    up_ts = probes.get("upperBoundDatetimeTimestampTemplate")
+    up_dt = probes.get("upperBoundDatetimeDateTemplate")
 
     has_templates = any(v and v != "null" for v in [int_ts, int_dt, up_ts, up_dt])
     if has_templates:
-        lines.append("# ── Date arithmetic templates ─────────────────────────────────────────")
-        lines.append("# Placeholders: {col} = column name, MIN_{col} = min value, "
-                     "MAX_{col} = max value, {interval} = midpoint expression")
+        lines.append(
+            "# ── Date arithmetic templates ─────────────────────────────────────────"
+        )
+        lines.append(
+            "# Placeholders: {col} = column name, MIN_{col} = min value, "
+            "MAX_{col} = max value, {interval} = midpoint expression"
+        )
         if int_ts and int_ts != "null":
-            lines.append(field("intervalCalcDatetimeTimestampTemplate", int_ts, "auto-detected"))
+            lines.append(
+                field("intervalCalcDatetimeTimestampTemplate", int_ts, "auto-detected")
+            )
             detected_fields.append("intervalCalcDatetimeTimestampTemplate")
         if int_dt and int_dt != "null":
-            lines.append(field("intervalCalcDatetimeDateTemplate", int_dt, "auto-detected"))
+            lines.append(
+                field("intervalCalcDatetimeDateTemplate", int_dt, "auto-detected")
+            )
             detected_fields.append("intervalCalcDatetimeDateTemplate")
         if up_ts and up_ts != "null":
-            lines.append(field("upperBoundDatetimeTimestampTemplate", up_ts, "auto-detected"))
+            lines.append(
+                field("upperBoundDatetimeTimestampTemplate", up_ts, "auto-detected")
+            )
             detected_fields.append("upperBoundDatetimeTimestampTemplate")
         if up_dt and up_dt != "null":
-            lines.append(field("upperBoundDatetimeDateTemplate", up_dt, "auto-detected"))
+            lines.append(
+                field("upperBoundDatetimeDateTemplate", up_dt, "auto-detected")
+            )
             detected_fields.append("upperBoundDatetimeDateTemplate")
         lines.append("")
 
     # ── Connectivity ──────────────────────────────────────────────────────────
-    lines.append("# ── Connectivity ─────────────────────────────────────────────────────")
+    lines.append(
+        "# ── Connectivity ─────────────────────────────────────────────────────"
+    )
     # networkCapable: true (default) — omitted; readOnly: false (default) — omitted
-    lines.append("connectionProperties: {}"
-                 "        # TODO: key-value pairs injected into JDBC pool and Spark "
-                 "(e.g. {ssl: 'true', charset: 'utf8'})")
-    lines.append("sessionInitStatements: []"
-                 "       # TODO: SQL statements run once after each new connection "
-                 "(e.g. [\"SET SCHEMA mydb\", \"ALTER SESSION SET NLS_DATE_FORMAT='YYYY-MM-DD'\"])")
+    lines.append(
+        "connectionProperties: {}"
+        "        # TODO: key-value pairs injected into JDBC pool and Spark "
+        "(e.g. {ssl: 'true', charset: 'utf8'})"
+    )
+    lines.append(
+        "sessionInitStatements: []"
+        "       # TODO: SQL statements run once after each new connection "
+        '(e.g. ["SET SCHEMA mydb", "ALTER SESSION SET NLS_DATE_FORMAT=\'YYYY-MM-DD\'"])'
+    )
     todo_fields += ["connectionProperties", "sessionInitStatements"]
     lines.append("")
 
     # ── Spark JdbcDialect ─────────────────────────────────────────────────────
-    lines.append("# ── Spark JdbcDialect ────────────────────────────────────────────────")
+    lines.append(
+        "# ── Spark JdbcDialect ────────────────────────────────────────────────"
+    )
     if dialect_class is not None:
-        lines.append(field("dialectClass", dialect_class,
-                           "Auto-detected Spark JdbcDialect subclass"))
+        lines.append(
+            field(
+                "dialectClass",
+                dialect_class,
+                "Auto-detected Spark JdbcDialect subclass",
+            )
+        )
         detected_fields.append("dialectClass")
     else:
-        lines.append(field("dialectClass", None,
-                           "TODO: fully-qualified JdbcDialect Scala object class to register with Spark "
-                           "(e.g. com.example.MyDialect$); null if no custom Spark dialect is needed"))
+        lines.append(
+            field(
+                "dialectClass",
+                None,
+                "TODO: fully-qualified JdbcDialect Scala object class to register with Spark "
+                "(e.g. com.example.MyDialect$); null if no custom Spark dialect is needed",
+            )
+        )
         todo_fields.append("dialectClass")
     lines.append("")
 
     # ── URL construction ──────────────────────────────────────────────────────
-    lines.append("# ── URL construction ─────────────────────────────────────────────────")
-    lines.append("# Known placeholders: {host}, {port}, {database}, {schema}, {username}, {password}")
+    lines.append(
+        "# ── URL construction ─────────────────────────────────────────────────"
+    )
+    lines.append(
+        "# Known placeholders: {host}, {port}, {database}, {schema}, {username}, {password}"
+    )
     if jdbc_url_template:
-        lines.append(field("jdbcUrlTemplate", jdbc_url_template,
-                           "auto-detected from probe URL — verify all placeholders are correct"))
+        lines.append(
+            field(
+                "jdbcUrlTemplate",
+                jdbc_url_template,
+                "auto-detected from probe URL — verify all placeholders are correct",
+            )
+        )
         detected_fields.append("jdbcUrlTemplate")
     else:
-        lines.append(field("jdbcUrlTemplate", "",
-                           "TODO: URL template with {host}, {port}, {database} substitution tokens. "
-                           "Example: jdbc:mydb://{host}:{port}/{database}"))
+        lines.append(
+            field(
+                "jdbcUrlTemplate",
+                "",
+                "TODO: URL template with {host}, {port}, {database} substitution tokens. "
+                "Example: jdbc:mydb://{host}:{port}/{database}",
+            )
+        )
         todo_fields.append("jdbcUrlTemplate")
-    lines.append("jdbcUrlStaticParams: []"
-                 "      # TODO: query params always appended to every URL "
-                 "(e.g. [tcpKeepAlive=true, sslmode=prefer])")
-    lines.append("jdbcUrlConditionalParams: []"
-                 "  # TODO: params appended only when a form field is non-empty "
-                 "(e.g. [{key: schema, param: 'currentSchema={schema}'}])")
-    lines.append("jdbcUrlAuthVariants: {}"
-                 "      # optional: auth_type -> full URL template override; leave empty if not needed")
+    lines.append(
+        "jdbcUrlStaticParams: []"
+        "      # TODO: query params always appended to every URL "
+        "(e.g. [tcpKeepAlive=true, sslmode=prefer])"
+    )
+    lines.append(
+        "jdbcUrlConditionalParams: []"
+        "  # TODO: params appended only when a form field is non-empty "
+        "(e.g. [{key: schema, param: 'currentSchema={schema}'}])"
+    )
+    lines.append(
+        "jdbcUrlAuthVariants: {}"
+        "      # optional: auth_type -> full URL template override; leave empty if not needed"
+    )
     todo_fields += ["jdbcUrlStaticParams", "jdbcUrlConditionalParams"]
     lines.append("")
 
     # ── Connection spec ────────────────────────────────────────────────────────
     # Only mark a field required if the probe URL actually contained that component.
     # e.g. jdbc:sqlite:/path/to/db has no host or port → those fields are optional.
-    lines.append("# ── Connection spec (frontend form) ──────────────────────────────────")
+    lines.append(
+        "# ── Connection spec (frontend form) ──────────────────────────────────"
+    )
     lines.append("# TODO: define the connection form fields shown in the UI.")
-    lines.append("# Each field: name, label, fieldType (string/integer/boolean/password/enum/file),")
-    lines.append("#             required, defaultValue, hint, options (for enum), dependsOn, dependsOnValue")
+    lines.append(
+        "# Each field: name, label, fieldType (string/integer/boolean/password/enum/file),"
+    )
+    lines.append(
+        "#             required, defaultValue, hint, options (for enum), dependsOn, dependsOnValue"
+    )
     lines.append("connectionSpec:")
     lines.append("  supportsEnrichment: false  # custom drivers are source-only")
     lines.append("  fields:")
@@ -1066,7 +1305,9 @@ def _build_yaml(
 def _strip_jdbc_credentials(jdbc_url: str) -> str:
     """Remove user/password from a JDBC URL for safe inclusion in prompts."""
     cleaned = re.sub(r"(jdbc:[^:]+://)([^@/]+@)", r"\1", jdbc_url)
-    cleaned = re.sub(r"[?&](password|passwd|pwd)=[^&]*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"[?&](password|passwd|pwd)=[^&]*", "", cleaned, flags=re.IGNORECASE
+    )
     return cleaned
 
 
@@ -1106,7 +1347,9 @@ def _call_deployment_llm(client, prompt: str) -> str | None:
                 try:
                     event = json.loads(data)
                     if isinstance(event, dict) and event.get("type") == "text-delta":
-                        text_parts.append(event.get("textDelta") or event.get("delta") or "")
+                        text_parts.append(
+                            event.get("textDelta") or event.get("delta") or ""
+                        )
                 except json.JSONDecodeError:
                     # Vercel AI SDK compact format: 0:"chunk"
                     if re.match(r'^0:"', data):
@@ -1136,7 +1379,9 @@ def _apply_llm_suggestions(yaml_content: str, suggestions: dict) -> tuple[str, i
             rationale = str(suggestion.get("rationale", "")).replace("\n", " ").strip()
             if value is not None:
                 if isinstance(value, (list, dict)):
-                    yaml_val = yaml.dump(value, default_flow_style=True).strip().rstrip("\n")
+                    yaml_val = (
+                        yaml.dump(value, default_flow_style=True).strip().rstrip("\n")
+                    )
                 elif isinstance(value, bool):
                     yaml_val = str(value).lower()
                 elif isinstance(value, (int, float)):
@@ -1147,7 +1392,9 @@ def _apply_llm_suggestions(yaml_content: str, suggestions: dict) -> tuple[str, i
                         yaml_val = yaml.dump(sv, default_flow_style=True).strip()
                     else:
                         yaml_val = sv
-                result_lines.append(f"{field_name}: {yaml_val}  # LLM-suggested: {rationale}\n")
+                result_lines.append(
+                    f"{field_name}: {yaml_val}  # LLM-suggested: {rationale}\n"
+                )
                 applied += 1
                 continue
         result_lines.append(line)
@@ -1247,7 +1494,7 @@ def generate_driver(
         typer.Option(
             "--dist-dir",
             help="Root dist directory for generated files. "
-                 "YAML is written to <dist-dir>/META-INF/jdbc-drivers/<prefix>.yaml.",
+            "YAML is written to <dist-dir>/META-INF/jdbc-drivers/<prefix>.yaml.",
             show_default=True,
         ),
     ] = "dist",
@@ -1323,7 +1570,9 @@ def generate_driver(
 
     # ── Build YAML ───────────────────────────────────────────────────────
     detected_dialect = _detect_dialect_class(prefix, jar_path)
-    yaml_content, detected_fields, todo_fields = _build_yaml(prefix, probes, url, dialect_class=detected_dialect)
+    yaml_content, detected_fields, todo_fields = _build_yaml(
+        prefix, probes, url, dialect_class=detected_dialect
+    )
 
     # ── Write output ─────────────────────────────────────────────────────
     try:
@@ -1353,7 +1602,9 @@ def generate_driver(
 
             config = load_config()
             if config is None:
-                print("[dim]  Not logged in to a Qualytics deployment — LLM TODO resolution skipped.[/dim]")
+                print(
+                    "[dim]  Not logged in to a Qualytics deployment — LLM TODO resolution skipped.[/dim]"
+                )
             else:
                 client = QualyticsClient(
                     base_url=validate_and_format_url(config["url"]),
@@ -1362,7 +1613,9 @@ def generate_driver(
                 )
                 llm_status = client.get("agent/llm-config/status").json()
                 if not llm_status.get("is_configured"):
-                    print("[dim]  No LLM integration configured on this deployment — TODO fields left as-is.[/dim]")
+                    print(
+                        "[dim]  No LLM integration configured on this deployment — TODO fields left as-is.[/dim]"
+                    )
                 else:
                     db_product = probes.get("dbProductName") or "Unknown database"
                     db_version = probes.get("dbProductVersion") or ""
@@ -1393,29 +1646,45 @@ def generate_driver(
                         Only include fields where you have reasonable confidence. Omit fields you are unsure about.
                         Return ONLY valid JSON — no markdown, no code fences, no preamble.
                     """)
-                    with status(f"[bold cyan]Asking LLM to resolve {len(todo_items)} TODO field(s)...[/bold cyan]"):
+                    with status(
+                        f"[bold cyan]Asking LLM to resolve {len(todo_items)} TODO field(s)...[/bold cyan]"
+                    ):
                         llm_text = _call_deployment_llm(client, prompt)
                     if not llm_text:
-                        print("[yellow]  LLM call returned no usable output — TODO fields left as-is.[/yellow]")
+                        print(
+                            "[yellow]  LLM call returned no usable output — TODO fields left as-is.[/yellow]"
+                        )
                     else:
                         json_match = re.search(r"\{.*\}", llm_text, re.DOTALL)
                         if not json_match:
-                            print("[yellow]  LLM response contained no JSON — TODO fields left as-is.[/yellow]")
+                            print(
+                                "[yellow]  LLM response contained no JSON — TODO fields left as-is.[/yellow]"
+                            )
                         else:
                             try:
                                 suggestions = json.loads(json_match.group(0))
-                                updated_yaml, applied = _apply_llm_suggestions(yaml_content, suggestions)
+                                updated_yaml, applied = _apply_llm_suggestions(
+                                    yaml_content, suggestions
+                                )
                                 if applied > 0:
                                     with open(out_path, "w") as fh:
                                         fh.write(updated_yaml)
                                     yaml_content = updated_yaml
-                                    print(f"  [{BRAND}]LLM resolved {applied} TODO field(s).[/{BRAND}]")
+                                    print(
+                                        f"  [{BRAND}]LLM resolved {applied} TODO field(s).[/{BRAND}]"
+                                    )
                                 else:
-                                    print("[dim]  LLM returned suggestions but none matched TODO fields.[/dim]")
+                                    print(
+                                        "[dim]  LLM returned suggestions but none matched TODO fields.[/dim]"
+                                    )
                             except json.JSONDecodeError:
-                                print("[yellow]  LLM response could not be parsed as JSON — TODO fields left as-is.[/yellow]")
+                                print(
+                                    "[yellow]  LLM response could not be parsed as JSON — TODO fields left as-is.[/yellow]"
+                                )
         except Exception as exc:
-            print(f"[yellow]  LLM TODO resolution error ({exc}) — TODO fields left as-is.[/yellow]")
+            print(
+                f"[yellow]  LLM TODO resolution error ({exc}) — TODO fields left as-is.[/yellow]"
+            )
 
     # ── Print summary ────────────────────────────────────────────────────
     console = Console()
@@ -1427,30 +1696,48 @@ def generate_driver(
     table.add_column("Status", min_width=12)
 
     probe_display = [
-        ("className",                           probes.get("className")),
-        ("dbProductName",                       probes.get("dbProductName")),
-        ("dbProductVersion",                    probes.get("dbProductVersion")),
-        ("prefix (from URL)",                   prefix),
-        ("identifierQuoteChar",                 probes.get("identifierQuoteChar")),
-        ("transactionIsolation",                probes.get("transactionIsolation")),
-        ("tableNameCasing",                     probes.get("tableNameCasing")),
-        ("validationQuery",                     probes.get("validationQuery")),
-        ("subqueryRequiresAlias",               str(probes.get("subqueryRequiresAlias", True)).lower()),
-        ("getTablesUsesNullCatalog",            str(probes.get("getTablesUsesNullCatalog", False)).lower()),
-        ("approxCountDistinctFunction",         probes.get("approxCountDistinctFunction")),
-        ("rowCountQueryStyle",                  probes.get("rowCountQueryStyle")),
-        ("schemaExistenceQueryStyle",           probes.get("schemaExistenceQueryStyle")),
-        ("schemaOnlyQueryStyle",                probes.get("schemaOnlyQueryStyle")),
-        ("dateArithmeticStyle",                 probes.get("dateArithmeticStyle")),
-        ("rowLimitSyntax",                      probes.get("rowLimitSyntax")),
-        ("tableSampleTemplate",                 probes.get("tableSampleTemplate")),
-        ("viewSampleFallback",                  probes.get("viewSampleFallback")),
-        ("timestampLiteralStyle",               probes.get("timestampLiteralStyle")),
-        ("dateLiteralStyle",                    probes.get("dateLiteralStyle")),
-        ("intervalCalcDatetimeTimestampTemplate", probes.get("intervalCalcDatetimeTimestampTemplate")),
-        ("intervalCalcDatetimeDateTemplate",    probes.get("intervalCalcDatetimeDateTemplate")),
-        ("upperBoundDatetimeTimestampTemplate", probes.get("upperBoundDatetimeTimestampTemplate")),
-        ("upperBoundDatetimeDateTemplate",      probes.get("upperBoundDatetimeDateTemplate")),
+        ("className", probes.get("className")),
+        ("dbProductName", probes.get("dbProductName")),
+        ("dbProductVersion", probes.get("dbProductVersion")),
+        ("prefix (from URL)", prefix),
+        ("identifierQuoteChar", probes.get("identifierQuoteChar")),
+        ("transactionIsolation", probes.get("transactionIsolation")),
+        ("tableNameCasing", probes.get("tableNameCasing")),
+        ("validationQuery", probes.get("validationQuery")),
+        (
+            "subqueryRequiresAlias",
+            str(probes.get("subqueryRequiresAlias", True)).lower(),
+        ),
+        (
+            "getTablesUsesNullCatalog",
+            str(probes.get("getTablesUsesNullCatalog", False)).lower(),
+        ),
+        ("approxCountDistinctFunction", probes.get("approxCountDistinctFunction")),
+        ("rowCountQueryStyle", probes.get("rowCountQueryStyle")),
+        ("schemaExistenceQueryStyle", probes.get("schemaExistenceQueryStyle")),
+        ("schemaOnlyQueryStyle", probes.get("schemaOnlyQueryStyle")),
+        ("dateArithmeticStyle", probes.get("dateArithmeticStyle")),
+        ("rowLimitSyntax", probes.get("rowLimitSyntax")),
+        ("tableSampleTemplate", probes.get("tableSampleTemplate")),
+        ("viewSampleFallback", probes.get("viewSampleFallback")),
+        ("timestampLiteralStyle", probes.get("timestampLiteralStyle")),
+        ("dateLiteralStyle", probes.get("dateLiteralStyle")),
+        (
+            "intervalCalcDatetimeTimestampTemplate",
+            probes.get("intervalCalcDatetimeTimestampTemplate"),
+        ),
+        (
+            "intervalCalcDatetimeDateTemplate",
+            probes.get("intervalCalcDatetimeDateTemplate"),
+        ),
+        (
+            "upperBoundDatetimeTimestampTemplate",
+            probes.get("upperBoundDatetimeTimestampTemplate"),
+        ),
+        (
+            "upperBoundDatetimeDateTemplate",
+            probes.get("upperBoundDatetimeDateTemplate"),
+        ),
     ]
 
     for name, value in probe_display:
@@ -1465,15 +1752,20 @@ def generate_driver(
     console.print(table)
     console.print()
 
-    todo_count = sum(
-        1 for _, v in probe_display if v is None or v == "null"
-    )
+    todo_count = sum(1 for _, v in probe_display if v is None or v == "null")
     # Always-todo fields (not auto-detectable; need manual review or LLM assistance)
     always_todo = [
-        "maxPartitionParallelism", "dataSizeLimit",
-        "systemSchemaExclusions", "systemSchemaExclusionPrefixes", "systemCatalogExclusions",
-        "connectionProperties", "sessionInitStatements", "dialectClass",
-        "jdbcUrlStaticParams", "jdbcUrlConditionalParams", "connectionSpec",
+        "maxPartitionParallelism",
+        "dataSizeLimit",
+        "systemSchemaExclusions",
+        "systemSchemaExclusionPrefixes",
+        "systemCatalogExclusions",
+        "connectionProperties",
+        "sessionInitStatements",
+        "dialectClass",
+        "jdbcUrlStaticParams",
+        "jdbcUrlConditionalParams",
+        "connectionSpec",
     ]
     total_todo = todo_count + len(always_todo)
     auto_detected = len(probe_display) - todo_count
@@ -1494,6 +1786,7 @@ def generate_driver(
         "\n  [dim]to bundle all drivers into custom-drivers.jar[/dim]\n"
     )
 
+
 # ---------------------------------------------------------------------------
 # drivers package command
 # ---------------------------------------------------------------------------
@@ -1506,7 +1799,7 @@ def package_drivers(
         typer.Option(
             "--dist-dir",
             help="Root dist directory produced by 'drivers generate'. "
-                 "Must contain META-INF/jdbc-drivers/.",
+            "Must contain META-INF/jdbc-drivers/.",
             show_default=True,
         ),
     ] = "dist",
