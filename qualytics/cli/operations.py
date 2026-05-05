@@ -138,8 +138,13 @@ def profile_operation(
     ai_effort: str | None = typer.Option(
         None,
         "--ai-effort",
-        "--inference-threshold",  # deprecated alias
         help="AI Effort level: off, low, medium, high, xhigh, max",
+    ),
+    inference_threshold: str | None = typer.Option(
+        None,
+        "--inference-threshold",
+        help="Deprecated: use --ai-effort",
+        hidden=True,
     ),
     infer_as_draft: bool = typer.Option(
         False,
@@ -197,11 +202,20 @@ def profile_operation(
     datastore_ids = _parse_int_list(datastore_id)
     client = get_client()
 
-    if ai_effort is not None and ai_effort not in _VALID_AI_EFFORT:
+    if inference_threshold is not None:
         print(
-            "[bold red]--ai-effort must be one of: off, low, medium, high, xhigh, max[/bold red]"
+            "[bold yellow]--inference-threshold is deprecated, use --ai-effort instead.[/bold yellow]"
         )
-        raise typer.Exit(code=1)
+        if ai_effort is None:
+            ai_effort = inference_threshold
+
+    if ai_effort is not None:
+        ai_effort = ai_effort.lower()
+        if ai_effort not in _VALID_AI_EFFORT:
+            print(
+                "[bold red]--ai-effort must be one of: off, low, medium, high, xhigh, max[/bold red]"
+            )
+            raise typer.Exit(code=1)
 
     if (
         max_records_analyzed_per_partition is not None

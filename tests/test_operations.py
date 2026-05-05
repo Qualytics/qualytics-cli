@@ -530,7 +530,41 @@ class TestOperationsProfileCLI:
             ],
         )
         assert result.exit_code == 0
+        assert "deprecated" in result.output.lower()
         assert mock_run.call_args.kwargs["ai_effort"] == "3"
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_profile")
+    def test_ai_effort_wins_over_inference_threshold(
+        self, mock_run, mock_get_client, cli_runner
+    ):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "profile",
+                "--datastore-id",
+                "42",
+                "--ai-effort",
+                "max",
+                "--inference-threshold",
+                "1",
+            ],
+        )
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["ai_effort"] == "max"
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_profile")
+    def test_ai_effort_is_case_insensitive(self, mock_run, mock_get_client, cli_runner):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            ["operations", "profile", "--datastore-id", "42", "--ai-effort", "High"],
+        )
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["ai_effort"] == "high"
 
     @patch("qualytics.cli.operations.get_client")
     def test_rejects_invalid_ai_effort(self, mock_get_client, cli_runner):
