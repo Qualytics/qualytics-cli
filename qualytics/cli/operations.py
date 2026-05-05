@@ -29,6 +29,20 @@ add_suggestion_callback(operations_app, "operations")
 
 _VALID_REMEDIATION = {"append", "overwrite", "none"}
 _VALID_ASSET_TYPES = {"anomalies", "checks", "profiles"}
+_VALID_AI_EFFORT = {
+    "off",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -182,6 +196,12 @@ def profile_operation(
     """Trigger a profile operation for the specified datastores."""
     datastore_ids = _parse_int_list(datastore_id)
     client = get_client()
+
+    if ai_effort is not None and ai_effort not in _VALID_AI_EFFORT:
+        print(
+            "[bold red]--ai-effort must be one of: off, low, medium, high, xhigh, max[/bold red]"
+        )
+        raise typer.Exit(code=1)
 
     if (
         max_records_analyzed_per_partition is not None

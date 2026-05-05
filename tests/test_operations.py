@@ -533,6 +533,23 @@ class TestOperationsProfileCLI:
         assert mock_run.call_args.kwargs["ai_effort"] == "3"
 
     @patch("qualytics.cli.operations.get_client")
+    def test_rejects_invalid_ai_effort(self, mock_get_client, cli_runner):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "profile",
+                "--datastore-id",
+                "42",
+                "--ai-effort",
+                "10",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "must be one of" in result.output
+
+    @patch("qualytics.cli.operations.get_client")
     def test_rejects_invalid_max_records(self, mock_get_client, cli_runner):
         mock_get_client.return_value = _mock_client()
         result = cli_runner.invoke(
