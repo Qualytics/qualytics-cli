@@ -17,6 +17,23 @@ from ..api.operations import get_operation, run_operation
 from ..config import OPERATION_ERROR_PATH
 from ..utils.file_ops import log_error
 
+_INT_TO_AI_EFFORT = {
+    "0": "off",
+    "1": "low",
+    "2": "medium",
+    "3": "high",
+    "4": "xhigh",
+    "5": "max",
+}
+
+
+def _normalize_ai_effort(value: str | None) -> str | None:
+    """Convert legacy numeric string (e.g. '3') to the label form ('high'). Labels pass through unchanged."""
+    if value is None:
+        return None
+    return _INT_TO_AI_EFFORT.get(value, value)
+
+
 # Default polling configuration
 DEFAULT_POLL_INTERVAL = 10  # seconds between polls
 DEFAULT_TIMEOUT = 1800  # 30 minutes max wait
@@ -213,7 +230,7 @@ def run_profile(
     datastore_ids: list[int],
     container_names: list[str] | None,
     container_tags: list[str] | None,
-    inference_threshold: int | None,
+    ai_effort: str | None,
     infer_as_draft: bool | None,
     max_records_analyzed_per_partition: int | None,
     max_count_testing_sample: int | None,
@@ -227,6 +244,7 @@ def run_profile(
     timeout: int = DEFAULT_TIMEOUT,
 ):
     """Run profile operation for specified datastores."""
+    ai_effort = _normalize_ai_effort(ai_effort)
 
     def build_payload(datastore_id):
         return {
@@ -234,7 +252,7 @@ def run_profile(
             "type": "profile",
             "container_names": container_names,
             "container_tags": container_tags,
-            "inference_threshold": inference_threshold,
+            "ai_effort": ai_effort,
             "infer_as_draft": infer_as_draft,
             "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
             "max_count_testing_sample": max_count_testing_sample,

@@ -121,15 +121,16 @@ def profile_operation(
         "--container-tags",
         help='Comma-separated container tags. Example: "production,finance"',
     ),
-    inference_threshold: int | None = typer.Option(
+    ai_effort: str | None = typer.Option(
         None,
-        "--inference-threshold",
-        help="Inference quality checks threshold (0 to 5)",
+        "--ai-effort",
+        "--inference-threshold",  # deprecated alias
+        help="AI Effort level: off, low, medium, high, xhigh, max",
     ),
     infer_as_draft: bool = typer.Option(
         False,
         "--infer-as-draft",
-        help="Infer all quality checks as Draft",
+        help="Create AI managed checks as draft",
     ),
     max_records_analyzed_per_partition: int | None = typer.Option(
         None,
@@ -139,7 +140,7 @@ def profile_operation(
     max_count_testing_sample: int | None = typer.Option(
         None,
         "--max-count-testing-sample",
-        help="Records accumulated for validation of inferred checks (max 100000)",
+        help="Records accumulated for validation of AI managed checks (max 100000)",
     ),
     percent_testing_threshold: float | None = typer.Option(
         None, "--percent-testing-threshold", help="Percent of testing threshold"
@@ -204,7 +205,7 @@ def profile_operation(
         datastore_ids=datastore_ids,
         container_names=names_list,
         container_tags=tags_list,
-        inference_threshold=inference_threshold,
+        ai_effort=ai_effort,
         infer_as_draft=infer_as_draft if infer_as_draft else None,
         max_records_analyzed_per_partition=max_records_analyzed_per_partition,
         max_count_testing_sample=max_count_testing_sample,
