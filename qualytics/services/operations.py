@@ -286,6 +286,7 @@ def run_scan(
     greater_than_time: str | None,
     greater_than_batch: float | None,
     background: bool,
+    auto_resolve_passed_anomalies: bool | None = None,
     poll_interval: int = DEFAULT_POLL_INTERVAL,
     timeout: int = DEFAULT_TIMEOUT,
 ):
@@ -297,6 +298,7 @@ def run_scan(
             "type": "scan",
             "incremental": incremental if incremental is not None else False,
             "remediation": remediation,
+            "auto_resolve_passed_anomalies": auto_resolve_passed_anomalies,
             "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
             "enrichment_source_record_limit": enrichment_source_record_limit,
             "greater_than_time": greater_than_time,

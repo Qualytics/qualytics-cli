@@ -46,9 +46,15 @@ qualytics operations scan --datastore-id 1 --container-names "orders,customers"
 
 # Incremental scan (only new/updated records)
 qualytics operations scan --datastore-id 1 --incremental
+
+# Disable auto-resolution of passed anomalies (server default is on)
+qualytics operations scan --datastore-id 1 --no-auto-resolve-passed-anomalies
 ```
 
-Runs quality checks against the data and detects anomalies.
+Runs quality checks against the data and detects anomalies. When a scan
+completes, open anomalies whose fingerprints no longer fail are auto-resolved
+unless `--no-auto-resolve-passed-anomalies` is passed. Auto-resolution is
+silently disabled for incremental scans regardless of the flag.
 
 ## Running in Background
 

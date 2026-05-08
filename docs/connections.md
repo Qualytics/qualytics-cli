@@ -45,6 +45,32 @@ qualytics connections create \
   --parameters '{"role": "ANALYST", "warehouse": "COMPUTE_WH"}'
 ```
 
+### IAM Role authentication (S3, Athena, Redshift)
+
+S3, Athena, and Redshift connections can authenticate via an IAM Role instead
+of static credentials. Use `--authentication-type IAM_ROLE` together with
+`--role-arn` (and optionally `--external-id`).
+
+```bash
+# S3 with IAM Role (alternative to --access-key / --secret-key)
+qualytics connections create \
+  --type s3 \
+  --name s3-prod \
+  --uri s3://my-bucket \
+  --authentication-type IAM_ROLE \
+  --role-arn arn:aws:iam::123456789012:role/QualyticsReader \
+  --external-id my-external-id
+
+# Athena with IAM Role (alternative to --username / --password)
+qualytics connections create \
+  --type athena \
+  --name athena-prod \
+  --authentication-type IAM_ROLE \
+  --role-arn arn:aws:iam::123456789012:role/QualyticsAthena
+```
+
+Default authentication is `SHARED_KEY` for S3 and `BASIC` for Athena/Redshift.
+
 ## Listing and Retrieving
 
 ```bash

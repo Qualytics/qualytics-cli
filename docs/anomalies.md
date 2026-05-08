@@ -24,6 +24,12 @@ qualytics anomalies list --datastore-id 1 --status Active
 # Filter by date range
 qualytics anomalies list --datastore-id 1 \
   --start-date 2026-01-01 --end-date 2026-01-31
+
+# Only anomalies whose source records were enriched
+qualytics anomalies list --datastore-id 1 --source-enriched
+
+# Only anomalies whose source records were NOT enriched
+qualytics anomalies list --datastore-id 1 --no-source-enriched
 ```
 
 ## Inspecting an Anomaly
@@ -40,7 +46,18 @@ qualytics anomalies update --id 42 --status Acknowledged
 
 # Bulk update
 qualytics anomalies update --ids 42,43,44 --status Active
+
+# Set assignees on a single anomaly
+qualytics anomalies update --id 42 --status Active --assignee-ids "7,12"
+
+# Clear assignees (empty string)
+qualytics anomalies update --id 42 --status Active --assignee-ids ""
+
+# Bulk-assign a reviewer
+qualytics anomalies update --ids 42,43,44 --status Active --assignee-ids "7"
 ```
+
+User IDs come from `qualytics users list`.
 
 ## Archiving
 

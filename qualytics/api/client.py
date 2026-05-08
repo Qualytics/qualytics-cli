@@ -1,8 +1,32 @@
 """Centralized API client for the Qualytics controlplane."""
 
+import os
+
 import requests
 import urllib3
 from rich import print
+
+DEFAULT_TIMEOUT = 30
+
+
+def _resolve_timeout(config: dict | None) -> int:
+    """Resolve request timeout from env var, config, or default.
+
+    Precedence: ``QUALYTICS_TIMEOUT`` env var → ``timeout`` in config → 30.
+    """
+    env_value = os.environ.get("QUALYTICS_TIMEOUT")
+    if env_value:
+        try:
+            parsed = int(env_value)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            pass
+    if config:
+        cfg_value = config.get("timeout")
+        if isinstance(cfg_value, int) and cfg_value > 0:
+            return cfg_value
+    return DEFAULT_TIMEOUT
 
 
 class QualyticsAPIError(Exception):
@@ -51,7 +75,7 @@ class QualyticsClient:
         base_url: str,
         token: str,
         ssl_verify: bool = True,
-        timeout: int = 30,
+        timeout: int = DEFAULT_TIMEOUT,
     ):
         self.base_url = base_url.rstrip("/")
         if not self.base_url.endswith("/"):
@@ -108,6 +132,12 @@ class QualyticsClient:
                 f"SSL handshake failed for {url}. "
                 "If your server runs plain HTTP, use http:// instead of https:// "
                 "in your URL (e.g. qualytics init --url http://localhost:8000)."
+            )
+        except requests.exceptions.Timeout:
+            raise ConnectionError(
+                f"Request to {url} timed out after {kwargs['timeout']}s. "
+                "Increase the timeout via QUALYTICS_TIMEOUT=<seconds> "
+                "or set 'timeout' in ~/.qualytics/config.yaml."
             )
         except requests.exceptions.ConnectionError:
             raise ConnectionError(
@@ -180,4 +210,5 @@ def get_client(config: dict | None = None) -> QualyticsClient:
         base_url=base_url,
         token=token,
         ssl_verify=ssl_verify,
+        timeout=_resolve_timeout(config),
     )

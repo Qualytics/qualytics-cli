@@ -183,6 +183,10 @@ def auth_status():
     )
     ssl_label = "[green]enabled[/green]" if ssl_verify else "[yellow]disabled[/yellow]"
 
+    from ..api.client import _resolve_timeout
+
+    timeout = _resolve_timeout(config)
+
     print(f"[bold]{host}[/bold]")
     print(f"  URL:              {url}")
     print(f"  Status:           {status_icon}")
@@ -190,6 +194,7 @@ def auth_status():
     if expiry_line:
         print(f"  Expiry:           {expiry_line}")
     print(f"  SSL Verification: {ssl_label}")
+    print(f"  Request timeout:  {timeout}s")
     print(f"  Config file:      {CONFIG_PATH}")
 
     if not token_valid:

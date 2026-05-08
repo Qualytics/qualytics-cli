@@ -75,6 +75,21 @@ class TestListAnomalies:
         assert "container" not in params
         assert "status" not in params
         assert "tag" not in params
+        assert "source_enriched" not in params
+
+    def test_source_enriched_true(self):
+        client = _mock_client()
+        client.get.return_value.json.return_value = {"items": [], "total": 0}
+        list_anomalies(client, source_enriched=True)
+        params = client.get.call_args.kwargs["params"]
+        assert params["source_enriched"] == "true"
+
+    def test_source_enriched_false(self):
+        client = _mock_client()
+        client.get.return_value.json.return_value = {"items": [], "total": 0}
+        list_anomalies(client, source_enriched=False)
+        params = client.get.call_args.kwargs["params"]
+        assert params["source_enriched"] == "false"
 
 
 class TestListAllAnomalies:
@@ -249,6 +264,44 @@ class TestAnomaliesListCLI:
 
     @patch("qualytics.cli.anomalies.list_all_anomalies")
     @patch("qualytics.cli.anomalies.get_client")
+    def test_list_with_source_enriched(self, mock_gc, mock_list, cli_runner):
+        mock_gc.return_value = _mock_client()
+        mock_list.return_value = []
+        result = cli_runner.invoke(
+            app,
+            ["anomalies", "list", "--datastore-id", "42", "--source-enriched"],
+        )
+        assert result.exit_code == 0
+        _, kwargs = mock_list.call_args
+        assert kwargs["source_enriched"] is True
+
+    @patch("qualytics.cli.anomalies.list_all_anomalies")
+    @patch("qualytics.cli.anomalies.get_client")
+    def test_list_with_no_source_enriched(self, mock_gc, mock_list, cli_runner):
+        mock_gc.return_value = _mock_client()
+        mock_list.return_value = []
+        result = cli_runner.invoke(
+            app,
+            ["anomalies", "list", "--datastore-id", "42", "--no-source-enriched"],
+        )
+        assert result.exit_code == 0
+        _, kwargs = mock_list.call_args
+        assert kwargs["source_enriched"] is False
+
+    @patch("qualytics.cli.anomalies.list_all_anomalies")
+    @patch("qualytics.cli.anomalies.get_client")
+    def test_list_default_no_source_enriched_filter(
+        self, mock_gc, mock_list, cli_runner
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_list.return_value = []
+        result = cli_runner.invoke(app, ["anomalies", "list", "--datastore-id", "42"])
+        assert result.exit_code == 0
+        _, kwargs = mock_list.call_args
+        assert kwargs["source_enriched"] is None
+
+    @patch("qualytics.cli.anomalies.list_all_anomalies")
+    @patch("qualytics.cli.anomalies.get_client")
     def test_list_with_date_range(self, mock_gc, mock_list, cli_runner):
         mock_gc.return_value = _mock_client()
         mock_list.return_value = []
@@ -311,6 +364,73 @@ class TestAnomaliesUpdateCLI:
                 app, ["anomalies", "update", "--status", "Active"]
             )
         assert result.exit_code == 1
+
+    @patch("qualytics.cli.anomalies.update_anomaly")
+    @patch("qualytics.cli.anomalies.get_client")
+    def test_update_with_assignee_ids(self, mock_gc, mock_update, cli_runner):
+        mock_gc.return_value = _mock_client()
+        mock_update.return_value = {"id": 42, "status": "Active"}
+        result = cli_runner.invoke(
+            app,
+            [
+                "anomalies",
+                "update",
+                "--id",
+                "42",
+                "--status",
+                "Active",
+                "--assignee-ids",
+                "7,12",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = mock_update.call_args.args[2]
+        assert payload["assignee_ids"] == [7, 12]
+
+    @patch("qualytics.cli.anomalies.update_anomaly")
+    @patch("qualytics.cli.anomalies.get_client")
+    def test_update_clears_assignees_with_empty_string(
+        self, mock_gc, mock_update, cli_runner
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_update.return_value = {"id": 42, "status": "Active"}
+        result = cli_runner.invoke(
+            app,
+            [
+                "anomalies",
+                "update",
+                "--id",
+                "42",
+                "--status",
+                "Active",
+                "--assignee-ids",
+                "",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = mock_update.call_args.args[2]
+        assert payload["assignee_ids"] == []
+
+    @patch("qualytics.cli.anomalies.bulk_update_anomalies")
+    @patch("qualytics.cli.anomalies.get_client")
+    def test_update_bulk_with_assignee_ids(self, mock_gc, mock_bulk, cli_runner):
+        mock_gc.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "anomalies",
+                "update",
+                "--ids",
+                "1,2",
+                "--status",
+                "Active",
+                "--assignee-ids",
+                "7",
+            ],
+        )
+        assert result.exit_code == 0
+        items = mock_bulk.call_args.args[1]
+        assert all(item["assignee_ids"] == [7] for item in items)
 
     @patch("qualytics.cli.anomalies.update_anomaly")
     @patch("qualytics.cli.anomalies.get_client")

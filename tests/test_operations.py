@@ -362,6 +362,64 @@ class TestRunForDatastores:
         assert payload["incremental"] is True
         assert payload["remediation"] == "append"
         assert payload["enrichment_source_record_limit"] == 100
+        # Default: not in payload, so server default (True) fires.
+        assert "auto_resolve_passed_anomalies" not in payload
+
+    @patch("qualytics.services.operations.run_operation")
+    @patch("qualytics.services.operations.wait_for_operation")
+    def test_scan_auto_resolve_passed_anomalies_true(self, mock_wait, mock_run):
+        mock_run.return_value = {"id": 301}
+        mock_wait.return_value = {"result": "success", "message": None}
+
+        from qualytics.services.operations import run_scan
+
+        client = _mock_client()
+        run_scan(
+            client,
+            [42],
+            None,
+            None,
+            None,
+            "none",
+            None,
+            None,
+            None,
+            None,
+            False,
+            auto_resolve_passed_anomalies=True,
+            poll_interval=1,
+            timeout=10,
+        )
+        payload = mock_run.call_args.args[1]
+        assert payload["auto_resolve_passed_anomalies"] is True
+
+    @patch("qualytics.services.operations.run_operation")
+    @patch("qualytics.services.operations.wait_for_operation")
+    def test_scan_auto_resolve_passed_anomalies_false(self, mock_wait, mock_run):
+        mock_run.return_value = {"id": 302}
+        mock_wait.return_value = {"result": "success", "message": None}
+
+        from qualytics.services.operations import run_scan
+
+        client = _mock_client()
+        run_scan(
+            client,
+            [42],
+            None,
+            None,
+            None,
+            "none",
+            None,
+            None,
+            None,
+            None,
+            False,
+            auto_resolve_passed_anomalies=False,
+            poll_interval=1,
+            timeout=10,
+        )
+        payload = mock_run.call_args.args[1]
+        assert payload["auto_resolve_passed_anomalies"] is False
 
     @patch("qualytics.services.operations.run_operation")
     @patch("qualytics.services.operations.wait_for_operation")
@@ -641,6 +699,44 @@ class TestOperationsScanCLI:
         kwargs = mock_run.call_args.kwargs
         assert kwargs["remediation"] == "append"
         assert kwargs["enrichment_source_record_limit"] == 500
+        # No flag passed → None, so we don't override the server default.
+        assert kwargs["auto_resolve_passed_anomalies"] is None
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_scan")
+    def test_scan_with_auto_resolve_on(self, mock_run, mock_get_client, cli_runner):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "scan",
+                "--datastore-id",
+                "42",
+                "--auto-resolve-passed-anomalies",
+                "--background",
+            ],
+        )
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["auto_resolve_passed_anomalies"] is True
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_scan")
+    def test_scan_with_auto_resolve_off(self, mock_run, mock_get_client, cli_runner):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "scan",
+                "--datastore-id",
+                "42",
+                "--no-auto-resolve-passed-anomalies",
+                "--background",
+            ],
+        )
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["auto_resolve_passed_anomalies"] is False
 
     @patch("qualytics.cli.operations.get_client")
     def test_rejects_invalid_remediation(self, mock_get_client, cli_runner):

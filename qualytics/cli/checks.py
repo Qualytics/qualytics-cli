@@ -59,6 +59,16 @@ def checks_create(
     file: str = typer.Option(
         ..., "--file", "-f", help="YAML/JSON file with check definition(s)"
     ),
+    owner_id: int | None = typer.Option(
+        None,
+        "--owner-id",
+        help="Apply this owner user ID to every check in the batch (overrides file)",
+    ),
+    default_anomaly_assignee_id: int | None = typer.Option(
+        None,
+        "--default-anomaly-assignee-id",
+        help="Apply this default anomaly assignee user ID to every check (overrides file)",
+    ),
 ):
     """Create quality checks from a file (single or bulk)."""
     client = get_client()
@@ -102,6 +112,10 @@ def checks_create(
                 failed += 1
                 continue
         try:
+            if owner_id is not None:
+                check["owner_id"] = owner_id
+            if default_anomaly_assignee_id is not None:
+                check["default_anomaly_assignee_id"] = default_anomaly_assignee_id
             payload = _build_create_payload(check, container_id)
             result = create_quality_check(client, payload)
             print(
@@ -198,6 +212,16 @@ def checks_update(
     file: str = typer.Option(
         ..., "--file", "-f", help="YAML/JSON file with updated check definition"
     ),
+    owner_id: int | None = typer.Option(
+        None,
+        "--owner-id",
+        help="Owner user ID (overrides file). Pass 0 to clear.",
+    ),
+    default_anomaly_assignee_id: int | None = typer.Option(
+        None,
+        "--default-anomaly-assignee-id",
+        help="Default anomaly assignee user ID (overrides file). Pass 0 to clear.",
+    ),
 ):
     """Update a quality check from a file."""
     client = get_client()
@@ -213,6 +237,21 @@ def checks_update(
         "additional_metadata": data.get("additional_metadata") or {},
         "status": data.get("status", "Active"),
     }
+
+    # CLI flag (if given) takes precedence over the file value.
+    # Pass through to the same normalization the service uses (0 → clear).
+    effective_owner = owner_id if owner_id is not None else data.get("owner_id")
+    effective_assignee = (
+        default_anomaly_assignee_id
+        if default_anomaly_assignee_id is not None
+        else data.get("default_anomaly_assignee_id")
+    )
+    if effective_owner is not None:
+        payload["owner_id"] = effective_owner if effective_owner else None
+    if effective_assignee is not None:
+        payload["default_anomaly_assignee_id"] = (
+            effective_assignee if effective_assignee else None
+        )
 
     result = update_quality_check(client, check_id, payload)
     print(f"[green]Quality check {result['id']} updated successfully.[/green]")

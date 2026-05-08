@@ -294,6 +294,14 @@ def scan_operation(
         "--enrichment-source-record-limit",
         help="Limit of enrichment source records per run (>= 1)",
     ),
+    auto_resolve_passed_anomalies: bool | None = typer.Option(
+        None,
+        "--auto-resolve-passed-anomalies/--no-auto-resolve-passed-anomalies",
+        help=(
+            "Auto-resolve open anomalies whose fingerprint no longer fails. "
+            "Server default is on. Silently forced off for incremental scans."
+        ),
+    ),
     greater_than_time: datetime | None = typer.Option(
         None,
         "--greater-than-time",
@@ -361,6 +369,7 @@ def scan_operation(
         remediation=remediation,
         max_records_analyzed_per_partition=max_records_analyzed_per_partition,
         enrichment_source_record_limit=enrichment_source_record_limit,
+        auto_resolve_passed_anomalies=auto_resolve_passed_anomalies,
         greater_than_time=gt_time,
         greater_than_batch=greater_than_batch,
         background=background,

@@ -81,6 +81,29 @@ qualytics checks create --datastore-id 1 --file checks.yaml
 | `tags` | list[string] | No | Tags for filtering |
 | `status` | string | No | `Active` or `Draft` (default: Active) |
 
+## Ownership and Assignment
+
+Each check can have an owner and a default anomaly assignee. Set them via the
+CLI flags `--owner-id` and `--default-anomaly-assignee-id` on `checks create`
+or `checks update`. Pass `0` on `update` to clear an existing value.
+
+User IDs are environment-specific, so ownership is **not** carried in the
+portable export YAML — `checks export` strips these fields and `checks
+import` won't restore them. Apply ownership at import time per environment.
+
+```bash
+# Apply a single owner to every check in a bulk import
+qualytics checks create --datastore-id 1 --file checks.yaml --owner-id 7
+
+# Update a check's assignee
+qualytics checks update --id 42 --file check.yaml --default-anomaly-assignee-id 12
+
+# Clear ownership on update
+qualytics checks update --id 42 --file check.yaml --owner-id 0
+```
+
+User IDs come from `qualytics users list`.
+
 ## Export and Import
 
 ### Export checks

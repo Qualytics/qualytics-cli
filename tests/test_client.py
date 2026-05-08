@@ -265,3 +265,39 @@ class TestGetClient:
         }
         client = get_client(config)
         assert client.ssl_verify is False
+
+    def test_get_client_default_timeout(self, monkeypatch):
+        import jwt
+
+        monkeypatch.delenv("QUALYTICS_TIMEOUT", raising=False)
+        token = jwt.encode({"sub": "user"}, key="", algorithm="HS256")
+        config = {"url": "https://example.com/api", "token": token}
+        client = get_client(config)
+        assert client.timeout == 30
+
+    def test_get_client_timeout_from_config(self, monkeypatch):
+        import jwt
+
+        monkeypatch.delenv("QUALYTICS_TIMEOUT", raising=False)
+        token = jwt.encode({"sub": "user"}, key="", algorithm="HS256")
+        config = {"url": "https://example.com/api", "token": token, "timeout": 90}
+        client = get_client(config)
+        assert client.timeout == 90
+
+    def test_get_client_timeout_from_env_overrides_config(self, monkeypatch):
+        import jwt
+
+        monkeypatch.setenv("QUALYTICS_TIMEOUT", "120")
+        token = jwt.encode({"sub": "user"}, key="", algorithm="HS256")
+        config = {"url": "https://example.com/api", "token": token, "timeout": 90}
+        client = get_client(config)
+        assert client.timeout == 120
+
+    def test_get_client_timeout_env_invalid_falls_back(self, monkeypatch):
+        import jwt
+
+        monkeypatch.setenv("QUALYTICS_TIMEOUT", "not-a-number")
+        token = jwt.encode({"sub": "user"}, key="", algorithm="HS256")
+        config = {"url": "https://example.com/api", "token": token, "timeout": 60}
+        client = get_client(config)
+        assert client.timeout == 60
