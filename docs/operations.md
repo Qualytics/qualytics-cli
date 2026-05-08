@@ -1,13 +1,13 @@
 # Operations
 
-Operations are the data processing workflows in Qualytics. The standard lifecycle is: **sync** (discover containers) then **profile** (infer checks) then **scan** (detect anomalies).
+Operations are the data processing workflows in Qualytics. The standard lifecycle is: **sync** (discover containers) then **profile** (generate AI managed checks) then **scan** (detect anomalies).
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `operations sync` | Trigger a sync operation (discover containers) |
-| `operations profile` | Trigger a profile operation (infer quality checks) |
+| `operations profile` | Trigger a profile operation (generate AI managed checks) |
 | `operations scan` | Trigger a scan operation (detect anomalies) |
 | `operations materialize` | Trigger a materialize operation (computed containers) |
 | `operations export` | Trigger an export operation (anomalies, checks, profiles) |
@@ -25,16 +25,16 @@ qualytics operations sync --datastore-id 1
 
 Discovers tables, views, and files in the datastore and creates container records.
 
-### 2. Profile (infer checks)
+### 2. Profile (generate AI managed checks)
 
 ```bash
 qualytics operations profile --datastore-id 1
 
-# With inference threshold (higher = more checks inferred)
-qualytics operations profile --datastore-id 1 --inference-threshold 3
+# AI Effort levels: off, low, medium, high, xhigh, max
+qualytics operations profile --datastore-id 1 --ai-effort high
 ```
 
-Profiles container data to infer quality checks based on statistical analysis.
+Profiles container data and generates AI managed checks based on statistical analysis.
 
 ### 3. Scan (detect anomalies)
 
@@ -46,9 +46,15 @@ qualytics operations scan --datastore-id 1 --container-names "orders,customers"
 
 # Incremental scan (only new/updated records)
 qualytics operations scan --datastore-id 1 --incremental
+
+# Disable auto-resolution of passed anomalies (server default is on)
+qualytics operations scan --datastore-id 1 --no-auto-resolve-passed-anomalies
 ```
 
-Runs quality checks against the data and detects anomalies.
+Runs quality checks against the data and detects anomalies. When a scan
+completes, open anomalies whose fingerprints no longer fail are auto-resolved
+unless `--no-auto-resolve-passed-anomalies` is passed. Auto-resolution is
+silently disabled for incremental scans regardless of the flag.
 
 ## Running in Background
 

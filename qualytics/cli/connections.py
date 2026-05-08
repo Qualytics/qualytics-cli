@@ -123,6 +123,25 @@ def connections_create(
     max_parallelization: int | None = typer.Option(
         None, "--max-parallelization", help="Max parallelization level"
     ),
+    authentication_type: str | None = typer.Option(
+        None,
+        "--authentication-type",
+        help=(
+            "Authentication mode for S3/Athena/Redshift. "
+            "S3: SHARED_KEY (default) or IAM_ROLE. "
+            "Athena/Redshift: BASIC (default) or IAM_ROLE."
+        ),
+    ),
+    role_arn: str | None = typer.Option(
+        None,
+        "--role-arn",
+        help="IAM Role ARN (required when --authentication-type IAM_ROLE)",
+    ),
+    external_id: str | None = typer.Option(
+        None,
+        "--external-id",
+        help="Optional external ID for IAM Role assumption",
+    ),
     parameters: str | None = typer.Option(
         None,
         "--parameters",
@@ -168,21 +187,28 @@ def connections_create(
             print(f"[red]Invalid JSON in --parameters: {e}[/red]")
             raise typer.Exit(code=1)
 
-    payload = build_create_connection_payload(
-        connection_type,
-        name=name,
-        host=resolved.get("host", host),
-        port=port,
-        username=resolved.get("username", username),
-        password=resolved.get("password"),
-        uri=resolved.get("uri"),
-        access_key=resolved.get("access_key"),
-        secret_key=resolved.get("secret_key"),
-        catalog=catalog,
-        jdbc_fetch_size=jdbc_fetch_size,
-        max_parallelization=max_parallelization,
-        parameters=extra_params,
-    )
+    try:
+        payload = build_create_connection_payload(
+            connection_type,
+            name=name,
+            host=resolved.get("host", host),
+            port=port,
+            username=resolved.get("username", username),
+            password=resolved.get("password"),
+            uri=resolved.get("uri"),
+            access_key=resolved.get("access_key"),
+            secret_key=resolved.get("secret_key"),
+            catalog=catalog,
+            jdbc_fetch_size=jdbc_fetch_size,
+            max_parallelization=max_parallelization,
+            authentication_type=authentication_type,
+            role_arn=role_arn,
+            external_id=external_id,
+            parameters=extra_params,
+        )
+    except ValueError as e:
+        print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
 
     print("[bold]Connection Create Payload (secrets redacted):[/bold]")
     print(format_for_display(redact_payload(payload), fmt))
@@ -223,6 +249,15 @@ def connections_update(
     secret_key: str | None = typer.Option(
         None, "--secret-key", help="New secret key (supports ${ENV_VAR})"
     ),
+    authentication_type: str | None = typer.Option(
+        None,
+        "--authentication-type",
+        help="New authentication mode (S3/Athena/Redshift): SHARED_KEY, BASIC, or IAM_ROLE",
+    ),
+    role_arn: str | None = typer.Option(None, "--role-arn", help="New IAM Role ARN"),
+    external_id: str | None = typer.Option(
+        None, "--external-id", help="New IAM Role external ID"
+    ),
     parameters: str | None = typer.Option(
         None,
         "--parameters",
@@ -255,16 +290,23 @@ def connections_update(
             print(f"[red]Invalid JSON in --parameters: {e}[/red]")
             raise typer.Exit(code=1)
 
-    changes = build_update_connection_payload(
-        name=name,
-        host=resolved.get("host"),
-        port=port,
-        username=resolved.get("username"),
-        password=resolved.get("password"),
-        uri=resolved.get("uri"),
-        access_key=resolved.get("access_key"),
-        secret_key=resolved.get("secret_key"),
-    )
+    try:
+        changes = build_update_connection_payload(
+            name=name,
+            host=resolved.get("host"),
+            port=port,
+            username=resolved.get("username"),
+            password=resolved.get("password"),
+            uri=resolved.get("uri"),
+            access_key=resolved.get("access_key"),
+            secret_key=resolved.get("secret_key"),
+            authentication_type=authentication_type,
+            role_arn=role_arn,
+            external_id=external_id,
+        )
+    except ValueError as e:
+        print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
 
     # Merge extra parameters
     if extra_params:

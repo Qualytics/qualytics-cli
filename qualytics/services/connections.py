@@ -74,6 +74,9 @@ def build_create_connection_payload(
     catalog: str | None = None,
     jdbc_fetch_size: int | None = None,
     max_parallelization: int | None = None,
+    authentication_type: str | None = None,
+    role_arn: str | None = None,
+    external_id: str | None = None,
     parameters: dict | None = None,
 ) -> dict:
     """Build a payload for creating a connection.
@@ -115,7 +118,17 @@ def build_create_connection_payload(
     if max_parallelization is not None:
         payload["max_parallelization"] = max_parallelization
 
-    # Merge the catch-all parameters dict last (overrides dedicated flags)
+    # IAM Role auth (S3, Athena, Redshift) — these go *inside* the
+    # ``parameters`` dict on the wire (controlplane spec uses
+    # ``map_to="parameters"`` for them), not at the top level.
+    _require_role_arn_for_iam_role(authentication_type, role_arn)
+    iam_params = _iam_role_params(authentication_type, role_arn, external_id)
+    if iam_params:
+        payload["parameters"] = {**(payload.get("parameters") or {}), **iam_params}
+
+    # Merge the catch-all parameters dict last (overrides dedicated flags).
+    # Top-level merge is preserved for legacy callers that used --parameters
+    # to set fields like Snowflake's role/warehouse.
     if parameters is not None:
         payload.update(parameters)
 
@@ -125,12 +138,53 @@ def build_create_connection_payload(
 def build_update_connection_payload(**changes) -> dict:
     """Build a partial-update payload for a connection.
 
-    Only non-None values are included.
+    Only non-None values are included. IAM Role fields (``authentication_type``,
+    ``role_arn``, ``external_id``) are nested under ``parameters``.
     """
-    payload: dict = {}
+    iam_keys = {"authentication_type", "role_arn", "external_id"}
+    iam_changes = {k: changes.pop(k) for k in list(changes) if k in iam_keys}
 
+    _require_role_arn_for_iam_role(
+        iam_changes.get("authentication_type"), iam_changes.get("role_arn")
+    )
+
+    payload: dict = {}
     for key, value in changes.items():
         if value is not None:
             payload[key] = value
 
+    iam_params = _iam_role_params(
+        iam_changes.get("authentication_type"),
+        iam_changes.get("role_arn"),
+        iam_changes.get("external_id"),
+    )
+    if iam_params:
+        payload["parameters"] = iam_params
+
     return payload
+
+
+def _iam_role_params(
+    authentication_type: str | None,
+    role_arn: str | None,
+    external_id: str | None,
+) -> dict:
+    """Collect non-None IAM Role fields into a ``parameters`` sub-dict."""
+    out: dict = {}
+    if authentication_type is not None:
+        out["authentication_type"] = authentication_type
+    if role_arn is not None:
+        out["role_arn"] = role_arn
+    if external_id is not None:
+        out["external_id"] = external_id
+    return out
+
+
+def _require_role_arn_for_iam_role(
+    authentication_type: str | None, role_arn: str | None
+) -> None:
+    """Fail fast if IAM_ROLE is selected without a role ARN."""
+    if authentication_type == "IAM_ROLE" and not role_arn:
+        raise ValueError(
+            "--role-arn is required when --authentication-type is IAM_ROLE."
+        )

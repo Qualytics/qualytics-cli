@@ -328,6 +328,47 @@ class TestPayloadBuilders:
         assert payload["properties"] == {}
         assert payload["tags"] == []
         assert payload["status"] == "Active"
+        assert "owner_id" not in payload
+        assert "default_anomaly_assignee_id" not in payload
+
+    def test_create_payload_includes_ownership_when_present(self):
+        check = {
+            "rule_type": "notNull",
+            "owner_id": 7,
+            "default_anomaly_assignee_id": 12,
+        }
+        payload = _build_create_payload(check, container_id=1)
+        assert payload["owner_id"] == 7
+        assert payload["default_anomaly_assignee_id"] == 12
+
+    def test_update_payload_includes_ownership_when_present(self):
+        check = {
+            "description": "x",
+            "owner_id": 9,
+            "default_anomaly_assignee_id": 13,
+        }
+        payload = _build_update_payload(check)
+        assert payload["owner_id"] == 9
+        assert payload["default_anomaly_assignee_id"] == 13
+
+    def test_payload_treats_zero_as_clear(self):
+        # YAML `owner_id: 0` and `--owner-id 0` should behave identically:
+        # both mean "clear the value" (user IDs are positive).
+        check = {
+            "description": "x",
+            "owner_id": 0,
+            "default_anomaly_assignee_id": 0,
+        }
+        update_payload = _build_update_payload(check)
+        assert update_payload["owner_id"] is None
+        assert update_payload["default_anomaly_assignee_id"] is None
+
+        create_payload = _build_create_payload(
+            {"rule_type": "notNull", "owner_id": 0, "default_anomaly_assignee_id": 0},
+            container_id=1,
+        )
+        assert create_payload["owner_id"] is None
+        assert create_payload["default_anomaly_assignee_id"] is None
 
 
 # ── Load from directory ──────────────────────────────────────────────────
@@ -919,6 +960,121 @@ class TestChecksUpdateCLI:
         )
         assert result.exit_code == 0
         assert "updated successfully" in result.output
+
+    @patch("qualytics.cli.checks.update_quality_check")
+    @patch("qualytics.cli.checks.get_client")
+    def test_update_with_owner_flag(self, mock_gc, mock_update, cli_runner, tmp_path):
+        mock_gc.return_value = _mock_client()
+        mock_update.return_value = {"id": 42}
+
+        check_file = tmp_path / "check.yaml"
+        check_file.write_text("description: Updated\nfields: [email]\n")
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "update",
+                "--id",
+                "42",
+                "--file",
+                str(check_file),
+                "--owner-id",
+                "7",
+                "--default-anomaly-assignee-id",
+                "12",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = mock_update.call_args.args[2]
+        assert payload["owner_id"] == 7
+        assert payload["default_anomaly_assignee_id"] == 12
+
+    @patch("qualytics.cli.checks.update_quality_check")
+    @patch("qualytics.cli.checks.get_client")
+    def test_update_owner_zero_clears(self, mock_gc, mock_update, cli_runner, tmp_path):
+        mock_gc.return_value = _mock_client()
+        mock_update.return_value = {"id": 42}
+
+        check_file = tmp_path / "check.yaml"
+        check_file.write_text("description: x\nowner_id: 99\n")
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "update",
+                "--id",
+                "42",
+                "--file",
+                str(check_file),
+                "--owner-id",
+                "0",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = mock_update.call_args.args[2]
+        assert payload["owner_id"] is None
+
+    @patch("qualytics.cli.checks.update_quality_check")
+    @patch("qualytics.cli.checks.get_client")
+    def test_update_assignee_zero_clears(
+        self, mock_gc, mock_update, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_update.return_value = {"id": 42}
+
+        check_file = tmp_path / "check.yaml"
+        check_file.write_text("description: x\ndefault_anomaly_assignee_id: 50\n")
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "update",
+                "--id",
+                "42",
+                "--file",
+                str(check_file),
+                "--default-anomaly-assignee-id",
+                "0",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = mock_update.call_args.args[2]
+        assert payload["default_anomaly_assignee_id"] is None
+
+    @patch("qualytics.cli.checks.create_quality_check")
+    @patch("qualytics.cli.checks.get_table_ids")
+    @patch("qualytics.cli.checks.get_client")
+    def test_create_with_owner_flag_overrides(
+        self, mock_gc, mock_tables, mock_create, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        mock_create.return_value = {"id": 999}
+
+        check_file = tmp_path / "check.yaml"
+        check_file.write_text(
+            "rule_type: notNull\ncontainer: orders\nfields: [order_id]\nowner_id: 1\n"
+        )
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "create",
+                "--datastore-id",
+                "42",
+                "--file",
+                str(check_file),
+                "--owner-id",
+                "5",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = mock_create.call_args.args[1]
+        assert payload["owner_id"] == 5
 
 
 class TestChecksDeleteCLI:

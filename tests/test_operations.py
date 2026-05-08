@@ -273,7 +273,7 @@ class TestRunForDatastores:
             [42],
             ["orders"],
             None,
-            3,
+            "high",
             True,
             None,
             None,
@@ -290,7 +290,48 @@ class TestRunForDatastores:
         assert payload["type"] == "profile"
         assert payload["datastore_id"] == 42
         assert payload["container_names"] == ["orders"]
-        assert payload["inference_threshold"] == 3
+        assert payload["ai_effort"] == "high"
+
+    def test_ai_effort_numeric_strings_are_normalized(self):
+        from qualytics.services.operations import _normalize_ai_effort
+
+        assert _normalize_ai_effort("0") == "off"
+        assert _normalize_ai_effort("1") == "low"
+        assert _normalize_ai_effort("2") == "medium"
+        assert _normalize_ai_effort("3") == "high"
+        assert _normalize_ai_effort("4") == "xhigh"
+        assert _normalize_ai_effort("5") == "max"
+        assert _normalize_ai_effort("high") == "high"
+        assert _normalize_ai_effort(None) is None
+
+    @patch("qualytics.services.operations.run_operation")
+    @patch("qualytics.services.operations.wait_for_operation")
+    def test_profile_legacy_numeric_ai_effort_is_normalized(self, mock_wait, mock_run):
+        mock_run.return_value = {"id": 201}
+        mock_wait.return_value = {"result": "success", "message": None}
+
+        from qualytics.services.operations import run_profile
+
+        run_profile(
+            _mock_client(),
+            [42],
+            None,
+            None,
+            "3",  # legacy numeric string
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            False,
+            poll_interval=1,
+            timeout=10,
+        )
+        payload = mock_run.call_args.args[1]
+        assert payload["ai_effort"] == "high"
 
     @patch("qualytics.services.operations.run_operation")
     @patch("qualytics.services.operations.wait_for_operation")
@@ -321,6 +362,64 @@ class TestRunForDatastores:
         assert payload["incremental"] is True
         assert payload["remediation"] == "append"
         assert payload["enrichment_source_record_limit"] == 100
+        # Default: not in payload, so server default (True) fires.
+        assert "auto_resolve_passed_anomalies" not in payload
+
+    @patch("qualytics.services.operations.run_operation")
+    @patch("qualytics.services.operations.wait_for_operation")
+    def test_scan_auto_resolve_passed_anomalies_true(self, mock_wait, mock_run):
+        mock_run.return_value = {"id": 301}
+        mock_wait.return_value = {"result": "success", "message": None}
+
+        from qualytics.services.operations import run_scan
+
+        client = _mock_client()
+        run_scan(
+            client,
+            [42],
+            None,
+            None,
+            None,
+            "none",
+            None,
+            None,
+            None,
+            None,
+            False,
+            auto_resolve_passed_anomalies=True,
+            poll_interval=1,
+            timeout=10,
+        )
+        payload = mock_run.call_args.args[1]
+        assert payload["auto_resolve_passed_anomalies"] is True
+
+    @patch("qualytics.services.operations.run_operation")
+    @patch("qualytics.services.operations.wait_for_operation")
+    def test_scan_auto_resolve_passed_anomalies_false(self, mock_wait, mock_run):
+        mock_run.return_value = {"id": 302}
+        mock_wait.return_value = {"result": "success", "message": None}
+
+        from qualytics.services.operations import run_scan
+
+        client = _mock_client()
+        run_scan(
+            client,
+            [42],
+            None,
+            None,
+            None,
+            "none",
+            None,
+            None,
+            None,
+            None,
+            False,
+            auto_resolve_passed_anomalies=False,
+            poll_interval=1,
+            timeout=10,
+        )
+        payload = mock_run.call_args.args[1]
+        assert payload["auto_resolve_passed_anomalies"] is False
 
     @patch("qualytics.services.operations.run_operation")
     @patch("qualytics.services.operations.wait_for_operation")
@@ -454,8 +553,8 @@ class TestOperationsProfileCLI:
                 "orders,customers",
                 "--container-tags",
                 "production",
-                "--inference-threshold",
-                "3",
+                "--ai-effort",
+                "high",
                 "--infer-as-draft",
                 "--max-records-analyzed-per-partition",
                 "1000",
@@ -468,8 +567,79 @@ class TestOperationsProfileCLI:
         kwargs = mock_run.call_args.kwargs
         assert kwargs["container_names"] == ["orders", "customers"]
         assert kwargs["container_tags"] == ["production"]
-        assert kwargs["inference_threshold"] == 3
+        assert kwargs["ai_effort"] == "high"
         assert kwargs["max_records_analyzed_per_partition"] == 1000
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_profile")
+    def test_profile_deprecated_inference_threshold_flag(
+        self, mock_run, mock_get_client, cli_runner
+    ):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "profile",
+                "--datastore-id",
+                "42",
+                "--inference-threshold",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "deprecated" in result.output.lower()
+        assert mock_run.call_args.kwargs["ai_effort"] == "3"
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_profile")
+    def test_ai_effort_wins_over_inference_threshold(
+        self, mock_run, mock_get_client, cli_runner
+    ):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "profile",
+                "--datastore-id",
+                "42",
+                "--ai-effort",
+                "max",
+                "--inference-threshold",
+                "1",
+            ],
+        )
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["ai_effort"] == "max"
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_profile")
+    def test_ai_effort_is_case_insensitive(self, mock_run, mock_get_client, cli_runner):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            ["operations", "profile", "--datastore-id", "42", "--ai-effort", "High"],
+        )
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["ai_effort"] == "high"
+
+    @patch("qualytics.cli.operations.get_client")
+    def test_rejects_invalid_ai_effort(self, mock_get_client, cli_runner):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "profile",
+                "--datastore-id",
+                "42",
+                "--ai-effort",
+                "10",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "must be one of" in result.output
 
     @patch("qualytics.cli.operations.get_client")
     def test_rejects_invalid_max_records(self, mock_get_client, cli_runner):
@@ -529,6 +699,44 @@ class TestOperationsScanCLI:
         kwargs = mock_run.call_args.kwargs
         assert kwargs["remediation"] == "append"
         assert kwargs["enrichment_source_record_limit"] == 500
+        # No flag passed → None, so we don't override the server default.
+        assert kwargs["auto_resolve_passed_anomalies"] is None
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_scan")
+    def test_scan_with_auto_resolve_on(self, mock_run, mock_get_client, cli_runner):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "scan",
+                "--datastore-id",
+                "42",
+                "--auto-resolve-passed-anomalies",
+                "--background",
+            ],
+        )
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["auto_resolve_passed_anomalies"] is True
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_scan")
+    def test_scan_with_auto_resolve_off(self, mock_run, mock_get_client, cli_runner):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "scan",
+                "--datastore-id",
+                "42",
+                "--no-auto-resolve-passed-anomalies",
+                "--background",
+            ],
+        )
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["auto_resolve_passed_anomalies"] is False
 
     @patch("qualytics.cli.operations.get_client")
     def test_rejects_invalid_remediation(self, mock_get_client, cli_runner):

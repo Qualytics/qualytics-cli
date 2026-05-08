@@ -19,6 +19,7 @@ def list_anomalies(
     archived: str | None = None,
     sort_created: str | None = None,
     sort_weight: str | None = None,
+    source_enriched: bool | None = None,
     page: int = 1,
     size: int = 100,
 ) -> dict:
@@ -53,6 +54,8 @@ def list_anomalies(
         params["sort_created"] = sort_created
     if sort_weight:
         params["sort_weight"] = sort_weight
+    if source_enriched is not None:
+        params["source_enriched"] = str(source_enriched).lower()
     response = client.get("anomalies", params=params)
     return response.json()
 

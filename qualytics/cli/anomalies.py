@@ -78,6 +78,11 @@ def anomalies_list(
     end_date: str | None = typer.Option(
         None, "--end-date", help="End date (YYYY-MM-DD)"
     ),
+    source_enriched: bool | None = typer.Option(
+        None,
+        "--source-enriched/--no-source-enriched",
+        help="Filter by source-record enrichment status (omit flag for no filter)",
+    ),
     fmt: OutputFormat = typer.Option(
         OutputFormat.YAML, "--format", help="Output format: yaml or json"
     ),
@@ -116,6 +121,7 @@ def anomalies_list(
             start_date=start_date,
             end_date=end_date,
             archived=archived,
+            source_enriched=source_enriched,
         )
 
     print(f"[green]Found {len(all_anomalies)} anomalies.[/green]")
@@ -142,6 +148,11 @@ def anomalies_update(
         None, "--description", help="Update description"
     ),
     tags: str | None = typer.Option(None, "--tags", help="Comma-separated tag names"),
+    assignee_ids: str | None = typer.Option(
+        None,
+        "--assignee-ids",
+        help='Comma-separated assignee user IDs (e.g. "1,2"). Empty string clears assignees.',
+    ),
 ):
     """Update anomaly status (Active or Acknowledged)."""
     if not anomaly_id and not ids:
@@ -156,6 +167,12 @@ def anomalies_update(
         )
         raise typer.Exit(code=1)
 
+    parsed_assignees: list[int] | None = None
+    if assignee_ids is not None:
+        parsed_assignees = (
+            [int(x) for x in _parse_comma_list(assignee_ids)] if assignee_ids else []
+        )
+
     client = get_client()
 
     if anomaly_id and not ids:
@@ -165,6 +182,8 @@ def anomalies_update(
             payload["description"] = description
         if tags:
             payload["tags"] = _parse_comma_list(tags)
+        if parsed_assignees is not None:
+            payload["assignee_ids"] = parsed_assignees
         result = update_anomaly(client, anomaly_id, payload)
         print(f"[green]Anomaly {result['id']} updated to '{status}'.[/green]")
     else:
@@ -175,7 +194,10 @@ def anomalies_update(
         if ids:
             id_list.extend(int(x) for x in _parse_comma_list(ids))
 
-        items = [{"id": aid, "status": status} for aid in id_list]
+        item_template: dict = {"status": status}
+        if parsed_assignees is not None:
+            item_template["assignee_ids"] = parsed_assignees
+        items = [{"id": aid, **item_template} for aid in id_list]
         bulk_update_anomalies(client, items)
         print(f"[green]Updated {len(id_list)} anomalies to '{status}'.[/green]")
 

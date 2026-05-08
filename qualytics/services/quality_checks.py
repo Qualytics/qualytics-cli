@@ -188,9 +188,16 @@ def _build_uid_lookup(client: QualyticsClient, datastore_id: int) -> dict[str, i
     return lookup
 
 
+def _user_ref(value):
+    """Normalize a user-id reference: 0 (or any falsy non-None) means clear."""
+    if value is None:
+        return ...  # sentinel: caller should not include the key
+    return value if value else None
+
+
 def _build_create_payload(check: dict, container_id: int) -> dict:
     """Convert a portable check dict into a POST /quality-checks payload."""
-    return {
+    payload = {
         "container_id": container_id,
         "rule": check.get("rule_type") or check.get("rule", ""),
         "description": check.get("description", ""),
@@ -202,11 +209,18 @@ def _build_create_payload(check: dict, container_id: int) -> dict:
         "additional_metadata": check.get("additional_metadata") or {},
         "status": check.get("status", "Active"),
     }
+    owner = _user_ref(check.get("owner_id"))
+    if owner is not ...:
+        payload["owner_id"] = owner
+    assignee = _user_ref(check.get("default_anomaly_assignee_id"))
+    if assignee is not ...:
+        payload["default_anomaly_assignee_id"] = assignee
+    return payload
 
 
 def _build_update_payload(check: dict) -> dict:
     """Convert a portable check dict into a PUT /quality-checks/{id} payload."""
-    return {
+    payload = {
         "description": check.get("description", ""),
         "fields": check.get("fields") or [],
         "coverage": check.get("coverage"),
@@ -216,6 +230,13 @@ def _build_update_payload(check: dict) -> dict:
         "additional_metadata": check.get("additional_metadata") or {},
         "status": check.get("status", "Active"),
     }
+    owner = _user_ref(check.get("owner_id"))
+    if owner is not ...:
+        payload["owner_id"] = owner
+    assignee = _user_ref(check.get("default_anomaly_assignee_id"))
+    if assignee is not ...:
+        payload["default_anomaly_assignee_id"] = assignee
+    return payload
 
 
 def import_checks_to_datastore(

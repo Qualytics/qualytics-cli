@@ -29,6 +29,20 @@ add_suggestion_callback(operations_app, "operations")
 
 _VALID_REMEDIATION = {"append", "overwrite", "none"}
 _VALID_ASSET_TYPES = {"anomalies", "checks", "profiles"}
+_VALID_AI_EFFORT = {
+    "off",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -121,15 +135,21 @@ def profile_operation(
         "--container-tags",
         help='Comma-separated container tags. Example: "production,finance"',
     ),
-    inference_threshold: int | None = typer.Option(
+    ai_effort: str | None = typer.Option(
+        None,
+        "--ai-effort",
+        help="AI Effort level: off, low, medium, high, xhigh, max",
+    ),
+    inference_threshold: str | None = typer.Option(
         None,
         "--inference-threshold",
-        help="Inference quality checks threshold (0 to 5)",
+        help="Deprecated: use --ai-effort",
+        hidden=True,
     ),
     infer_as_draft: bool = typer.Option(
         False,
         "--infer-as-draft",
-        help="Infer all quality checks as Draft",
+        help="Create AI managed checks as draft",
     ),
     max_records_analyzed_per_partition: int | None = typer.Option(
         None,
@@ -139,7 +159,7 @@ def profile_operation(
     max_count_testing_sample: int | None = typer.Option(
         None,
         "--max-count-testing-sample",
-        help="Records accumulated for validation of inferred checks (max 100000)",
+        help="Records accumulated for validation of AI managed checks (max 100000)",
     ),
     percent_testing_threshold: float | None = typer.Option(
         None, "--percent-testing-threshold", help="Percent of testing threshold"
@@ -182,6 +202,21 @@ def profile_operation(
     datastore_ids = _parse_int_list(datastore_id)
     client = get_client()
 
+    if inference_threshold is not None:
+        print(
+            "[bold yellow]--inference-threshold is deprecated, use --ai-effort instead.[/bold yellow]"
+        )
+        if ai_effort is None:
+            ai_effort = inference_threshold
+
+    if ai_effort is not None:
+        ai_effort = ai_effort.lower()
+        if ai_effort not in _VALID_AI_EFFORT:
+            print(
+                "[bold red]--ai-effort must be one of: off, low, medium, high, xhigh, max[/bold red]"
+            )
+            raise typer.Exit(code=1)
+
     if (
         max_records_analyzed_per_partition is not None
         and max_records_analyzed_per_partition < -1
@@ -204,7 +239,7 @@ def profile_operation(
         datastore_ids=datastore_ids,
         container_names=names_list,
         container_tags=tags_list,
-        inference_threshold=inference_threshold,
+        ai_effort=ai_effort,
         infer_as_draft=infer_as_draft if infer_as_draft else None,
         max_records_analyzed_per_partition=max_records_analyzed_per_partition,
         max_count_testing_sample=max_count_testing_sample,
@@ -258,6 +293,14 @@ def scan_operation(
         None,
         "--enrichment-source-record-limit",
         help="Limit of enrichment source records per run (>= 1)",
+    ),
+    auto_resolve_passed_anomalies: bool | None = typer.Option(
+        None,
+        "--auto-resolve-passed-anomalies/--no-auto-resolve-passed-anomalies",
+        help=(
+            "Auto-resolve open anomalies whose fingerprint no longer fails. "
+            "Server default is on. Silently forced off for incremental scans."
+        ),
     ),
     greater_than_time: datetime | None = typer.Option(
         None,
@@ -326,6 +369,7 @@ def scan_operation(
         remediation=remediation,
         max_records_analyzed_per_partition=max_records_analyzed_per_partition,
         enrichment_source_record_limit=enrichment_source_record_limit,
+        auto_resolve_passed_anomalies=auto_resolve_passed_anomalies,
         greater_than_time=gt_time,
         greater_than_batch=greater_than_batch,
         background=background,

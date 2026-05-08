@@ -330,7 +330,78 @@ class TestBuildCreateConnectionPayload:
         assert "port" not in payload
         assert "username" not in payload
         assert "password" not in payload
+        assert "authentication_type" not in payload
         assert payload == {"type": "postgresql"}
+
+    def test_s3_iam_role_nests_under_parameters(self):
+        payload = build_create_connection_payload(
+            "s3",
+            name="s3-iam",
+            uri="s3://my-bucket",
+            authentication_type="IAM_ROLE",
+            role_arn="arn:aws:iam::123:role/MyRole",
+            external_id="ext-123",
+        )
+        # IAM fields must be nested in parameters (controlplane uses
+        # map_to="parameters" for them; top-level rejected with 422).
+        assert payload["parameters"] == {
+            "authentication_type": "IAM_ROLE",
+            "role_arn": "arn:aws:iam::123:role/MyRole",
+            "external_id": "ext-123",
+        }
+        # And NOT at top level.
+        assert "authentication_type" not in payload
+        assert "role_arn" not in payload
+        assert "external_id" not in payload
+        assert "access_key" not in payload
+        assert "secret_key" not in payload
+
+    def test_athena_iam_role_nests_under_parameters(self):
+        payload = build_create_connection_payload(
+            "athena",
+            name="athena-iam",
+            authentication_type="IAM_ROLE",
+            role_arn="arn:aws:iam::123:role/AthenaRole",
+        )
+        assert payload["type"] == "athena"
+        assert payload["parameters"] == {
+            "authentication_type": "IAM_ROLE",
+            "role_arn": "arn:aws:iam::123:role/AthenaRole",
+        }
+
+    def test_redshift_iam_role_nests_under_parameters(self):
+        payload = build_create_connection_payload(
+            "redshift",
+            name="rs-iam",
+            host="cluster.redshift.amazonaws.com",
+            authentication_type="IAM_ROLE",
+            role_arn="arn:aws:iam::123:role/RedshiftRole",
+        )
+        assert payload["type"] == "redshift"
+        assert payload["parameters"]["authentication_type"] == "IAM_ROLE"
+        assert payload["parameters"]["role_arn"] == "arn:aws:iam::123:role/RedshiftRole"
+
+    def test_iam_role_merges_with_existing_parameters(self):
+        payload = build_create_connection_payload(
+            "s3",
+            name="s3-iam",
+            uri="s3://my-bucket",
+            authentication_type="IAM_ROLE",
+            role_arn="arn:aws:iam::123:role/MyRole",
+            parameters={"some_extra": "value"},
+        )
+        # The catch-all --parameters merge happens after IAM nesting, so
+        # both end up represented (catch-all is top-level, IAM is nested).
+        assert payload["parameters"]["authentication_type"] == "IAM_ROLE"
+        assert payload["some_extra"] == "value"
+
+    def test_iam_role_without_role_arn_rejected(self):
+        with pytest.raises(ValueError, match="--role-arn is required"):
+            build_create_connection_payload(
+                "s3",
+                name="bad",
+                authentication_type="IAM_ROLE",
+            )
 
 
 class TestBuildUpdateConnectionPayload:
@@ -345,6 +416,36 @@ class TestBuildUpdateConnectionPayload:
     def test_empty_when_all_none(self):
         payload = build_update_connection_payload(name=None, host=None)
         assert payload == {}
+
+    def test_iam_role_fields_nested_under_parameters(self):
+        payload = build_update_connection_payload(
+            authentication_type="IAM_ROLE",
+            role_arn="arn:aws:iam::123:role/MyRole",
+            external_id="ext-1",
+        )
+        assert payload == {
+            "parameters": {
+                "authentication_type": "IAM_ROLE",
+                "role_arn": "arn:aws:iam::123:role/MyRole",
+                "external_id": "ext-1",
+            }
+        }
+
+    def test_update_mixes_top_level_and_iam_fields(self):
+        payload = build_update_connection_payload(
+            name="renamed",
+            authentication_type="IAM_ROLE",
+            role_arn="arn:aws:iam::123:role/MyRole",
+        )
+        assert payload["name"] == "renamed"
+        assert payload["parameters"] == {
+            "authentication_type": "IAM_ROLE",
+            "role_arn": "arn:aws:iam::123:role/MyRole",
+        }
+
+    def test_iam_role_without_role_arn_rejected_on_update(self):
+        with pytest.raises(ValueError, match="--role-arn is required"):
+            build_update_connection_payload(authentication_type="IAM_ROLE")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -475,6 +576,59 @@ class TestConnectionsCreateCLI:
         mock_create.assert_called_once()
         # Verify sensitive data is redacted in output
         assert "secret" not in result.output or "redacted" in result.output
+
+    @patch("qualytics.cli.connections.create_connection")
+    @patch("qualytics.cli.connections.get_client")
+    def test_create_s3_iam_role(self, mock_gc, mock_create, cli_runner):
+        mock_gc.return_value = _mock_client()
+        mock_create.return_value = {"id": 9, "name": "s3-iam", "type": "s3"}
+        result = cli_runner.invoke(
+            app,
+            [
+                "connections",
+                "create",
+                "--type",
+                "s3",
+                "--name",
+                "s3-iam",
+                "--uri",
+                "s3://my-bucket",
+                "--authentication-type",
+                "IAM_ROLE",
+                "--role-arn",
+                "arn:aws:iam::123:role/MyRole",
+                "--external-id",
+                "ext-1",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = mock_create.call_args.args[1]
+        assert payload["parameters"] == {
+            "authentication_type": "IAM_ROLE",
+            "role_arn": "arn:aws:iam::123:role/MyRole",
+            "external_id": "ext-1",
+        }
+        assert "authentication_type" not in payload
+        assert "role_arn" not in payload
+
+    @patch("qualytics.cli.connections.get_client")
+    def test_create_iam_role_without_role_arn_fails(self, mock_gc, cli_runner):
+        mock_gc.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "connections",
+                "create",
+                "--type",
+                "s3",
+                "--name",
+                "bad",
+                "--authentication-type",
+                "IAM_ROLE",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "--role-arn is required" in result.output
 
     @patch("qualytics.cli.connections.get_client")
     def test_create_dry_run(self, mock_gc, cli_runner):
@@ -630,6 +784,29 @@ class TestConnectionsUpdateCLI:
         payload = call_args[0][2]  # third positional arg
         assert payload.get("host") == "new-host"
         assert "name" not in payload
+
+    @patch("qualytics.cli.connections.update_connection")
+    @patch("qualytics.cli.connections.get_client")
+    def test_update_iam_role(self, mock_gc, mock_update, cli_runner):
+        mock_gc.return_value = _mock_client()
+        mock_update.return_value = {"id": 1, "authentication_type": "IAM_ROLE"}
+        result = cli_runner.invoke(
+            app,
+            [
+                "connections",
+                "update",
+                "--id",
+                "1",
+                "--authentication-type",
+                "IAM_ROLE",
+                "--role-arn",
+                "arn:aws:iam::123:role/NewRole",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = mock_update.call_args[0][2]
+        assert payload["parameters"]["authentication_type"] == "IAM_ROLE"
+        assert payload["parameters"]["role_arn"] == "arn:aws:iam::123:role/NewRole"
 
     @patch("qualytics.cli.connections.get_client")
     def test_update_no_fields_fails(self, mock_gc, cli_runner):
