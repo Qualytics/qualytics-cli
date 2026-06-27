@@ -268,7 +268,11 @@ class TestBuildYamlStructure:
 
     def test_row_idiom_clause_with_random_function_form_sampling_pair(self):
         """Redshift shape: RANDOM function + LIMIT clause — the view-sampling pair the renderer needs."""
-        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "LIMIT", "viewSampleFallback": "RANDOM"}
+        probes = {
+            **_MINIMAL_PROBES,
+            "rowLimitStyle": "LIMIT",
+            "viewSampleFallback": "RANDOM",
+        }
         _, parsed, _, _ = self._parse(probes=probes)
         assert "RANDOM" in parsed["sql"]["functions"]
         assert "LIMIT" in parsed["sql"]["clauses"]
@@ -282,7 +286,9 @@ class TestBuildYamlStructure:
         }
         _, parsed, _, _ = self._parse(probes=probes)
         freshness = parsed["sql"]["queries"]["freshness"]
-        assert freshness["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        assert (
+            freshness["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        )
         assert freshness["upperBoundDatetimeDateTemplate"] == "DATEADD(day, ...)"
         assert "intervalCalcDatetimeTimestampTemplate" not in parsed
         assert "intervalCalcDatetimeTimestampTemplate" not in parsed.get("config", {})
@@ -302,9 +308,13 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse(probes=probes)
         freshness = parsed["sql"]["queries"]["freshness"]
         assert freshness["style"] == "DATEADD_DATEDIFF"
-        assert freshness["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        assert (
+            freshness["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        )
         assert freshness["intervalCalcDatetimeDateTemplate"] == "DATEADD(day, ...)"
-        assert freshness["upperBoundDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        assert (
+            freshness["upperBoundDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        )
         assert freshness["upperBoundDatetimeDateTemplate"] == "DATEADD(day, ...)"
 
     def test_freshness_omitted_when_all_defaults(self):
@@ -502,18 +512,32 @@ class TestBuildYamlStructure:
         # Only these keys are allowed at the top level
         allowed_top_keys = {"prefix", "className", "dialectClass", "config", "sql"}
         extra = set(parsed.keys()) - allowed_top_keys
-        assert not extra, f"Unexpected top-level keys (should be in config or sql): {extra}"
+        assert not extra, (
+            f"Unexpected top-level keys (should be in config or sql): {extra}"
+        )
 
         # v1-style flat field names must not appear anywhere in the parsed output
         v1_flat_names = {
-            "jdbcUrlTemplate", "jdbcUrlStaticParams", "jdbcUrlConditionalParams",
-            "jdbcUrlAuthVariants", "rowLimitSyntax", "subqueryRequiresAlias",
-            "validationQuery", "rowCountQueryStyle", "schemaOnlyQueryStyle",
-            "schemaExistenceQueryStyle", "maxPartitionParallelism", "dataSizeLimit",
-            "approxCountDistinctFunction", "viewSampleFallback",
-            "tableSampleTemplate", "dateArithmeticStyle",
-            "intervalCalcDatetimeTimestampTemplate", "intervalCalcDatetimeDateTemplate",
-            "upperBoundDatetimeTimestampTemplate", "upperBoundDatetimeDateTemplate",
+            "jdbcUrlTemplate",
+            "jdbcUrlStaticParams",
+            "jdbcUrlConditionalParams",
+            "jdbcUrlAuthVariants",
+            "rowLimitSyntax",
+            "subqueryRequiresAlias",
+            "validationQuery",
+            "rowCountQueryStyle",
+            "schemaOnlyQueryStyle",
+            "schemaExistenceQueryStyle",
+            "maxPartitionParallelism",
+            "dataSizeLimit",
+            "approxCountDistinctFunction",
+            "viewSampleFallback",
+            "tableSampleTemplate",
+            "dateArithmeticStyle",
+            "intervalCalcDatetimeTimestampTemplate",
+            "intervalCalcDatetimeDateTemplate",
+            "upperBoundDatetimeTimestampTemplate",
+            "upperBoundDatetimeDateTemplate",
         }
         for name in v1_flat_names:
             assert name not in parsed, f"v1 flat field '{name}' leaked to top level"
@@ -596,7 +620,10 @@ class TestApplyLlmSuggestions:
             "  displayName: TestDB  # auto-detected\n"
         )
         suggestions = {
-            "connectionTest": {"value": "SELECT 1 FROM DUAL", "rationale": "Oracle convention"},
+            "connectionTest": {
+                "value": "SELECT 1 FROM DUAL",
+                "rationale": "Oracle convention",
+            },
         }
         updated, count = _apply_llm_suggestions(yaml_content, suggestions)
         assert count == 1
@@ -642,7 +669,13 @@ class TestEnumValuesMatchDataplane:
 
     @pytest.mark.parametrize(
         "value",
-        ["NONE", "READ_UNCOMMITTED", "READ_COMMITTED", "REPEATABLE_READ", "SERIALIZABLE"],
+        [
+            "NONE",
+            "READ_UNCOMMITTED",
+            "READ_COMMITTED",
+            "REPEATABLE_READ",
+            "SERIALIZABLE",
+        ],
     )
     def test_transaction_isolation_valid(self, value):
         probes = {**_MINIMAL_PROBES, "transactionIsolation": value}
@@ -761,13 +794,22 @@ class TestEnumValuesMatchDataplane:
 
     @pytest.mark.parametrize(
         "value",
-        ["STANDARD", "DATEADD_DATEDIFF", "NUMTODSINTERVAL", "TIMESTAMP_ADD", "TIMESTAMPDIFF_DB2"],
+        [
+            "STANDARD",
+            "DATEADD_DATEDIFF",
+            "NUMTODSINTERVAL",
+            "TIMESTAMP_ADD",
+            "TIMESTAMPDIFF_DB2",
+        ],
     )
     def test_date_arithmetic_style_valid(self, value):
         probes = {**_MINIMAL_PROBES, "dateArithmeticStyle": value}
         parsed = self._parse(probes=probes)
         if "freshness" in parsed["sql"]["queries"]:
-            assert parsed["sql"]["queries"]["freshness"]["style"] in VALID_DATE_ARITHMETIC_STYLE
+            assert (
+                parsed["sql"]["queries"]["freshness"]["style"]
+                in VALID_DATE_ARITHMETIC_STYLE
+            )
 
     # -- exhaustive: every probe output → valid enum --
 

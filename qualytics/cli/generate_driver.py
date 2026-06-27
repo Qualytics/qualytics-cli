@@ -1229,9 +1229,7 @@ def _build_yaml(
     lines.append(
         f"{ind}#             required, defaultValue, hint, options (for enum),"
     )
-    lines.append(
-        f"{ind}#             aliases (list of alternate field names),"
-    )
+    lines.append(f"{ind}#             aliases (list of alternate field names),")
     lines.append(
         f"{ind}#             dependsOn, dependsOnValues (list of values that activate this field)"
     )
@@ -1322,9 +1320,7 @@ def _build_yaml(
     # is no implicit default. RAND is a real detected value (MySQL/MariaDB), not a sentinel.
     vsf = probes.get("viewSampleFallback")
     if vsf and vsf != "null":
-        func_entries.append(
-            (vsf, "auto-detected — random function for view sampling")
-        )
+        func_entries.append((vsf, "auto-detected — random function for view sampling"))
         detected_fields.append("viewSampleFallback")
     else:
         detected_fields.append("viewSampleFallback")  # none detected — omitted
@@ -1457,9 +1453,7 @@ def _build_yaml(
 
     if has_freshness:
         lines.append(
-            _sec(
-                "# ── Freshness query slot ──────────────────────────────────────"
-            )
+            _sec("# ── Freshness query slot ──────────────────────────────────────")
         )
         lines.append(field("freshness", None, ""))  # emit "freshness:" as a mapping key
         # Remove the "freshness: null" line we just added and replace with bare key
