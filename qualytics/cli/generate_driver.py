@@ -1245,15 +1245,21 @@ def _build_yaml(
     lines.append(
         _sec("# ── SQL queries ──────────────────────────────────────────────────")
     )
+    lines.append(
+        _sec(
+            "# QuerySlot keys: nullCheck, schemaOnly, rowCount, volume, "
+            "freshness, partitionColumn, lineage"
+        )
+    )
     lines.append(_sec("queries:"))
     _indent[0] = "    "
 
-    # schemaOnlyQueryStyle — if CTE (probe fallback, unconfirmed) → TODO; else emit as detected
+    # schemaOnly — if CTE (probe fallback, unconfirmed) → TODO; else emit as detected
     schema_only = probes.get("schemaOnlyQueryStyle", "CTE")
     if schema_only != "CTE":
         lines.append(
             field(
-                "schemaOnlyQueryStyle",
+                "schemaOnly",
                 schema_only,
                 "auto-detected — how to wrap a query to return 0 rows for schema inspection. "
                 "Valid: CTE (default), PG_CTE (PostgreSQL), SQLSERVER_TOP0 (SQL Server), "
@@ -1261,11 +1267,11 @@ def _build_yaml(
                 "HIVE_LIMIT0 (Hive/Spark)",
             )
         )
-        detected_fields.append("schemaOnlyQueryStyle")
+        detected_fields.append("schemaOnly")
     else:
         lines.append(
             field(
-                "schemaOnlyQueryStyle",
+                "schemaOnly",
                 "CTE",
                 "TODO: how to wrap a query to return 0 rows for schema inspection. "
                 "Valid: CTE (default, most modern DBs with WITH support), PG_CTE (PostgreSQL), "
@@ -1273,30 +1279,30 @@ def _build_yaml(
                 "ORACLE_WHERE_FALSE (Oracle), HIVE_LIMIT0 (Hive/Spark)",
             )
         )
-        todo_fields.append("schemaOnlyQueryStyle")
+        todo_fields.append("schemaOnly")
 
-    # rowCountQueryStyle — emit as TODO if COUNT_STAR (default/unconfirmed), else auto-detected
+    # rowCount — emit as TODO if COUNT_STAR (default/unconfirmed), else auto-detected
     row_count_style = probes.get("rowCountQueryStyle", "COUNT_STAR")
     if row_count_style and row_count_style != "COUNT_STAR":
         lines.append(
             field(
-                "rowCountQueryStyle",
+                "rowCount",
                 row_count_style,
                 "auto-detected — row count strategy",
             )
         )
-        detected_fields.append("rowCountQueryStyle")
+        detected_fields.append("rowCount")
     else:
         lines.append(
             field(
-                "rowCountQueryStyle",
+                "rowCount",
                 "COUNT_STAR",
                 "TODO: row count strategy. Valid: COUNT_STAR (default, always works), "
                 "BQ_TABLES (BigQuery), INFORMATION_SCHEMA_ROW_COUNT (MySQL/MariaDB), "
                 "ALL_TABLES (Oracle), INFORMATION_SCHEMA_TABLES_WITH_SIZE (MySQL/MariaDB)",
             )
         )
-        todo_fields.append("rowCountQueryStyle")
+        todo_fields.append("rowCount")
     # countStarNullSizeBytesExpr — almost always null (default); omit; user adds manually for Dremio
 
     # schemaExistenceQueryStyle — omit if NONE (default)
@@ -1316,61 +1322,89 @@ def _build_yaml(
     else:
         detected_fields.append("schemaExistenceQueryStyle")  # default — omitted
 
-    # dateArithmeticStyle — omit if STANDARD (default)
+    # ── freshness — date arithmetic style + templates ───────────────────────
     date_arith = probes.get("dateArithmeticStyle", "STANDARD")
-    if date_arith != "STANDARD":
-        lines.append(
-            field(
-                "dateArithmeticStyle",
-                date_arith,
-                "auto-detected — date arithmetic strategy. "
-                "Valid: STANDARD (default, ANSI fallback), DATEADD_DATEDIFF (SQL Server), "
-                "NUMTODSINTERVAL (Oracle), TIMESTAMP_ADD (BigQuery), TIMESTAMPDIFF_DB2 (Db2)",
-            )
-        )
-        detected_fields.append("dateArithmeticStyle")
-    else:
-        detected_fields.append("dateArithmeticStyle")  # default — omitted
-
-    # ── Date arithmetic templates (only when non-null) ────────────────────────
     int_ts = probes.get("intervalCalcDatetimeTimestampTemplate")
     int_dt = probes.get("intervalCalcDatetimeDateTemplate")
     up_ts = probes.get("upperBoundDatetimeTimestampTemplate")
     up_dt = probes.get("upperBoundDatetimeDateTemplate")
-
     has_templates = any(v and v != "null" for v in [int_ts, int_dt, up_ts, up_dt])
-    if has_templates:
+    has_freshness = date_arith != "STANDARD" or has_templates
+
+    if has_freshness:
         lines.append(
             _sec(
-                "# ── Date arithmetic templates ─────────────────────────────────"
+                "# ── Freshness query slot ──────────────────────────────────────"
             )
         )
-        lines.append(
-            _sec(
-                "# Placeholders: {col} = column name, MIN_{col} = min value, "
-                "MAX_{col} = max value, {interval} = midpoint expression"
-            )
-        )
-        if int_ts and int_ts != "null":
+        lines.append(field("freshness", None, ""))  # emit "freshness:" as a mapping key
+        # Remove the "freshness: null" line we just added and replace with bare key
+        lines[-1] = f"{_indent[0]}freshness:"
+        # Indent one level deeper for freshness sub-fields
+        saved_indent = _indent[0]
+        _indent[0] = saved_indent + "  "
+
+        if date_arith != "STANDARD":
             lines.append(
-                field("intervalCalcDatetimeTimestampTemplate", int_ts, "auto-detected")
+                field(
+                    "style",
+                    date_arith,
+                    "auto-detected — date arithmetic strategy. "
+                    "Valid: STANDARD (default, ANSI fallback), DATEADD_DATEDIFF (SQL Server), "
+                    "NUMTODSINTERVAL (Oracle), TIMESTAMP_ADD (BigQuery), TIMESTAMPDIFF_DB2 (Db2)",
+                )
             )
-            detected_fields.append("intervalCalcDatetimeTimestampTemplate")
-        if int_dt and int_dt != "null":
+            detected_fields.append("freshness.style")
+        else:
+            detected_fields.append("freshness.style")  # default — omitted
+
+        if has_templates:
             lines.append(
-                field("intervalCalcDatetimeDateTemplate", int_dt, "auto-detected")
+                _sec(
+                    "# Placeholders: {col} = column name, MIN_{col} = min value, "
+                    "MAX_{col} = max value, {interval} = midpoint expression"
+                )
             )
-            detected_fields.append("intervalCalcDatetimeDateTemplate")
-        if up_ts and up_ts != "null":
-            lines.append(
-                field("upperBoundDatetimeTimestampTemplate", up_ts, "auto-detected")
-            )
-            detected_fields.append("upperBoundDatetimeTimestampTemplate")
-        if up_dt and up_dt != "null":
-            lines.append(
-                field("upperBoundDatetimeDateTemplate", up_dt, "auto-detected")
-            )
-            detected_fields.append("upperBoundDatetimeDateTemplate")
+            if int_ts and int_ts != "null":
+                lines.append(
+                    field(
+                        "intervalCalcDatetimeTimestampTemplate",
+                        int_ts,
+                        "auto-detected",
+                    )
+                )
+                detected_fields.append("intervalCalcDatetimeTimestampTemplate")
+            if int_dt and int_dt != "null":
+                lines.append(
+                    field(
+                        "intervalCalcDatetimeDateTemplate",
+                        int_dt,
+                        "auto-detected",
+                    )
+                )
+                detected_fields.append("intervalCalcDatetimeDateTemplate")
+            if up_ts and up_ts != "null":
+                lines.append(
+                    field(
+                        "upperBoundDatetimeTimestampTemplate",
+                        up_ts,
+                        "auto-detected",
+                    )
+                )
+                detected_fields.append("upperBoundDatetimeTimestampTemplate")
+            if up_dt and up_dt != "null":
+                lines.append(
+                    field(
+                        "upperBoundDatetimeDateTemplate",
+                        up_dt,
+                        "auto-detected",
+                    )
+                )
+                detected_fields.append("upperBoundDatetimeDateTemplate")
+
+        _indent[0] = saved_indent  # restore queries-level indent
+    else:
+        detected_fields.append("freshness.style")  # default STANDARD — omitted
 
     # ══════════════════════════════════════════════════════════════════════════
     # End of sql: section — reset indentation

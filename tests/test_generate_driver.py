@@ -127,12 +127,13 @@ class TestBuildYamlStructure:
         assert isinstance(sql["clauses"], list)  # empty list when all defaults
 
     def test_sql_capabilities_under_sql_queries(self):
-        """SQL query-style fields should be under sql.queries, not top-level or config."""
+        """SQL query-style fields should use QuerySlot keys under sql.queries."""
         probes = {**_MINIMAL_PROBES, "schemaOnlyQueryStyle": "PG_CTE"}
         _, parsed, _, _ = self._parse(probes=probes)
-        assert parsed["sql"]["queries"]["schemaOnlyQueryStyle"] == "PG_CTE"
+        assert parsed["sql"]["queries"]["schemaOnly"] == "PG_CTE"
         assert "schemaOnlyQueryStyle" not in parsed
         assert "schemaOnlyQueryStyle" not in parsed.get("config", {})
+        assert "schemaOnlyQueryStyle" not in parsed["sql"]["queries"]
 
     def test_sql_capabilities_with_detected_values(self):
         probes = {
@@ -145,8 +146,8 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse(probes=probes)
         queries = parsed["sql"]["queries"]
         functions = parsed["sql"]["functions"]
-        assert queries["schemaOnlyQueryStyle"] == "SQLSERVER_TOP0"
-        assert queries["dateArithmeticStyle"] == "DATEADD_DATEDIFF"
+        assert queries["schemaOnly"] == "SQLSERVER_TOP0"
+        assert queries["freshness"]["style"] == "DATEADD_DATEDIFF"
         assert queries["schemaExistenceQueryStyle"] == "INFORMATION_SCHEMA"
         assert "APPROX_COUNT_DISTINCT" in functions
 
@@ -181,18 +182,51 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse()
         assert parsed["sql"]["clauses"] == []
 
-    def test_date_templates_under_sql_queries(self):
+    def test_date_templates_under_freshness_query_slot(self):
+        """Date templates should nest under sql.queries.freshness QuerySlot."""
         probes = {
             **_MINIMAL_PROBES,
             "intervalCalcDatetimeTimestampTemplate": "DATEADD(second, ...)",
             "upperBoundDatetimeDateTemplate": "DATEADD(day, ...)",
         }
         _, parsed, _, _ = self._parse(probes=probes)
-        queries = parsed["sql"]["queries"]
-        assert queries["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
-        assert queries["upperBoundDatetimeDateTemplate"] == "DATEADD(day, ...)"
+        freshness = parsed["sql"]["queries"]["freshness"]
+        assert freshness["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        assert freshness["upperBoundDatetimeDateTemplate"] == "DATEADD(day, ...)"
         assert "intervalCalcDatetimeTimestampTemplate" not in parsed
         assert "intervalCalcDatetimeTimestampTemplate" not in parsed.get("config", {})
+        # Templates should NOT be at the queries level
+        assert "intervalCalcDatetimeTimestampTemplate" not in parsed["sql"]["queries"]
+
+    def test_freshness_with_style_and_templates(self):
+        """freshness QuerySlot should contain both style and templates when both present."""
+        probes = {
+            **_MINIMAL_PROBES,
+            "dateArithmeticStyle": "DATEADD_DATEDIFF",
+            "intervalCalcDatetimeTimestampTemplate": "DATEADD(second, ...)",
+            "intervalCalcDatetimeDateTemplate": "DATEADD(day, ...)",
+            "upperBoundDatetimeTimestampTemplate": "DATEADD(second, ...)",
+            "upperBoundDatetimeDateTemplate": "DATEADD(day, ...)",
+        }
+        _, parsed, _, _ = self._parse(probes=probes)
+        freshness = parsed["sql"]["queries"]["freshness"]
+        assert freshness["style"] == "DATEADD_DATEDIFF"
+        assert freshness["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        assert freshness["intervalCalcDatetimeDateTemplate"] == "DATEADD(day, ...)"
+        assert freshness["upperBoundDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        assert freshness["upperBoundDatetimeDateTemplate"] == "DATEADD(day, ...)"
+
+    def test_freshness_omitted_when_all_defaults(self):
+        """When dateArithmeticStyle is STANDARD and no templates, freshness key absent."""
+        _, parsed, _, _ = self._parse()
+        assert "freshness" not in parsed["sql"]["queries"]
+
+    def test_row_count_uses_query_slot_key(self):
+        """rowCountQueryStyle probe → rowCount QuerySlot key."""
+        probes = {**_MINIMAL_PROBES, "rowCountQueryStyle": "BQ_TABLES"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert parsed["sql"]["queries"]["rowCount"] == "BQ_TABLES"
+        assert "rowCountQueryStyle" not in parsed["sql"]["queries"]
 
     def test_config_fields_not_at_top_level(self):
         """Config fields should NOT appear at the top level."""
