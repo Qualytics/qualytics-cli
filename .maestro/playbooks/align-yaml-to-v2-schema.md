@@ -44,8 +44,8 @@
 - [x] Update TODO comment generation to reference correct v2 field names
 
 ## Group 8: Update example YAML files
-- [ ] Regenerate or manually update `dist/META-INF/jdbc-drivers/mongodb.yaml` to v2 format
-- [ ] Regenerate or manually update `dist/META-INF/jdbc-drivers/redshift2.yaml` to v2 format
+- [x] Regenerate or manually update `dist/META-INF/jdbc-drivers/mongodb.yaml` to v2 format
+- [x] Regenerate or manually update `dist/META-INF/jdbc-drivers/redshift2.yaml` to v2 format
 
 ## Group 9: End-to-end validation
 - [ ] Review entire `_build_yaml()` flow for any remaining flat fields
