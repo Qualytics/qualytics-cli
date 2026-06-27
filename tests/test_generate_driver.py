@@ -222,6 +222,30 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse(probes=probes)
         assert parsed["config"]["rowLimitStyle"] == "TOP"
 
+    def test_fetch_first_not_in_row_limit_style(self):
+        """FETCH_FIRST should NOT appear as rowLimitStyle — it's a sql.clause."""
+        probes = {**_MINIMAL_PROBES, "rowLimitSyntax": "FETCH_FIRST"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "rowLimitStyle" not in parsed.get("config", {})
+
+    def test_fetch_first_maps_to_offset_fetch_clause(self):
+        """FETCH_FIRST rowLimit → OFFSET_FETCH in sql.clauses."""
+        probes = {**_MINIMAL_PROBES, "rowLimitSyntax": "FETCH_FIRST"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "OFFSET_FETCH" in parsed["sql"]["clauses"]
+
+    def test_fetch_first_with_tablesample_both_in_clauses(self):
+        """FETCH_FIRST + tableSampleTemplate should both appear in sql.clauses."""
+        probes = {
+            **_MINIMAL_PROBES,
+            "rowLimitSyntax": "FETCH_FIRST",
+            "tableSampleTemplate": "TABLESAMPLE SYSTEM ({pct})",
+        }
+        _, parsed, _, _ = self._parse(probes=probes)
+        clauses = parsed["sql"]["clauses"]
+        assert "OFFSET_FETCH" in clauses
+        assert "TABLESAMPLE_SYSTEM" in clauses
+
     def test_validation_query_in_config(self):
         probes = {**_MINIMAL_PROBES, "validationQuery": "SELECT 1 FROM DUAL"}
         _, parsed, _, _ = self._parse(probes=probes)

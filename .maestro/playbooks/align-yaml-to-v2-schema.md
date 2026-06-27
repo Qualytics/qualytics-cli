@@ -22,7 +22,7 @@
 - [x] Map `approxCountDistinctFunction` → entry in `sql.functions` list (closed vocab: `APPROX_COUNT_DISTINCT`, `APPROX_DISTINCT`, `RANDOM`, `RAND`, `NEWID`, `DBMS_RANDOM_VALUE`)
 - [x] Map `viewSampleFallback` → entry in `sql.functions`
 - [x] Map `tableSampleTemplate` → entry in `sql.clauses` (closed vocab: `TABLESAMPLE_SYSTEM`, `TABLESAMPLE_SYSTEM_PERCENT`, `TABLESAMPLE_BERNOULLI`, `TABLESAMPLE_PERCENT`, `TABLESAMPLE_ROWS`, `SAMPLE_PERCENT`, `SAMPLE_ROWS`, `LIMIT`, `OFFSET_FETCH`, `ROWNUM`)
-- [ ] Map `FETCH_FIRST` rowLimit → `OFFSET_FETCH` in `sql.clauses` (NOT a rowLimitStyle)
+- [x] Map `FETCH_FIRST` rowLimit → `OFFSET_FETCH` in `sql.clauses` (NOT a rowLimitStyle)
 - [ ] Map `rowCountQueryStyle`, `schemaOnlyQueryStyle`, date arithmetic templates → `sql.queries` using QuerySlot keys: `nullCheck`, `schemaOnly`, `rowCount`, `volume`, `freshness`, `partitionColumn`, `lineage`
 
 ## Group 5: Remove/remap fields not in dataplane schema

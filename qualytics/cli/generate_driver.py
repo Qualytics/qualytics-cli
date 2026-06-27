@@ -872,8 +872,13 @@ def _build_yaml(
         detected_fields.append("tableNameCasing")  # default — omitted
 
     # rowLimitStyle — omit if LIMIT (default); TODO if probe couldn't determine
+    # FETCH_FIRST is NOT a rowLimitStyle — it maps to OFFSET_FETCH in sql.clauses
     row_limit = probes.get("rowLimitSyntax")
-    if row_limit and row_limit != "LIMIT":
+    _fetch_first_detected = row_limit == "FETCH_FIRST"
+    if _fetch_first_detected:
+        # FETCH_FIRST → OFFSET_FETCH clause (handled in sql.clauses below)
+        detected_fields.append("rowLimitStyle")  # default LIMIT — omitted
+    elif row_limit and row_limit != "LIMIT":
         lines.append(
             field(
                 "rowLimitStyle",
@@ -1213,6 +1218,12 @@ def _build_yaml(
     )
 
     clause_entries: list[tuple[str, str]] = []  # (token, comment)
+
+    # FETCH_FIRST rowLimit → OFFSET_FETCH clause (not a rowLimitStyle)
+    if _fetch_first_detected:
+        clause_entries.append(
+            ("OFFSET_FETCH", "auto-detected — DB uses FETCH FIRST / OFFSET-FETCH syntax")
+        )
 
     # tableSampleTemplate → entry in sql.clauses list
     sample_tmpl = probes.get("tableSampleTemplate")
