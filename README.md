@@ -27,7 +27,7 @@ uv pip install qualytics-cli
 
 ```bash
 # 1. Authenticate via browser (recommended)
-qualytics auth login --url "https://your-instance.qualytics.io/"
+uv run qualytics auth login --url "https://your-instance.qualytics.io/"
 
 # 2. Check connectivity
 qualytics doctor

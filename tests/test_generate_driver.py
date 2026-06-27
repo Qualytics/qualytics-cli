@@ -195,6 +195,30 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse(probes=probes)
         assert "RANDOM" in parsed["sql"]["functions"]
 
+    def test_rand_view_sample_fallback_is_emitted(self):
+        """RAND is a real detected function (MySQL), not an omittable default — it must appear."""
+        probes = {**_MINIMAL_PROBES, "viewSampleFallback": "RAND"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "RAND" in parsed["sql"]["functions"]
+
+    def test_dbms_random_value_view_sample_fallback_is_emitted(self):
+        """Oracle's DBMS_RANDOM_VALUE round-trips into sql.functions."""
+        probes = {**_MINIMAL_PROBES, "viewSampleFallback": "DBMS_RANDOM_VALUE"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "DBMS_RANDOM_VALUE" in parsed["sql"]["functions"]
+
+    def test_view_sample_fallback_null_emits_no_function(self):
+        """When the probe detects no random function, no entry is emitted."""
+        probes = {**_MINIMAL_PROBES, "viewSampleFallback": "null"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert parsed["sql"]["functions"] == []
+
+    def test_view_sample_fallback_missing_emits_no_function(self):
+        """Absent viewSampleFallback probe key → no function (no RAND sentinel guess)."""
+        probes = {k: v for k, v in _MINIMAL_PROBES.items() if k != "viewSampleFallback"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert parsed["sql"]["functions"] == []
+
     def test_sql_clauses_with_detected_values(self):
         probes = {
             **_MINIMAL_PROBES,
@@ -217,9 +241,37 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse(probes=probes)
         assert "TABLESAMPLE_BERNOULLI" in parsed["sql"]["clauses"]
 
-    def test_sql_clauses_empty_when_no_sample(self):
+    def test_sql_clauses_declares_limit_row_idiom(self):
+        """The LIMIT row-limit idiom is declared in sql.clauses (no sample tokens here)."""
         _, parsed, _, _ = self._parse()
-        assert parsed["sql"]["clauses"] == []
+        assert parsed["sql"]["clauses"] == ["LIMIT"]
+
+    def test_limit_row_idiom_in_clauses(self):
+        """rowLimitStyle LIMIT → LIMIT token in sql.clauses (paired with a random function)."""
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "LIMIT"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "LIMIT" in parsed["sql"]["clauses"]
+
+    def test_top_row_idiom_maps_to_offset_fetch_clause(self):
+        """rowLimitStyle TOP → OFFSET_FETCH token in sql.clauses (SQL Server sampling idiom)."""
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "TOP"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "OFFSET_FETCH" in parsed["sql"]["clauses"]
+        # TOP still appears as the rowLimitStyle config field
+        assert parsed["config"]["rowLimitStyle"] == "TOP"
+
+    def test_rownum_row_idiom_maps_to_rownum_clause(self):
+        """rowLimitStyle ROWNUM → ROWNUM token in sql.clauses (Oracle sampling idiom)."""
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "ROWNUM"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "ROWNUM" in parsed["sql"]["clauses"]
+
+    def test_row_idiom_clause_with_random_function_form_sampling_pair(self):
+        """Redshift shape: RANDOM function + LIMIT clause — the view-sampling pair the renderer needs."""
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "LIMIT", "viewSampleFallback": "RANDOM"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "RANDOM" in parsed["sql"]["functions"]
+        assert "LIMIT" in parsed["sql"]["clauses"]
 
     def test_date_templates_under_freshness_query_slot(self):
         """Date templates should nest under sql.queries.freshness QuerySlot."""
@@ -321,6 +373,40 @@ class TestBuildYamlStructure:
         # username and password always present
         assert "username" in names
         assert "password" in names
+
+    def test_schema_field_emitted_when_supported(self):
+        """When the probe reports the DB has schemas, an optional schema field is emitted."""
+        probes = {**_MINIMAL_PROBES, "supportsSchemas": True}
+        _, parsed, _, _ = self._parse(probes=probes)
+        fields = parsed["config"]["connectionSpec"]["fields"]
+        schema_field = next((f for f in fields if f["name"] == "schema"), None)
+        assert schema_field is not None, "schema field should be present"
+        assert schema_field["required"] is False
+        assert schema_field["fieldType"] == "string"
+        # Ordered between database and username
+        names = [f["name"] for f in fields]
+        assert names.index("schema") > names.index("database")
+        assert names.index("schema") < names.index("username")
+
+    def test_schema_field_absent_when_unsupported(self):
+        """No schema field when the DB does not organise tables into schemas (e.g. MySQL)."""
+        probes = {**_MINIMAL_PROBES, "supportsSchemas": False}
+        _, parsed, _, _ = self._parse(probes=probes)
+        names = [f["name"] for f in parsed["config"]["connectionSpec"]["fields"]]
+        assert "schema" not in names
+
+    def test_schema_field_absent_when_probe_key_missing(self):
+        """Backward-compatible: absent supportsSchemas probe key → no schema field."""
+        _, parsed, _, _ = self._parse()  # _MINIMAL_PROBES has no supportsSchemas key
+        names = [f["name"] for f in parsed["config"]["connectionSpec"]["fields"]]
+        assert "schema" not in names
+
+    def test_schema_field_string_probe_value_truthy(self):
+        """A string 'true' from the JSON probe is parsed as a boolean."""
+        probes = {**_MINIMAL_PROBES, "supportsSchemas": "true"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        names = [f["name"] for f in parsed["config"]["connectionSpec"]["fields"]]
+        assert "schema" in names
 
     def test_connection_spec_port_default_value(self):
         """Port field should include defaultValue when detected from URL."""

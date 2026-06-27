@@ -203,15 +203,23 @@ public class JdbcProbe {
             nullCatalog = (c2 > c1) ? "true" : "false";
         } catch (Exception e) { System.err.println("getTablesUsesNullCatalog err: " + e.getMessage()); }
 
-        // subqueryAlias
-        String subAlias = "false";
-        try {
-            tryQuery(conn, "SELECT * FROM (SELECT 1 AS x) WHERE 1=0", 5);
+        // subqueryAlias — does a derived-table subquery require an `AS alias`?
+        // Default true (ANSI / PostgreSQL family). Probe an alias-LESS derived table:
+        // if it succeeds, the DB does NOT require an alias (historically Oracle) → false.
+        String subAlias = "true";
+        if (tryQuery(conn, "SELECT * FROM (SELECT 1 AS x) WHERE 1=0", 5)) {
             subAlias = "false";
-        } catch (Exception e) { subAlias = "false"; }
-        if (!tryQuery(conn, "SELECT * FROM (SELECT 1 AS x) WHERE 1=0", 5)) {
-            subAlias = "true";
         }
+
+        // supportsSchemas — does this database organise tables into schemas?
+        // Drives whether the connection form exposes an optional `schema` field. PostgreSQL,
+        // Redshift, Oracle, SQL Server etc. return schemas; MySQL/MariaDB use catalogs and return none.
+        String supportsSchemas = "false";
+        try {
+            ResultSet schemaRs = meta.getSchemas();
+            if (schemaRs.next()) supportsSchemas = "true";
+            schemaRs.close();
+        } catch (Exception e) { System.err.println("supportsSchemas err: " + e.getMessage()); }
 
         // approxCountDistinctFunction
         // Closed vocab: APPROX_COUNT_DISTINCT, APPROX_DISTINCT (NDV is not a valid dataplane token)
@@ -271,20 +279,24 @@ public class JdbcProbe {
             tables.close();
         } catch (Exception e) { System.err.println("table scan err: " + e.getMessage()); }
 
+        // Try LIMIT first: it is the ANSI-ish, most common idiom and the dataplane default.
+        // PostgreSQL-family engines (incl. Redshift) accept BOTH `LIMIT` and `TOP`, so probing
+        // TOP first would misclassify them as a SQL Server dialect. SQL Server / Teradata reject
+        // LIMIT and correctly fall through to TOP; Oracle falls through to FETCH FIRST / ROWNUM.
         if (sampleTable != null) {
-            if (tryQuery(conn, "SELECT TOP 1 1 FROM " + sampleTable, 5))
+            if (tryQuery(conn, "SELECT 1 FROM " + sampleTable + " LIMIT 1", 5))
+                rowLimit = "\"LIMIT\"";
+            else if (tryQuery(conn, "SELECT TOP 1 1 FROM " + sampleTable, 5))
                 rowLimit = "\"TOP\"";
             else if (tryQuery(conn, "SELECT 1 FROM " + sampleTable + " FETCH FIRST 1 ROWS ONLY", 5))
                 rowLimit = "\"FETCH_FIRST\"";
             else if (tryQuery(conn, "SELECT 1 FROM " + sampleTable + " WHERE ROWNUM <= 1", 5))
                 rowLimit = "\"ROWNUM\"";
-            else if (tryQuery(conn, "SELECT 1 FROM " + sampleTable + " LIMIT 1", 5))
-                rowLimit = "\"LIMIT\"";
         } else {
             // no tables — try without a table
-            if (tryQuery(conn, "SELECT TOP 1 1", 5))         rowLimit = "\"TOP\"";
+            if (tryQuery(conn, "SELECT 1 LIMIT 1", 5))       rowLimit = "\"LIMIT\"";
+            else if (tryQuery(conn, "SELECT TOP 1 1", 5))    rowLimit = "\"TOP\"";
             else if (tryQuery(conn, "VALUES 1 FETCH FIRST 1 ROWS ONLY", 5)) rowLimit = "\"FETCH_FIRST\"";
-            else if (tryQuery(conn, "SELECT 1 LIMIT 1", 5))  rowLimit = "\"LIMIT\"";
         }
 
         // tableSampleTemplate
@@ -306,14 +318,24 @@ public class JdbcProbe {
             }
         }
 
-        // viewSampleFallback — probe which random function is supported for view sampling
-        String viewSampleFallback = "\"RAND\"";
-        if (!tryQuery(conn, "SELECT RAND()", 5)) {
-            if (tryQuery(conn, "SELECT RANDOM()", 5))
-                viewSampleFallback = "\"RANDOM\"";
-            else if (tryQuery(conn, "SELECT NEWID()", 5))
-                viewSampleFallback = "\"NEWID\"";
-        }
+        // viewSampleFallback — the row-varying random function used for view/sampling.
+        // Order is significant and beats "first function that parses":
+        //   RANDOM            — PostgreSQL family (incl. Redshift), Snowflake; most common, so preferred.
+        //   NEWID             — before RAND because SQL Server HAS RAND() but it is constant per query
+        //                       (only NEWID() varies per row, so only NEWID can shuffle rows there).
+        //   RAND              — MySQL / MariaDB and engines without RANDOM().
+        //   DBMS_RANDOM_VALUE — Oracle (needs the DUAL form).
+        // Null when none match (e.g. the dialect needs a function not in the closed vocab) — the
+        // generator then emits no sql.functions entry rather than guessing RAND.
+        String viewSampleFallback = "null";
+        if (tryQuery(conn, "SELECT RANDOM()", 5))
+            viewSampleFallback = "\"RANDOM\"";
+        else if (tryQuery(conn, "SELECT NEWID()", 5))
+            viewSampleFallback = "\"NEWID\"";
+        else if (tryQuery(conn, "SELECT RAND()", 5))
+            viewSampleFallback = "\"RAND\"";
+        else if (tryQuery(conn, "SELECT DBMS_RANDOM.VALUE FROM DUAL", 5))
+            viewSampleFallback = "\"DBMS_RANDOM_VALUE\"";
 
         // timestampLiteralStyle — detect DB-specific timestamp cast syntax
         String timestampLiteralStyle = "\"PLAIN\"";
@@ -329,10 +351,14 @@ public class JdbcProbe {
         if (tryQuery(conn, "SELECT TO_DATE('2000-01-01', 'YYYY-MM-DD') FROM DUAL", 5))
             dateLiteralStyle = "\"TO_DATE\"";
 
-        // schemaOnly — how to wrap a query to return 0 rows (for schema inspection)
+        // schemaOnly — how to wrap a query to return 0 rows (for schema inspection).
+        // SQLSERVER_TOP0 is only correct for the SQL Server family: `SELECT TOP 0` also parses on
+        // PostgreSQL-family engines (incl. Redshift) that support TOP as an alias for LIMIT, so it is
+        // gated on TOP being the detected row-limit idiom. Everything else (incl. Redshift, which now
+        // resolves to LIMIT) falls through to the CTE default, which the dataplane handles generically.
         String schemaOnlyStyle = "\"CTE\"";
         if (sampleTable != null) {
-            if (tryQuery(conn, "SELECT TOP 0 * FROM " + sampleTable, 5))
+            if (rowLimit.equals("\"TOP\"") && tryQuery(conn, "SELECT TOP 0 * FROM " + sampleTable, 5))
                 schemaOnlyStyle = "\"SQLSERVER_TOP0\"";
             else if (tryQuery(conn, "SELECT * FROM " + sampleTable + " WHERE 1=0", 5)
                      && dateLiteralStyle.equals("\"TO_DATE\""))
@@ -362,6 +388,7 @@ public class JdbcProbe {
         out.append("  \"tableNameCasing\": ").append(casing).append(",\n");
         out.append("  \"connectionTest\": ").append(validationQuery).append(",\n");
         out.append("  \"getTablesUsesNullCatalog\": ").append(nullCatalog).append(",\n");
+        out.append("  \"supportsSchemas\": ").append(supportsSchemas).append(",\n");
         out.append("  \"subqueryAlias\": ").append(subAlias).append(",\n");
         out.append("  \"approxCountDistinctFunction\": ").append(approxFn).append(",\n");
         out.append("  \"dateArithmeticStyle\": ").append(dateArith).append(",\n");
@@ -575,6 +602,19 @@ _SPARK_BUILTIN_DIALECTS: dict[str, str] = {
     "db2": "org.apache.spark.sql.jdbc.DB2Dialect$",
     "derby": "org.apache.spark.sql.jdbc.DerbyDialect$",
     "teradata": "org.apache.spark.sql.jdbc.TeradataDialect$",
+}
+
+# Mapping from a detected row-limit idiom to its sql.clauses closed-vocab token.
+# The dataplane view-sampling renderer (SqlCapabilityRenderer.rowSampleSuffix) gates random
+# sampling on BOTH a function (RANDOM/RAND/NEWID/DBMS_RANDOM_VALUE) AND the matching row-limit
+# clause, so the idiom must be declared in sql.clauses in addition to the rowLimitStyle config
+# field. Mirrors the built-in drivers: postgresql/redshift/mysql/snowflake → LIMIT, sqlserver →
+# OFFSET_FETCH, oracle → ROWNUM.
+_ROW_LIMIT_CLAUSE_TOKEN: dict[str, str] = {
+    "LIMIT": "LIMIT",
+    "FETCH_FIRST": "OFFSET_FETCH",
+    "TOP": "OFFSET_FETCH",
+    "ROWNUM": "ROWNUM",
 }
 
 # Mapping from Java probe tableSampleTemplate strings to v2 closed-vocab clause tokens
@@ -1218,6 +1258,19 @@ def _build_yaml(
         lines.append(f"{ind}      fieldType: string")
         lines.append(f"{ind}      required: true")
         lines.append(f"{ind}      aliases: []  # optional alternate field names")
+    # schema — optional form field, emitted when the DB organises tables into schemas
+    # (probe: DatabaseMetaData.getSchemas). Required to back any {schema} URL placeholder /
+    # conditionalParam: the dataplane catalog validator rejects a {schema} reference with no
+    # matching connectionSpec field. Left as a conditional (required: false, no default) field.
+    supports_schemas = probes.get("supportsSchemas", False)
+    if isinstance(supports_schemas, str):
+        supports_schemas = supports_schemas.lower() == "true"
+    if supports_schemas:
+        lines.append(f"{ind}    - name: schema")
+        lines.append(f'{ind}      label: "Schema"')
+        lines.append(f"{ind}      fieldType: string")
+        lines.append(f"{ind}      required: false")
+        lines.append(f"{ind}      aliases: []  # optional alternate field names")
     lines.append(f"{ind}    - name: username")
     lines.append(f'{ind}      label: "Username"')
     lines.append(f"{ind}      fieldType: string")
@@ -1263,15 +1316,18 @@ def _build_yaml(
     else:
         detected_fields.append("approxCountDistinctFunction")  # null — omitted
 
-    # viewSampleFallback → entry in sql.functions list (omit if RAND = default)
-    vsf = probes.get("viewSampleFallback", "RAND")
-    if vsf != "RAND":
+    # viewSampleFallback → entry in sql.functions list. The dataplane view-sampling renderer pairs
+    # this function with the row-limit clause (RANDOM/RAND + LIMIT, NEWID + OFFSET_FETCH,
+    # DBMS_RANDOM_VALUE + ROWNUM), so it must always be emitted when the probe detected one — there
+    # is no implicit default. RAND is a real detected value (MySQL/MariaDB), not a sentinel.
+    vsf = probes.get("viewSampleFallback")
+    if vsf and vsf != "null":
         func_entries.append(
             (vsf, "auto-detected — random function for view sampling")
         )
         detected_fields.append("viewSampleFallback")
     else:
-        detected_fields.append("viewSampleFallback")  # default RAND — omitted
+        detected_fields.append("viewSampleFallback")  # none detected — omitted
 
     ind_sql = _indent[0]  # "  " inside sql:
     if func_entries:
@@ -1295,10 +1351,19 @@ def _build_yaml(
 
     clause_entries: list[tuple[str, str]] = []  # (token, comment)
 
-    # FETCH_FIRST rowLimit → OFFSET_FETCH clause (not a rowLimitStyle)
-    if _fetch_first_detected:
+    # Row-limit idiom → sql.clauses token. The dataplane view-sampling renderer gates random
+    # sampling on a (function, row-limit clause) pair, so the idiom is declared here in addition
+    # to the rowLimitStyle config field. An undetected idiom defaults to LIMIT (the dataplane
+    # default), matching the rowLimitStyle TODO fallback above.
+    effective_row_limit = row_limit if (row_limit and row_limit != "null") else "LIMIT"
+    row_limit_token = _ROW_LIMIT_CLAUSE_TOKEN.get(effective_row_limit)
+    if row_limit_token:
         clause_entries.append(
-            ("OFFSET_FETCH", "auto-detected — DB uses FETCH FIRST / OFFSET-FETCH syntax")
+            (
+                row_limit_token,
+                f"auto-detected — {effective_row_limit} row-limit idiom "
+                "(declared so view-sampling can pair it with a random function)",
+            )
         )
 
     # tableSampleTemplate → entry in sql.clauses list
@@ -1892,6 +1957,7 @@ def generate_driver(
             "getTablesUsesNullCatalog",
             str(probes.get("getTablesUsesNullCatalog", False)).lower(),
         ),
+        ("supportsSchemas", str(probes.get("supportsSchemas", False)).lower()),
         ("approxCountDistinctFunction", probes.get("approxCountDistinctFunction")),
         ("rowCount", probes.get("rowCount")),
         ("schemaOnly", probes.get("schemaOnly")),
