@@ -39,9 +39,9 @@
 - [x] `config.connectionSpec.fields[].dependsOnValues` (plural, optional)
 
 ## Group 7: Update the Java probe and LLM resolver
-- [ ] Update Java probe output parsing to feed into new v2 structure
-- [ ] Update LLM prompt/resolver to produce field names matching v2 schema
-- [ ] Update TODO comment generation to reference correct v2 field names
+- [x] Update Java probe output parsing to feed into new v2 structure
+- [x] Update LLM prompt/resolver to produce field names matching v2 schema
+- [x] Update TODO comment generation to reference correct v2 field names
 
 ## Group 8: Update example YAML files
 - [ ] Regenerate or manually update `dist/META-INF/jdbc-drivers/mongodb.yaml` to v2 format

@@ -175,15 +175,15 @@ public class JdbcProbe {
         } catch (Exception e) { System.err.println("transactionIsolation err: " + e.getMessage()); }
 
         // tableNameCasing
-        String casing = "\"asis\"";
+        String casing = "\"AS_IS\"";
         try {
-            if (meta.storesUpperCaseIdentifiers()) casing = "\"upper\"";
-            else if (meta.storesLowerCaseIdentifiers()) casing = "\"lower\"";
+            if (meta.storesUpperCaseIdentifiers()) casing = "\"UPPER\"";
+            else if (meta.storesLowerCaseIdentifiers()) casing = "\"LOWER\"";
         } catch (Exception e) { System.err.println("tableNameCasing err: " + e.getMessage()); }
 
         // ── Phase 2: SQL probes (5s timeout each) ────────────────────────
 
-        // validationQuery
+        // connectionTest
         String validationQuery = "null";
         String[] valCandidates = {"SELECT 1", "SELECT 1 FROM DUAL", "VALUES 1"};
         for (String q : valCandidates) {
@@ -203,7 +203,7 @@ public class JdbcProbe {
             nullCatalog = (c2 > c1) ? "true" : "false";
         } catch (Exception e) { System.err.println("getTablesUsesNullCatalog err: " + e.getMessage()); }
 
-        // subqueryRequiresAlias
+        // subqueryAlias
         String subAlias = "false";
         try {
             tryQuery(conn, "SELECT * FROM (SELECT 1 AS x) WHERE 1=0", 5);
@@ -218,17 +218,6 @@ public class JdbcProbe {
         if (tryQuery(conn, "SELECT APPROX_COUNT_DISTINCT(1)", 5)) approxFn = "\"APPROX_COUNT_DISTINCT\"";
         else if (tryQuery(conn, "SELECT APPROX_DISTINCT(1)", 5)) approxFn = "\"APPROX_DISTINCT\"";
         else if (tryQuery(conn, "SELECT NDV(1)", 5)) approxFn = "\"NDV\"";
-
-        // schemaExistenceQueryStyle
-        String schemaStyle = "\"NONE\"";
-        if (tryQuery(conn, "SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE 1=0", 5))
-            schemaStyle = "\"INFORMATION_SCHEMA\"";
-        else if (tryQuery(conn, "SHOW SCHEMAS", 5))
-            schemaStyle = "\"SHOW_SCHEMAS_ITERATE\"";
-        else if (tryQuery(conn, "SELECT 1 FROM SYSCAT.SCHEMATA WHERE 1=0", 5))
-            schemaStyle = "\"SYSCAT\"";
-        else if (tryQuery(conn, "SELECT 1 FROM sys.schemas WHERE 1=0", 5))
-            schemaStyle = "\"SYS_SCHEMAS\"";
 
         // dateArithmeticStyle + interval templates
         String dateArith = "\"STANDARD\"";
@@ -263,7 +252,7 @@ public class JdbcProbe {
             upperDt = jq("DATE_ADD({interval}, INTERVAL DATE_DIFF({interval}, MIN_{col}, DAY) DAY)");
         }
 
-        // rowLimitSyntax — find a real accessible table first
+        // rowLimitStyle — find a real accessible table first
         String rowLimit = "null";
         String sampleTable = null;
         try {
@@ -340,7 +329,7 @@ public class JdbcProbe {
         if (tryQuery(conn, "SELECT TO_DATE('2000-01-01', 'YYYY-MM-DD') FROM DUAL", 5))
             dateLiteralStyle = "\"TO_DATE\"";
 
-        // schemaOnlyQueryStyle — how to wrap a query to return 0 rows (for schema inspection)
+        // schemaOnly — how to wrap a query to return 0 rows (for schema inspection)
         String schemaOnlyStyle = "\"CTE\"";
         if (sampleTable != null) {
             if (tryQuery(conn, "SELECT TOP 0 * FROM " + sampleTable, 5))
@@ -351,7 +340,7 @@ public class JdbcProbe {
                 schemaOnlyStyle = "\"ORACLE_WHERE_FALSE\"";
         }
 
-        // rowCountQueryStyle — probe metadata tables for optimized row count access
+        // rowCount — probe metadata tables for optimized row count access
         String rowCountStyle = "\"COUNT_STAR\"";
         if (tryQuery(conn, "SELECT ROW_COUNT FROM INFORMATION_SCHEMA.TABLES WHERE 1=0", 5))
             rowCountStyle = "\"INFORMATION_SCHEMA_ROW_COUNT\"";
@@ -371,13 +360,12 @@ public class JdbcProbe {
         out.append("  \"identifierQuoteChar\": ").append(quoteChar).append(",\n");
         out.append("  \"transactionIsolation\": ").append(txIsolation).append(",\n");
         out.append("  \"tableNameCasing\": ").append(casing).append(",\n");
-        out.append("  \"validationQuery\": ").append(validationQuery).append(",\n");
+        out.append("  \"connectionTest\": ").append(validationQuery).append(",\n");
         out.append("  \"getTablesUsesNullCatalog\": ").append(nullCatalog).append(",\n");
-        out.append("  \"subqueryRequiresAlias\": ").append(subAlias).append(",\n");
+        out.append("  \"subqueryAlias\": ").append(subAlias).append(",\n");
         out.append("  \"approxCountDistinctFunction\": ").append(approxFn).append(",\n");
-        out.append("  \"schemaExistenceQueryStyle\": ").append(schemaStyle).append(",\n");
         out.append("  \"dateArithmeticStyle\": ").append(dateArith).append(",\n");
-        out.append("  \"rowLimitSyntax\": ").append(rowLimit).append(",\n");
+        out.append("  \"rowLimitStyle\": ").append(rowLimit).append(",\n");
         out.append("  \"tableSampleTemplate\": ").append(sampleTemplate).append(",\n");
         out.append("  \"intervalCalcDatetimeTimestampTemplate\": ").append(intervalTs).append(",\n");
         out.append("  \"intervalCalcDatetimeDateTemplate\": ").append(intervalDt).append(",\n");
@@ -386,8 +374,8 @@ public class JdbcProbe {
         out.append("  \"viewSampleFallback\": ").append(viewSampleFallback).append(",\n");
         out.append("  \"timestampLiteralStyle\": ").append(timestampLiteralStyle).append(",\n");
         out.append("  \"dateLiteralStyle\": ").append(dateLiteralStyle).append(",\n");
-        out.append("  \"schemaOnlyQueryStyle\": ").append(schemaOnlyStyle).append(",\n");
-        out.append("  \"rowCountQueryStyle\": ").append(rowCountStyle).append("\n");
+        out.append("  \"schemaOnly\": ").append(schemaOnlyStyle).append(",\n");
+        out.append("  \"rowCount\": ").append(rowCountStyle).append("\n");
         out.append("}\n");
         System.out.println(out.toString());
     }
@@ -855,9 +843,7 @@ def _build_yaml(
         detected_fields.append("identifierQuoteChar")  # default — omitted
 
     # tableNameCasing — omit if AS_IS (default)
-    casing_raw = probes.get("tableNameCasing", "asis")
-    casing_map = {"upper": "UPPER", "lower": "LOWER", "asis": "AS_IS"}
-    casing = casing_map.get(casing_raw, casing_raw.upper())
+    casing = probes.get("tableNameCasing", "AS_IS")
     if casing != "AS_IS":
         lines.append(
             field(
@@ -873,7 +859,7 @@ def _build_yaml(
 
     # rowLimitStyle — omit if LIMIT (default); TODO if probe couldn't determine
     # FETCH_FIRST is NOT a rowLimitStyle — it maps to OFFSET_FETCH in sql.clauses
-    row_limit = probes.get("rowLimitSyntax")
+    row_limit = probes.get("rowLimitStyle")
     _fetch_first_detected = row_limit == "FETCH_FIRST"
     if _fetch_first_detected:
         # FETCH_FIRST → OFFSET_FETCH clause (handled in sql.clauses below)
@@ -902,7 +888,7 @@ def _build_yaml(
         todo_fields.append("rowLimitStyle")
 
     # subqueryAlias — omit if true (default); emit false if probe confirmed no alias needed
-    sub_alias = probes.get("subqueryRequiresAlias", True)
+    sub_alias = probes.get("subqueryAlias", True)
     if isinstance(sub_alias, str):
         sub_alias = sub_alias.lower() != "false"
     if not sub_alias:
@@ -951,7 +937,7 @@ def _build_yaml(
     # dateLiteralTemplate: escape hatch — omit unless enum styles are insufficient
 
     # connectionTest — omit if SELECT 1 (default)
-    val_q = probes.get("validationQuery")
+    val_q = probes.get("connectionTest")
     if val_q and val_q != "SELECT 1":
         lines.append(
             field(
@@ -1271,7 +1257,7 @@ def _build_yaml(
     _indent[0] = "    "
 
     # schemaOnly — if CTE (probe fallback, unconfirmed) → TODO; else emit as detected
-    schema_only = probes.get("schemaOnlyQueryStyle", "CTE")
+    schema_only = probes.get("schemaOnly", "CTE")
     if schema_only != "CTE":
         lines.append(
             field(
@@ -1298,7 +1284,7 @@ def _build_yaml(
         todo_fields.append("schemaOnly")
 
     # rowCount — emit as TODO if COUNT_STAR (default/unconfirmed), else auto-detected
-    row_count_style = probes.get("rowCountQueryStyle", "COUNT_STAR")
+    row_count_style = probes.get("rowCount", "COUNT_STAR")
     if row_count_style and row_count_style != "COUNT_STAR":
         lines.append(
             field(
@@ -1320,7 +1306,6 @@ def _build_yaml(
         )
         todo_fields.append("rowCount")
     # countStarNullSizeBytesExpr — almost always null (default); omit; user adds manually for Dremio
-    # schemaExistenceQueryStyle — not part of v2 schema; probed but not emitted
 
     # ── freshness — date arithmetic style + templates ───────────────────────
     date_arith = probes.get("dateArithmeticStyle", "STANDARD")
@@ -1824,20 +1809,20 @@ def generate_driver(
         ("identifierQuoteChar", probes.get("identifierQuoteChar")),
         ("transactionIsolation", probes.get("transactionIsolation")),
         ("tableNameCasing", probes.get("tableNameCasing")),
-        ("connectionTest", probes.get("validationQuery")),
+        ("connectionTest", probes.get("connectionTest")),
         (
             "subqueryAlias",
-            str(probes.get("subqueryRequiresAlias", True)).lower(),
+            str(probes.get("subqueryAlias", True)).lower(),
         ),
         (
             "getTablesUsesNullCatalog",
             str(probes.get("getTablesUsesNullCatalog", False)).lower(),
         ),
         ("approxCountDistinctFunction", probes.get("approxCountDistinctFunction")),
-        ("rowCountQueryStyle", probes.get("rowCountQueryStyle")),
-        ("schemaOnlyQueryStyle", probes.get("schemaOnlyQueryStyle")),
+        ("rowCount", probes.get("rowCount")),
+        ("schemaOnly", probes.get("schemaOnly")),
         ("dateArithmeticStyle", probes.get("dateArithmeticStyle")),
-        ("rowLimitStyle", probes.get("rowLimitSyntax")),
+        ("rowLimitStyle", probes.get("rowLimitStyle")),
         ("tableSampleTemplate", probes.get("tableSampleTemplate")),
         ("viewSampleFallback", probes.get("viewSampleFallback")),
         ("timestampLiteralStyle", probes.get("timestampLiteralStyle")),
@@ -1881,8 +1866,8 @@ def generate_driver(
         "connectionProperties",
         "sessionInitStatements",
         "dialectClass",
-        "jdbcUrlStaticParams",
-        "jdbcUrlConditionalParams",
+        "staticParams",
+        "conditionalParams",
         "connectionSpec",
     ]
     total_todo = todo_count + len(always_todo)

@@ -18,16 +18,15 @@ _MINIMAL_PROBES = {
     "dbProductName": "TestDB",
     "transactionIsolation": "READ_UNCOMMITTED",
     "identifierQuoteChar": '"',
-    "tableNameCasing": "asis",
-    "rowLimitSyntax": "LIMIT",
-    "subqueryRequiresAlias": True,
+    "tableNameCasing": "AS_IS",
+    "rowLimitStyle": "LIMIT",
+    "subqueryAlias": True,
     "timestampLiteralStyle": "PLAIN",
     "dateLiteralStyle": "PLAIN",
-    "schemaOnlyQueryStyle": "CTE",
-    "validationQuery": "SELECT 1",
+    "schemaOnly": "CTE",
+    "connectionTest": "SELECT 1",
     "viewSampleFallback": "RAND",
-    "rowCountQueryStyle": "COUNT_STAR",
-    "schemaExistenceQueryStyle": "NONE",
+    "rowCount": "COUNT_STAR",
     "dateArithmeticStyle": "STANDARD",
     "getTablesUsesNullCatalog": False,
 }
@@ -157,7 +156,7 @@ class TestBuildYamlStructure:
 
     def test_sql_capabilities_under_sql_queries(self):
         """SQL query-style fields should use QuerySlot keys under sql.queries."""
-        probes = {**_MINIMAL_PROBES, "schemaOnlyQueryStyle": "PG_CTE"}
+        probes = {**_MINIMAL_PROBES, "schemaOnly": "PG_CTE"}
         _, parsed, _, _ = self._parse(probes=probes)
         assert parsed["sql"]["queries"]["schemaOnly"] == "PG_CTE"
         assert "schemaOnlyQueryStyle" not in parsed
@@ -167,9 +166,8 @@ class TestBuildYamlStructure:
     def test_sql_capabilities_with_detected_values(self):
         probes = {
             **_MINIMAL_PROBES,
-            "schemaOnlyQueryStyle": "SQLSERVER_TOP0",
+            "schemaOnly": "SQLSERVER_TOP0",
             "dateArithmeticStyle": "DATEADD_DATEDIFF",
-            "schemaExistenceQueryStyle": "INFORMATION_SCHEMA",
             "approxCountDistinctFunction": "APPROX_COUNT_DISTINCT",
         }
         _, parsed, _, _ = self._parse(probes=probes)
@@ -253,7 +251,7 @@ class TestBuildYamlStructure:
 
     def test_row_count_uses_query_slot_key(self):
         """rowCountQueryStyle probe → rowCount QuerySlot key."""
-        probes = {**_MINIMAL_PROBES, "rowCountQueryStyle": "BQ_TABLES"}
+        probes = {**_MINIMAL_PROBES, "rowCount": "BQ_TABLES"}
         _, parsed, _, _ = self._parse(probes=probes)
         assert parsed["sql"]["queries"]["rowCount"] == "BQ_TABLES"
         assert "rowCountQueryStyle" not in parsed["sql"]["queries"]
@@ -276,24 +274,24 @@ class TestBuildYamlStructure:
         assert parsed["config"]["transactionIsolation"] == "SERIALIZABLE"
 
     def test_non_default_table_name_casing_in_config(self):
-        probes = {**_MINIMAL_PROBES, "tableNameCasing": "lower"}
+        probes = {**_MINIMAL_PROBES, "tableNameCasing": "LOWER"}
         _, parsed, _, _ = self._parse(probes=probes)
         assert parsed["config"]["tableNameCasing"] == "LOWER"
 
     def test_non_default_row_limit_in_config(self):
-        probes = {**_MINIMAL_PROBES, "rowLimitSyntax": "TOP"}
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "TOP"}
         _, parsed, _, _ = self._parse(probes=probes)
         assert parsed["config"]["rowLimitStyle"] == "TOP"
 
     def test_fetch_first_not_in_row_limit_style(self):
         """FETCH_FIRST should NOT appear as rowLimitStyle — it's a sql.clause."""
-        probes = {**_MINIMAL_PROBES, "rowLimitSyntax": "FETCH_FIRST"}
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "FETCH_FIRST"}
         _, parsed, _, _ = self._parse(probes=probes)
         assert "rowLimitStyle" not in parsed.get("config", {})
 
     def test_fetch_first_maps_to_offset_fetch_clause(self):
         """FETCH_FIRST rowLimit → OFFSET_FETCH in sql.clauses."""
-        probes = {**_MINIMAL_PROBES, "rowLimitSyntax": "FETCH_FIRST"}
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "FETCH_FIRST"}
         _, parsed, _, _ = self._parse(probes=probes)
         assert "OFFSET_FETCH" in parsed["sql"]["clauses"]
 
@@ -301,7 +299,7 @@ class TestBuildYamlStructure:
         """FETCH_FIRST + tableSampleTemplate should both appear in sql.clauses."""
         probes = {
             **_MINIMAL_PROBES,
-            "rowLimitSyntax": "FETCH_FIRST",
+            "rowLimitStyle": "FETCH_FIRST",
             "tableSampleTemplate": "TABLESAMPLE SYSTEM ({pct})",
         }
         _, parsed, _, _ = self._parse(probes=probes)
@@ -310,7 +308,7 @@ class TestBuildYamlStructure:
         assert "TABLESAMPLE_SYSTEM" in clauses
 
     def test_validation_query_in_config(self):
-        probes = {**_MINIMAL_PROBES, "validationQuery": "SELECT 1 FROM DUAL"}
+        probes = {**_MINIMAL_PROBES, "connectionTest": "SELECT 1 FROM DUAL"}
         _, parsed, _, _ = self._parse(probes=probes)
         assert parsed["config"]["connectionTest"] == "SELECT 1 FROM DUAL"
 
@@ -321,11 +319,7 @@ class TestBuildYamlStructure:
 
     def test_removed_fields_not_in_output(self):
         """maxPartitionParallelism, dataSizeLimit, schemaExistenceQueryStyle must not appear."""
-        probes = {
-            **_MINIMAL_PROBES,
-            "schemaExistenceQueryStyle": "INFORMATION_SCHEMA",
-        }
-        _, parsed, _, _ = self._parse(probes=probes)
+        _, parsed, _, _ = self._parse()
         config = parsed["config"]
         queries = parsed["sql"]["queries"]
         assert "maxPartitionParallelism" not in config
