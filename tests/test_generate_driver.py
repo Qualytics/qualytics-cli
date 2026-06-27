@@ -289,6 +289,52 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse(probes=probes)
         assert parsed["config"]["tableNameCasing"] == "LOWER"
 
+    def test_connection_spec_field_schema(self):
+        """Every connectionSpec field must have name, label, fieldType, required keys."""
+        _, parsed, _, _ = self._parse()
+        fields = parsed["config"]["connectionSpec"]["fields"]
+        required_keys = {"name", "label", "fieldType", "required"}
+        for f in fields:
+            missing = required_keys - set(f.keys())
+            assert not missing, f"field '{f.get('name', '?')}' missing keys: {missing}"
+
+    def test_connection_spec_fields_match_url_components(self):
+        """host/port/database fields appear only when the probe URL contains them."""
+        _, parsed, _, _ = self._parse()
+        names = [f["name"] for f in parsed["config"]["connectionSpec"]["fields"]]
+        # Standard URL jdbc:testdb://localhost:5432/mydb has host, port, database
+        assert "host" in names
+        assert "port" in names
+        assert "database" in names
+        # username and password always present
+        assert "username" in names
+        assert "password" in names
+
+    def test_connection_spec_omits_missing_url_components(self):
+        """If the URL has no host/port, those fields are omitted from connectionSpec."""
+        # jdbc:sqlite:/path/to/db has no host or port (but file path → database)
+        _, parsed, _, _ = self._parse(url="jdbc:sqlite:/path/to/test.db")
+        names = [f["name"] for f in parsed["config"]["connectionSpec"]["fields"]]
+        assert "host" not in names
+        assert "port" not in names
+        assert "database" in names  # file path is treated as database
+        # username and password always present
+        assert "username" in names
+        assert "password" in names
+
+    def test_connection_spec_port_default_value(self):
+        """Port field should include defaultValue when detected from URL."""
+        _, parsed, _, _ = self._parse()
+        fields = parsed["config"]["connectionSpec"]["fields"]
+        port_field = next(f for f in fields if f["name"] == "port")
+        assert port_field["defaultValue"] == "5432"
+
+    def test_connection_spec_not_at_top_level(self):
+        """connectionSpec must be nested under config, never at top level."""
+        _, parsed, _, _ = self._parse()
+        assert "connectionSpec" not in parsed, "connectionSpec should be in config"
+        assert "connectionSpec" in parsed["config"]
+
     def test_non_default_row_limit_in_config(self):
         probes = {**_MINIMAL_PROBES, "rowLimitStyle": "TOP"}
         _, parsed, _, _ = self._parse(probes=probes)
