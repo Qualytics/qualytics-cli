@@ -687,9 +687,15 @@ def _build_yaml(
             return dumped
         return sv
 
+    _indent = [""]  # mutable — set to "  " inside config: section
+
     def field(name: str, value, comment: str = "") -> str:
         comment_str = f"  # {comment}" if comment else ""
-        return f"{name}: {_render(value)}{comment_str}"
+        return f"{_indent[0]}{name}: {_render(value)}{comment_str}"
+
+    def _sec(text: str) -> str:
+        """Section comment with current indentation."""
+        return f"{_indent[0]}{text}"
 
     lines: list[str] = []
 
@@ -739,9 +745,40 @@ def _build_yaml(
     detected_fields.append("className")
     lines.append("")
 
-    # ── SQL dialect ───────────────────────────────────────────────────────────
+    # ── Spark JdbcDialect (top-level) ────────────────────────────────────────
     lines.append(
-        "# ── SQL dialect ──────────────────────────────────────────────────────"
+        "# ── Spark JdbcDialect ────────────────────────────────────────────────"
+    )
+    if dialect_class is not None:
+        lines.append(
+            field(
+                "dialectClass",
+                dialect_class,
+                "Auto-detected Spark JdbcDialect subclass",
+            )
+        )
+        detected_fields.append("dialectClass")
+    else:
+        lines.append(
+            field(
+                "dialectClass",
+                None,
+                "TODO: fully-qualified JdbcDialect Scala object class to register with Spark "
+                "(e.g. com.example.MyDialect$); null if no custom Spark dialect is needed",
+            )
+        )
+        todo_fields.append("dialectClass")
+    lines.append("")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # config: section — all non-SQL configuration fields
+    # ══════════════════════════════════════════════════════════════════════════
+    lines.append("config:")
+    _indent[0] = "  "
+
+    # ── SQL dialect (config fields) ──────────────────────────────────────────
+    lines.append(
+        _sec("# ── SQL dialect ──────────────────────────────────────────────────────")
     )
 
     # displayName — always emit (default is raw prefix; capitalised form is user-friendly)
@@ -896,6 +933,220 @@ def _build_yaml(
         detected_fields.append("dateLiteralStyle")  # default — omitted
     # dateLiteralTemplate: escape hatch — omit unless enum styles are insufficient
 
+    # validationQuery — omit if SELECT 1 (default)
+    val_q = probes.get("validationQuery")
+    if val_q and val_q != "SELECT 1":
+        lines.append(
+            field(
+                "validationQuery",
+                val_q,
+                "auto-detected — minimal SQL to test a pooled connection is alive",
+            )
+        )
+        detected_fields.append("validationQuery")
+    elif val_q:
+        detected_fields.append("validationQuery")  # default — omitted
+    else:
+        lines.append(
+            field(
+                "validationQuery",
+                "SELECT 1",
+                "TODO: SQL to verify a live connection; try SELECT 1 FROM DUAL (Oracle), "
+                "VALUES 1 (DB2/H2)",
+            )
+        )
+        todo_fields.append("validationQuery")
+
+    lines.append("")
+
+    # ── Performance ───────────────────────────────────────────────────────────
+    lines.append(
+        _sec("# ── Performance ──────────────────────────────────────────────────────")
+    )
+    lines.append(
+        field(
+            "maxPartitionParallelism",
+            10,
+            "TODO: max parallel partitions for scan operations; default 10. "
+            "Set 1 for DBs that struggle with concurrent connections (e.g. BigQuery, "
+            "single-threaded embedded drivers)",
+        )
+    )
+    todo_fields.append("maxPartitionParallelism")
+    _int_max_prefixes = ("redshift", "sqlserver", "db2")
+    _data_size_default = (
+        "INT_MAX" if any(p in prefix.lower() for p in _int_max_prefixes) else "LONG_MAX"
+    )
+    _data_size_comment = (
+        "INT_MAX: older 32-bit driver (SQL Server, Redshift, Db2)"
+        if _data_size_default == "INT_MAX"
+        else "TODO: max data the driver can handle. LONG_MAX (default, most DBs) or "
+        "INT_MAX for older 32-bit drivers (SQL Server, Redshift, Db2)"
+    )
+    lines.append(field("dataSizeLimit", _data_size_default, _data_size_comment))
+    todo_fields.append("dataSizeLimit")
+    lines.append("")
+
+    # ── Schema / catalog filtering ────────────────────────────────────────────
+    lines.append(
+        _sec("# ── Schema / catalog filtering ───────────────────────────────────────")
+    )
+    lines.append(
+        f"{_indent[0]}systemSchemaExclusions: []"
+        "      # TODO: exact schema names to exclude from catalog scans "
+        "(e.g. [information_schema, pg_catalog])"
+    )
+    lines.append(
+        f"{_indent[0]}systemSchemaExclusionPrefixes: []"
+        "  # TODO: schema name prefixes to exclude (e.g. [pg_temp_, pg_toast_temp_])"
+    )
+    lines.append(
+        f"{_indent[0]}systemCatalogExclusions: []"
+        "     # TODO: catalog names to exclude "
+        "(e.g. [admin, local, config] for MongoDB; [information_schema, mysql] for MySQL)"
+    )
+    todo_fields += [
+        "systemSchemaExclusions",
+        "systemSchemaExclusionPrefixes",
+        "systemCatalogExclusions",
+    ]
+
+    # getTablesUsesNullCatalog — omit if false (default); emit if true
+    get_tables_null = probes.get("getTablesUsesNullCatalog", False)
+    if isinstance(get_tables_null, str):
+        get_tables_null = get_tables_null.lower() == "true"
+    if get_tables_null:
+        lines.append(
+            field(
+                "getTablesUsesNullCatalog",
+                True,
+                "auto-detected — pass null as catalog arg to DatabaseMetaData.getTables(); "
+                "required for Db2",
+            )
+        )
+        detected_fields.append("getTablesUsesNullCatalog")
+    else:
+        detected_fields.append("getTablesUsesNullCatalog")  # default false — omitted
+    lines.append("")
+
+    # ── Connectivity ──────────────────────────────────────────────────────────
+    lines.append(
+        _sec("# ── Connectivity ─────────────────────────────────────────────────────")
+    )
+    # networkCapable: true (default) — omitted; readOnly: false (default) — omitted
+    lines.append(
+        f"{_indent[0]}connectionProperties: {{}}"
+        "        # TODO: key-value pairs injected into JDBC pool and Spark "
+        "(e.g. {ssl: 'true', charset: 'utf8'})"
+    )
+    lines.append(
+        f"{_indent[0]}sessionInitStatements: []"
+        "       # TODO: SQL statements run once after each new connection "
+        '(e.g. ["SET SCHEMA mydb", "ALTER SESSION SET NLS_DATE_FORMAT=\'YYYY-MM-DD\'"])'
+    )
+    todo_fields += ["connectionProperties", "sessionInitStatements"]
+    lines.append("")
+
+    # ── URL construction ──────────────────────────────────────────────────────
+    lines.append(
+        _sec("# ── URL construction ─────────────────────────────────────────────────")
+    )
+    lines.append(
+        _sec(
+            "# Known placeholders: {host}, {port}, {database}, {schema}, {username}, {password}"
+        )
+    )
+    if jdbc_url_template:
+        lines.append(
+            field(
+                "jdbcUrlTemplate",
+                jdbc_url_template,
+                "auto-detected from probe URL — verify all placeholders are correct",
+            )
+        )
+        detected_fields.append("jdbcUrlTemplate")
+    else:
+        lines.append(
+            field(
+                "jdbcUrlTemplate",
+                "",
+                "TODO: URL template with {host}, {port}, {database} substitution tokens. "
+                "Example: jdbc:mydb://{host}:{port}/{database}",
+            )
+        )
+        todo_fields.append("jdbcUrlTemplate")
+    lines.append(
+        f"{_indent[0]}jdbcUrlStaticParams: []"
+        "      # TODO: query params always appended to every URL "
+        "(e.g. [tcpKeepAlive=true, sslmode=prefer])"
+    )
+    lines.append(
+        f"{_indent[0]}jdbcUrlConditionalParams: []"
+        "  # TODO: params appended only when a form field is non-empty "
+        "(e.g. [{key: schema, param: 'currentSchema={schema}'}])"
+    )
+    lines.append(
+        f"{_indent[0]}jdbcUrlAuthVariants: {{}}"
+        "      # optional: auth_type -> full URL template override; leave empty if not needed"
+    )
+    todo_fields += ["jdbcUrlStaticParams", "jdbcUrlConditionalParams"]
+    lines.append("")
+
+    # ── Connection spec ────────────────────────────────────────────────────────
+    # Only mark a field required if the probe URL actually contained that component.
+    # e.g. jdbc:sqlite:/path/to/db has no host or port → those fields are optional.
+    ind = _indent[0]  # shorthand for current indentation
+    lines.append(
+        _sec("# ── Connection spec (frontend form) ──────────────────────────────────")
+    )
+    lines.append(f"{ind}# TODO: define the connection form fields shown in the UI.")
+    lines.append(
+        f"{ind}# Each field: name, label, fieldType (string/integer/boolean/password/enum/file),"
+    )
+    lines.append(
+        f"{ind}#             required, defaultValue, hint, options (for enum), dependsOn, dependsOnValue"
+    )
+    lines.append(f"{ind}connectionSpec:")
+    lines.append(f"{ind}  supportsEnrichment: false  # custom drivers are source-only")
+    lines.append(f"{ind}  fields:")
+    if "host" in url_components:
+        lines.append(f"{ind}    - name: host")
+        lines.append(f'{ind}      label: "Host"')
+        lines.append(f"{ind}      fieldType: string")
+        lines.append(f"{ind}      required: true")
+    if "port" in url_components:
+        lines.append(f"{ind}    - name: port")
+        lines.append(f'{ind}      label: "Port"')
+        lines.append(f"{ind}      fieldType: integer")
+        lines.append(f"{ind}      required: true")
+        if default_port is not None:
+            lines.append(f'{ind}      defaultValue: "{default_port}"')
+    if "database" in url_components:
+        lines.append(f"{ind}    - name: database")
+        lines.append(f'{ind}      label: "Database"')
+        lines.append(f"{ind}      fieldType: string")
+        lines.append(f"{ind}      required: true")
+    lines.append(f"{ind}    - name: username")
+    lines.append(f'{ind}      label: "Username"')
+    lines.append(f"{ind}      fieldType: string")
+    lines.append(f"{ind}      required: true")
+    lines.append(f"{ind}    - name: password")
+    lines.append(f'{ind}      label: "Password"')
+    lines.append(f"{ind}      fieldType: password")
+    lines.append(f"{ind}      required: true")
+    todo_fields.append("connectionSpec")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # End of config: section — reset indentation
+    # ══════════════════════════════════════════════════════════════════════════
+    _indent[0] = ""
+    lines.append("")
+
+    # ── SQL capabilities (flat — will be wrapped under sql: in a future task) ─
+    lines.append(
+        "# ── SQL capabilities ─────────────────────────────────────────────────"
+    )
+
     # schemaOnlyQueryStyle — if CTE (probe fallback, unconfirmed) → TODO; else emit as detected
     schema_only = probes.get("schemaOnlyQueryStyle", "CTE")
     if schema_only != "CTE":
@@ -968,107 +1219,6 @@ def _build_yaml(
         detected_fields.append("approxCountDistinctFunction")
     else:
         detected_fields.append("approxCountDistinctFunction")  # null — omitted
-
-    # validationQuery — omit if SELECT 1 (default)
-    val_q = probes.get("validationQuery")
-    if val_q and val_q != "SELECT 1":
-        lines.append(
-            field(
-                "validationQuery",
-                val_q,
-                "auto-detected — minimal SQL to test a pooled connection is alive",
-            )
-        )
-        detected_fields.append("validationQuery")
-    elif val_q:
-        detected_fields.append("validationQuery")  # default — omitted
-    else:
-        lines.append(
-            field(
-                "validationQuery",
-                "SELECT 1",
-                "TODO: SQL to verify a live connection; try SELECT 1 FROM DUAL (Oracle), "
-                "VALUES 1 (DB2/H2)",
-            )
-        )
-        todo_fields.append("validationQuery")
-
-    lines.append("")
-
-    # ── Performance ───────────────────────────────────────────────────────────
-    lines.append(
-        "# ── Performance ──────────────────────────────────────────────────────"
-    )
-    lines.append(
-        field(
-            "maxPartitionParallelism",
-            10,
-            "TODO: max parallel partitions for scan operations; default 10. "
-            "Set 1 for DBs that struggle with concurrent connections (e.g. BigQuery, "
-            "single-threaded embedded drivers)",
-        )
-    )
-    todo_fields.append("maxPartitionParallelism")
-    _int_max_prefixes = ("redshift", "sqlserver", "db2")
-    _data_size_default = (
-        "INT_MAX" if any(p in prefix.lower() for p in _int_max_prefixes) else "LONG_MAX"
-    )
-    _data_size_comment = (
-        "INT_MAX: older 32-bit driver (SQL Server, Redshift, Db2)"
-        if _data_size_default == "INT_MAX"
-        else "TODO: max data the driver can handle. LONG_MAX (default, most DBs) or "
-        "INT_MAX for older 32-bit drivers (SQL Server, Redshift, Db2)"
-    )
-    lines.append(field("dataSizeLimit", _data_size_default, _data_size_comment))
-    todo_fields.append("dataSizeLimit")
-    lines.append("")
-
-    # ── Schema / catalog filtering ────────────────────────────────────────────
-    lines.append(
-        "# ── Schema / catalog filtering ───────────────────────────────────────"
-    )
-    lines.append(
-        "systemSchemaExclusions: []"
-        "      # TODO: exact schema names to exclude from catalog scans "
-        "(e.g. [information_schema, pg_catalog])"
-    )
-    lines.append(
-        "systemSchemaExclusionPrefixes: []"
-        "  # TODO: schema name prefixes to exclude (e.g. [pg_temp_, pg_toast_temp_])"
-    )
-    lines.append(
-        "systemCatalogExclusions: []"
-        "     # TODO: catalog names to exclude "
-        "(e.g. [admin, local, config] for MongoDB; [information_schema, mysql] for MySQL)"
-    )
-    todo_fields += [
-        "systemSchemaExclusions",
-        "systemSchemaExclusionPrefixes",
-        "systemCatalogExclusions",
-    ]
-
-    # getTablesUsesNullCatalog — omit if false (default); emit if true
-    get_tables_null = probes.get("getTablesUsesNullCatalog", False)
-    if isinstance(get_tables_null, str):
-        get_tables_null = get_tables_null.lower() == "true"
-    if get_tables_null:
-        lines.append(
-            field(
-                "getTablesUsesNullCatalog",
-                True,
-                "auto-detected — pass null as catalog arg to DatabaseMetaData.getTables(); "
-                "required for Db2",
-            )
-        )
-        detected_fields.append("getTablesUsesNullCatalog")
-    else:
-        detected_fields.append("getTablesUsesNullCatalog")  # default false — omitted
-    lines.append("")
-
-    # ── Style selectors ────────────────────────────────────────────────────────
-    lines.append(
-        "# ── Style selectors ──────────────────────────────────────────────────"
-    )
 
     # rowCountQueryStyle — emit as TODO if COUNT_STAR (default/unconfirmed), else auto-detected
     row_count_style = probes.get("rowCountQueryStyle", "COUNT_STAR")
@@ -1165,135 +1315,6 @@ def _build_yaml(
             detected_fields.append("upperBoundDatetimeDateTemplate")
         lines.append("")
 
-    # ── Connectivity ──────────────────────────────────────────────────────────
-    lines.append(
-        "# ── Connectivity ─────────────────────────────────────────────────────"
-    )
-    # networkCapable: true (default) — omitted; readOnly: false (default) — omitted
-    lines.append(
-        "connectionProperties: {}"
-        "        # TODO: key-value pairs injected into JDBC pool and Spark "
-        "(e.g. {ssl: 'true', charset: 'utf8'})"
-    )
-    lines.append(
-        "sessionInitStatements: []"
-        "       # TODO: SQL statements run once after each new connection "
-        '(e.g. ["SET SCHEMA mydb", "ALTER SESSION SET NLS_DATE_FORMAT=\'YYYY-MM-DD\'"])'
-    )
-    todo_fields += ["connectionProperties", "sessionInitStatements"]
-    lines.append("")
-
-    # ── Spark JdbcDialect ─────────────────────────────────────────────────────
-    lines.append(
-        "# ── Spark JdbcDialect ────────────────────────────────────────────────"
-    )
-    if dialect_class is not None:
-        lines.append(
-            field(
-                "dialectClass",
-                dialect_class,
-                "Auto-detected Spark JdbcDialect subclass",
-            )
-        )
-        detected_fields.append("dialectClass")
-    else:
-        lines.append(
-            field(
-                "dialectClass",
-                None,
-                "TODO: fully-qualified JdbcDialect Scala object class to register with Spark "
-                "(e.g. com.example.MyDialect$); null if no custom Spark dialect is needed",
-            )
-        )
-        todo_fields.append("dialectClass")
-    lines.append("")
-
-    # ── URL construction ──────────────────────────────────────────────────────
-    lines.append(
-        "# ── URL construction ─────────────────────────────────────────────────"
-    )
-    lines.append(
-        "# Known placeholders: {host}, {port}, {database}, {schema}, {username}, {password}"
-    )
-    if jdbc_url_template:
-        lines.append(
-            field(
-                "jdbcUrlTemplate",
-                jdbc_url_template,
-                "auto-detected from probe URL — verify all placeholders are correct",
-            )
-        )
-        detected_fields.append("jdbcUrlTemplate")
-    else:
-        lines.append(
-            field(
-                "jdbcUrlTemplate",
-                "",
-                "TODO: URL template with {host}, {port}, {database} substitution tokens. "
-                "Example: jdbc:mydb://{host}:{port}/{database}",
-            )
-        )
-        todo_fields.append("jdbcUrlTemplate")
-    lines.append(
-        "jdbcUrlStaticParams: []"
-        "      # TODO: query params always appended to every URL "
-        "(e.g. [tcpKeepAlive=true, sslmode=prefer])"
-    )
-    lines.append(
-        "jdbcUrlConditionalParams: []"
-        "  # TODO: params appended only when a form field is non-empty "
-        "(e.g. [{key: schema, param: 'currentSchema={schema}'}])"
-    )
-    lines.append(
-        "jdbcUrlAuthVariants: {}"
-        "      # optional: auth_type -> full URL template override; leave empty if not needed"
-    )
-    todo_fields += ["jdbcUrlStaticParams", "jdbcUrlConditionalParams"]
-    lines.append("")
-
-    # ── Connection spec ────────────────────────────────────────────────────────
-    # Only mark a field required if the probe URL actually contained that component.
-    # e.g. jdbc:sqlite:/path/to/db has no host or port → those fields are optional.
-    lines.append(
-        "# ── Connection spec (frontend form) ──────────────────────────────────"
-    )
-    lines.append("# TODO: define the connection form fields shown in the UI.")
-    lines.append(
-        "# Each field: name, label, fieldType (string/integer/boolean/password/enum/file),"
-    )
-    lines.append(
-        "#             required, defaultValue, hint, options (for enum), dependsOn, dependsOnValue"
-    )
-    lines.append("connectionSpec:")
-    lines.append("  supportsEnrichment: false  # custom drivers are source-only")
-    lines.append("  fields:")
-    if "host" in url_components:
-        lines.append("    - name: host")
-        lines.append('      label: "Host"')
-        lines.append("      fieldType: string")
-        lines.append("      required: true")
-    if "port" in url_components:
-        lines.append("    - name: port")
-        lines.append('      label: "Port"')
-        lines.append("      fieldType: integer")
-        lines.append("      required: true")
-        if default_port is not None:
-            lines.append(f'      defaultValue: "{default_port}"')
-    if "database" in url_components:
-        lines.append("    - name: database")
-        lines.append('      label: "Database"')
-        lines.append("      fieldType: string")
-        lines.append("      required: true")
-    lines.append("    - name: username")
-    lines.append('      label: "Username"')
-    lines.append("      fieldType: string")
-    lines.append("      required: true")
-    lines.append("    - name: password")
-    lines.append('      label: "Password"')
-    lines.append("      fieldType: password")
-    lines.append("      required: true")
-    todo_fields.append("connectionSpec")
-
     return "\n".join(lines) + "\n", detected_fields, todo_fields
 
 
@@ -1315,10 +1336,11 @@ def _collect_todo_fields(yaml_content: str) -> list[tuple[str, str, str]]:
     """
     Scan YAML lines for remaining TODO comments.
     Returns list of (field_name, current_value, todo_description).
+    Handles both top-level and indented (config:) fields.
     """
     todos = []
     for line in yaml_content.splitlines():
-        m = re.match(r"^(\w+):\s*(.+?)\s*#\s*TODO:\s*(.+)$", line)
+        m = re.match(r"^\s*(\w+):\s*(.+?)\s*#\s*TODO:\s*(.+)$", line)
         if m:
             todos.append((m.group(1), m.group(2).strip(), m.group(3).strip()))
     return todos
@@ -1367,13 +1389,15 @@ def _apply_llm_suggestions(yaml_content: str, suggestions: dict) -> tuple[str, i
     Substitute LLM-suggested values into YAML content, replacing TODO lines.
     suggestions: {field_name: {"value": ..., "rationale": "..."}}
     Returns (updated_content, count_applied).
+    Handles both top-level and indented (config:) fields.
     """
     applied = 0
     result_lines: list[str] = []
     for line in yaml_content.splitlines(keepends=True):
-        m = re.match(r"^(\w+):\s*(.+?)\s*#\s*TODO:.*$", line)
-        if m and m.group(1) in suggestions:
-            field_name = m.group(1)
+        m = re.match(r"^(\s*)(\w+):\s*(.+?)\s*#\s*TODO:.*$", line)
+        if m and m.group(2) in suggestions:
+            leading_ws = m.group(1)
+            field_name = m.group(2)
             suggestion = suggestions[field_name]
             value = suggestion.get("value")
             rationale = str(suggestion.get("rationale", "")).replace("\n", " ").strip()
@@ -1393,7 +1417,7 @@ def _apply_llm_suggestions(yaml_content: str, suggestions: dict) -> tuple[str, i
                     else:
                         yaml_val = sv
                 result_lines.append(
-                    f"{field_name}: {yaml_val}  # LLM-suggested: {rationale}\n"
+                    f"{leading_ws}{field_name}: {yaml_val}  # LLM-suggested: {rationale}\n"
                 )
                 applied += 1
                 continue
