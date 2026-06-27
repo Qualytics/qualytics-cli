@@ -2,21 +2,21 @@
 
 ## Group 1: Restructure `_build_yaml()` to emit three top-level sections
 - [x] Wrap all config fields under a `config:` key
-- [ ] Wrap all SQL capability fields under a `sql:` key with `functions`, `clauses`, `queries` sub-keys
-- [ ] Keep `dialectClass` at top level (already correct)
+- [x] Wrap all SQL capability fields under a `sql:` key with `functions`, `clauses`, `queries` sub-keys
+- [x] Keep `dialectClass` at top level (already correct)
 
 ## Group 2: Rename config fields to match dataplane schema
-- [ ] `rowLimitSyntax` → `rowLimitStyle` (valid values: `LIMIT`, `TOP`, `ROWNUM`)
-- [ ] `subqueryRequiresAlias` → `subqueryAlias`
-- [ ] `validationQuery` → `connectionTest`
-- [ ] `tableNameCasing` values: `upper` → `UPPER`, `lower` → `LOWER`, `asis` → `AS_IS`
+- [x] `rowLimitSyntax` → `rowLimitStyle` (valid values: `LIMIT`, `TOP`, `ROWNUM`)
+- [x] `subqueryRequiresAlias` → `subqueryAlias`
+- [x] `validationQuery` → `connectionTest`
+- [x] `tableNameCasing` values: `upper` → `UPPER`, `lower` → `LOWER`, `asis` → `AS_IS`
 
 ## Group 3: Restructure URL fields into `config.url` sub-object
-- [ ] `jdbcUrlTemplate` → `config.url.template`
-- [ ] `jdbcUrlStaticParams` → `config.url.staticParams`
-- [ ] `jdbcUrlConditionalParams` → `config.url.conditionalParams` (each item: `{key: ..., param: ...}`)
-- [ ] `jdbcUrlAuthVariants` → `config.url.authVariants` using full DriverAuthVariant structure (each value: object with optional keys `urlTemplate`, `staticParams`, `conditionalParams`, `connectionProperties`, `connectionPropertyMappings`)
-- [ ] Add support for `config.url.paramSeparator`
+- [x] `jdbcUrlTemplate` → `config.url.template`
+- [x] `jdbcUrlStaticParams` → `config.url.staticParams`
+- [x] `jdbcUrlConditionalParams` → `config.url.conditionalParams` (each item: `{key: ..., param: ...}`)
+- [x] `jdbcUrlAuthVariants` → `config.url.authVariants` using full DriverAuthVariant structure (each value: object with optional keys `urlTemplate`, `staticParams`, `conditionalParams`, `connectionProperties`, `connectionPropertyMappings`)
+- [x] Add support for `config.url.paramSeparator`
 
 ## Group 4: Restructure SQL capabilities into `sql` section
 - [ ] Map `approxCountDistinctFunction` → entry in `sql.functions` list (closed vocab: `APPROX_COUNT_DISTINCT`, `APPROX_DISTINCT`, `RANDOM`, `RAND`, `NEWID`, `DBMS_RANDOM_VALUE`)

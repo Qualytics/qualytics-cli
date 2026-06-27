@@ -1058,40 +1058,41 @@ def _build_yaml(
             "# Known placeholders: {host}, {port}, {database}, {schema}, {username}, {password}"
         )
     )
+    ind = _indent[0]  # shorthand — currently "  " inside config:
+    url_ind = ind + "  "  # one level deeper for url: sub-keys
+    lines.append(f"{ind}url:")
     if jdbc_url_template:
         lines.append(
-            field(
-                "jdbcUrlTemplate",
-                jdbc_url_template,
-                "auto-detected from probe URL — verify all placeholders are correct",
-            )
+            f"{url_ind}template: {_render(jdbc_url_template)}"
+            "  # auto-detected from probe URL — verify all placeholders are correct"
         )
-        detected_fields.append("jdbcUrlTemplate")
+        detected_fields.append("template")
     else:
         lines.append(
-            field(
-                "jdbcUrlTemplate",
-                "",
-                "TODO: URL template with {host}, {port}, {database} substitution tokens. "
-                "Example: jdbc:mydb://{host}:{port}/{database}",
-            )
+            f"{url_ind}template: {_render('')}"
+            "  # TODO: URL template with {host}, {port}, {database} substitution tokens. "
+            "Example: jdbc:mydb://{host}:{port}/{database}"
         )
-        todo_fields.append("jdbcUrlTemplate")
+        todo_fields.append("template")
     lines.append(
-        f"{_indent[0]}jdbcUrlStaticParams: []"
+        f"{url_ind}staticParams: []"
         "      # TODO: query params always appended to every URL "
         "(e.g. [tcpKeepAlive=true, sslmode=prefer])"
     )
     lines.append(
-        f"{_indent[0]}jdbcUrlConditionalParams: []"
+        f"{url_ind}conditionalParams: []"
         "  # TODO: params appended only when a form field is non-empty "
         "(e.g. [{key: schema, param: 'currentSchema={schema}'}])"
     )
     lines.append(
-        f"{_indent[0]}jdbcUrlAuthVariants: {{}}"
+        f"{url_ind}authVariants: {{}}"
         "      # optional: auth_type -> full URL template override; leave empty if not needed"
     )
-    todo_fields += ["jdbcUrlStaticParams", "jdbcUrlConditionalParams"]
+    lines.append(
+        f"{url_ind}paramSeparator: '&'"
+        "  # URL parameter separator character (default '&')"
+    )
+    todo_fields += ["staticParams", "conditionalParams"]
     lines.append("")
 
     # ── Connection spec ────────────────────────────────────────────────────────

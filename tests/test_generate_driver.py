@@ -78,13 +78,16 @@ class TestBuildYamlStructure:
         assert "defaultPort" in parsed["config"]
         assert parsed["config"]["defaultPort"] == 5432
 
-    def test_config_contains_url_fields(self):
+    def test_config_contains_url_sub_object(self):
         _, parsed, _, _ = self._parse()
         config = parsed["config"]
-        assert "jdbcUrlTemplate" in config
-        assert "jdbcUrlStaticParams" in config
-        assert "jdbcUrlConditionalParams" in config
-        assert "jdbcUrlAuthVariants" in config
+        assert "url" in config
+        url = config["url"]
+        assert "template" in url
+        assert "staticParams" in url
+        assert "conditionalParams" in url
+        assert "authVariants" in url
+        assert "paramSeparator" in url
 
     def test_config_contains_connection_spec(self):
         _, parsed, _, _ = self._parse()
@@ -181,7 +184,7 @@ class TestBuildYamlStructure:
             "defaultPort",
             "maxPartitionParallelism",
             "connectionProperties",
-            "jdbcUrlTemplate",
+            "url",
             "connectionSpec",
         ]:
             assert key not in parsed, f"{key} should be in config, not top-level"
