@@ -97,12 +97,6 @@ class TestBuildYamlStructure:
         assert isinstance(cs["fields"], list)
         assert any(f["name"] == "host" for f in cs["fields"])
 
-    def test_config_contains_performance_fields(self):
-        _, parsed, _, _ = self._parse()
-        config = parsed["config"]
-        assert "maxPartitionParallelism" in config
-        assert "dataSizeLimit" in config
-
     def test_config_contains_connectivity_fields(self):
         _, parsed, _, _ = self._parse()
         config = parsed["config"]
@@ -148,7 +142,8 @@ class TestBuildYamlStructure:
         functions = parsed["sql"]["functions"]
         assert queries["schemaOnly"] == "SQLSERVER_TOP0"
         assert queries["freshness"]["style"] == "DATEADD_DATEDIFF"
-        assert queries["schemaExistenceQueryStyle"] == "INFORMATION_SCHEMA"
+        # schemaExistenceQueryStyle is not part of v2 schema — should NOT appear
+        assert "schemaExistenceQueryStyle" not in queries
         assert "APPROX_COUNT_DISTINCT" in functions
 
     def test_sql_functions_with_detected_values(self):
@@ -234,7 +229,6 @@ class TestBuildYamlStructure:
         for key in [
             "displayName",
             "defaultPort",
-            "maxPartitionParallelism",
             "connectionProperties",
             "url",
             "connectionSpec",
@@ -290,14 +284,18 @@ class TestBuildYamlStructure:
         parsed = yaml.safe_load(content)
         assert isinstance(parsed, dict)
 
-    def test_int_max_data_size_for_redshift(self):
-        content, _, _ = _build_yaml(
-            "redshift",
-            _MINIMAL_PROBES,
-            "jdbc:redshift://host:5439/db",
-        )
-        parsed = yaml.safe_load(content)
-        assert parsed["config"]["dataSizeLimit"] == "INT_MAX"
+    def test_removed_fields_not_in_output(self):
+        """maxPartitionParallelism, dataSizeLimit, schemaExistenceQueryStyle must not appear."""
+        probes = {
+            **_MINIMAL_PROBES,
+            "schemaExistenceQueryStyle": "INFORMATION_SCHEMA",
+        }
+        _, parsed, _, _ = self._parse(probes=probes)
+        config = parsed["config"]
+        queries = parsed["sql"]["queries"]
+        assert "maxPartitionParallelism" not in config
+        assert "dataSizeLimit" not in config
+        assert "schemaExistenceQueryStyle" not in queries
 
 
 # ---------------------------------------------------------------------------
@@ -313,24 +311,24 @@ class TestCollectTodoFields:
         assert todos[0][0] == "dialectClass"
 
     def test_collects_indented_todos(self):
-        yaml_content = "  maxPartitionParallelism: 10  # TODO: max partitions\n"
+        yaml_content = "  connectionTest: SELECT 1  # TODO: verify connection query\n"
         todos = _collect_todo_fields(yaml_content)
         assert len(todos) == 1
-        assert todos[0][0] == "maxPartitionParallelism"
-        assert todos[0][1] == "10"
+        assert todos[0][0] == "connectionTest"
+        assert todos[0][1] == "SELECT 1"
 
     def test_collects_both_levels(self):
         yaml_content = (
             "dialectClass: null  # TODO: Spark dialect\n"
             "config:\n"
-            "  dataSizeLimit: LONG_MAX  # TODO: data size\n"
+            "  connectionTest: SELECT 1  # TODO: verify connection\n"
             "  displayName: TestDB  # auto-detected\n"
         )
         todos = _collect_todo_fields(yaml_content)
         assert len(todos) == 2
         names = [t[0] for t in todos]
         assert "dialectClass" in names
-        assert "dataSizeLimit" in names
+        assert "connectionTest" in names
 
     def test_ignores_non_todo_comments(self):
         yaml_content = "  displayName: TestDB  # auto-detected\n"
@@ -347,15 +345,15 @@ class TestApplyLlmSuggestions:
     def test_preserves_indentation_for_config_fields(self):
         yaml_content = (
             "config:\n"
-            "  maxPartitionParallelism: 10  # TODO: max partitions\n"
+            "  connectionTest: SELECT 1  # TODO: verify connection\n"
             "  displayName: TestDB  # auto-detected\n"
         )
         suggestions = {
-            "maxPartitionParallelism": {"value": 4, "rationale": "Low concurrency"},
+            "connectionTest": {"value": "SELECT 1 FROM DUAL", "rationale": "Oracle convention"},
         }
         updated, count = _apply_llm_suggestions(yaml_content, suggestions)
         assert count == 1
-        assert "  maxPartitionParallelism: 4  # LLM-suggested:" in updated
+        assert "  connectionTest: SELECT 1 FROM DUAL  # LLM-suggested:" in updated
 
     def test_handles_top_level_fields(self):
         yaml_content = "dialectClass: null  # TODO: Spark dialect\n"

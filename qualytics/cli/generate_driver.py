@@ -976,34 +976,6 @@ def _build_yaml(
 
     lines.append("")
 
-    # ── Performance ───────────────────────────────────────────────────────────
-    lines.append(
-        _sec("# ── Performance ──────────────────────────────────────────────────────")
-    )
-    lines.append(
-        field(
-            "maxPartitionParallelism",
-            10,
-            "TODO: max parallel partitions for scan operations; default 10. "
-            "Set 1 for DBs that struggle with concurrent connections (e.g. BigQuery, "
-            "single-threaded embedded drivers)",
-        )
-    )
-    todo_fields.append("maxPartitionParallelism")
-    _int_max_prefixes = ("redshift", "sqlserver", "db2")
-    _data_size_default = (
-        "INT_MAX" if any(p in prefix.lower() for p in _int_max_prefixes) else "LONG_MAX"
-    )
-    _data_size_comment = (
-        "INT_MAX: older 32-bit driver (SQL Server, Redshift, Db2)"
-        if _data_size_default == "INT_MAX"
-        else "TODO: max data the driver can handle. LONG_MAX (default, most DBs) or "
-        "INT_MAX for older 32-bit drivers (SQL Server, Redshift, Db2)"
-    )
-    lines.append(field("dataSizeLimit", _data_size_default, _data_size_comment))
-    todo_fields.append("dataSizeLimit")
-    lines.append("")
-
     # ── Schema / catalog filtering ────────────────────────────────────────────
     lines.append(
         _sec("# ── Schema / catalog filtering ───────────────────────────────────────")
@@ -1304,23 +1276,7 @@ def _build_yaml(
         )
         todo_fields.append("rowCount")
     # countStarNullSizeBytesExpr — almost always null (default); omit; user adds manually for Dremio
-
-    # schemaExistenceQueryStyle — omit if NONE (default)
-    schema_style = probes.get("schemaExistenceQueryStyle", "NONE")
-    if schema_style != "NONE":
-        lines.append(
-            field(
-                "schemaExistenceQueryStyle",
-                schema_style,
-                "auto-detected — schema enumeration style. "
-                "Valid: NONE (default), INFORMATION_SCHEMA, SHOW_SCHEMAS_LIKE, "
-                "SHOW_SCHEMAS_ITERATE (Hive/Trino), SYSCAT (DB2), "
-                "ALTER_SESSION (Oracle), SYS_SCHEMAS (SQL Server)",
-            )
-        )
-        detected_fields.append("schemaExistenceQueryStyle")
-    else:
-        detected_fields.append("schemaExistenceQueryStyle")  # default — omitted
+    # schemaExistenceQueryStyle — not part of v2 schema; probed but not emitted
 
     # ── freshness — date arithmetic style + templates ───────────────────────
     date_arith = probes.get("dateArithmeticStyle", "STANDARD")
@@ -1835,7 +1791,6 @@ def generate_driver(
         ),
         ("approxCountDistinctFunction", probes.get("approxCountDistinctFunction")),
         ("rowCountQueryStyle", probes.get("rowCountQueryStyle")),
-        ("schemaExistenceQueryStyle", probes.get("schemaExistenceQueryStyle")),
         ("schemaOnlyQueryStyle", probes.get("schemaOnlyQueryStyle")),
         ("dateArithmeticStyle", probes.get("dateArithmeticStyle")),
         ("rowLimitStyle", probes.get("rowLimitSyntax")),
@@ -1876,8 +1831,6 @@ def generate_driver(
     todo_count = sum(1 for _, v in probe_display if v is None or v == "null")
     # Always-todo fields (not auto-detectable; need manual review or LLM assistance)
     always_todo = [
-        "maxPartitionParallelism",
-        "dataSizeLimit",
         "systemSchemaExclusions",
         "systemSchemaExclusionPrefixes",
         "systemCatalogExclusions",
