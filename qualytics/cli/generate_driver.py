@@ -589,6 +589,16 @@ _SPARK_BUILTIN_DIALECTS: dict[str, str] = {
     "teradata": "org.apache.spark.sql.jdbc.TeradataDialect$",
 }
 
+# Mapping from Java probe tableSampleTemplate strings to v2 closed-vocab clause tokens
+_TABLESAMPLE_TOKEN_MAP: dict[str, str] = {
+    "TABLESAMPLE SYSTEM ({pct})": "TABLESAMPLE_SYSTEM",
+    "TABLESAMPLE BERNOULLI ({pct})": "TABLESAMPLE_BERNOULLI",
+    "TABLESAMPLE SYSTEM ({pct} PERCENT)": "TABLESAMPLE_SYSTEM_PERCENT",
+    "TABLESAMPLE ({pct})": "TABLESAMPLE_PERCENT",
+    "SAMPLE ({pct})": "SAMPLE_PERCENT",
+    "SAMPLE ({pct} PERCENT)": "SAMPLE_PERCENT",
+}
+
 
 def _detect_dialect_class(prefix: str, jar_path: str) -> str | None:
     """
@@ -1190,28 +1200,35 @@ def _build_yaml(
     else:
         lines.append(f"{ind_sql}functions: []")
 
-    # ── sql.clauses — SQL clause templates ──────────────────────────────────
+    # ── sql.clauses — capability tokens (list) ──────────────────────────────
     lines.append(
         _sec("# ── SQL clauses ──────────────────────────────────────────────────")
     )
-    lines.append(_sec("clauses:"))
-    _indent[0] = "    "
+    lines.append(
+        _sec(
+            "# Closed vocab: TABLESAMPLE_SYSTEM, TABLESAMPLE_SYSTEM_PERCENT, "
+            "TABLESAMPLE_BERNOULLI, TABLESAMPLE_PERCENT, TABLESAMPLE_ROWS, "
+            "SAMPLE_PERCENT, SAMPLE_ROWS, LIMIT, OFFSET_FETCH, ROWNUM"
+        )
+    )
 
-    # tableSampleTemplate — omit if null (not supported = default "no template")
+    clause_entries: list[tuple[str, str]] = []  # (token, comment)
+
+    # tableSampleTemplate → entry in sql.clauses list
     sample_tmpl = probes.get("tableSampleTemplate")
     if sample_tmpl and sample_tmpl != "null":
-        lines.append(
-            field(
-                "tableSampleTemplate",
-                sample_tmpl,
-                "auto-detected — TABLESAMPLE syntax; {pct} = percent, {rows} = row count",
-            )
-        )
+        token = _TABLESAMPLE_TOKEN_MAP.get(sample_tmpl, sample_tmpl)
+        clause_entries.append((token, "auto-detected — table sampling strategy"))
         detected_fields.append("tableSampleTemplate")
     else:
         detected_fields.append("tableSampleTemplate")  # null/not supported — omitted
 
-    _indent[0] = "  "
+    if clause_entries:
+        lines.append(f"{ind_sql}clauses:")
+        for token, comment in clause_entries:
+            lines.append(f"{ind_sql}  - {token}  # {comment}")
+    else:
+        lines.append(f"{ind_sql}clauses: []")
 
     # ── sql.queries — query construction strategies ─────────────────────────
     lines.append(

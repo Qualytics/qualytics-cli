@@ -123,7 +123,8 @@ class TestBuildYamlStructure:
         assert "queries" in sql
         assert "functions" in sql
         assert isinstance(sql["functions"], list)  # empty list when all defaults
-        # clauses may be None when all values are defaults
+        assert "clauses" in sql
+        assert isinstance(sql["clauses"], list)  # empty list when all defaults
 
     def test_sql_capabilities_under_sql_queries(self):
         """SQL query-style fields should be under sql.queries, not top-level or config."""
@@ -160,10 +161,25 @@ class TestBuildYamlStructure:
             "tableSampleTemplate": "TABLESAMPLE SYSTEM ({pct})",
         }
         _, parsed, _, _ = self._parse(probes=probes)
-        assert (
-            parsed["sql"]["clauses"]["tableSampleTemplate"]
-            == "TABLESAMPLE SYSTEM ({pct})"
-        )
+        assert isinstance(parsed["sql"]["clauses"], list)
+        assert "TABLESAMPLE_SYSTEM" in parsed["sql"]["clauses"]
+
+    def test_sql_clauses_maps_sample_percent(self):
+        probes = {**_MINIMAL_PROBES, "tableSampleTemplate": "SAMPLE ({pct})"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "SAMPLE_PERCENT" in parsed["sql"]["clauses"]
+
+    def test_sql_clauses_maps_bernoulli(self):
+        probes = {
+            **_MINIMAL_PROBES,
+            "tableSampleTemplate": "TABLESAMPLE BERNOULLI ({pct})",
+        }
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert "TABLESAMPLE_BERNOULLI" in parsed["sql"]["clauses"]
+
+    def test_sql_clauses_empty_when_no_sample(self):
+        _, parsed, _, _ = self._parse()
+        assert parsed["sql"]["clauses"] == []
 
     def test_date_templates_under_sql_queries(self):
         probes = {
