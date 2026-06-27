@@ -326,6 +326,81 @@ class TestBuildYamlStructure:
         assert "dataSizeLimit" not in config
         assert "schemaExistenceQueryStyle" not in queries
 
+    def test_no_remaining_flat_fields(self):
+        """Exhaustive check: every probe field routes to config or sql, never top level."""
+        # Use non-default values for every probe field to force all emission paths
+        probes = {
+            "className": "com.example.FullDriver",
+            "dbProductName": "FullDB",
+            "dbProductVersion": "9.0.1",
+            "identifierQuoteChar": "`",
+            "transactionIsolation": "SERIALIZABLE",
+            "tableNameCasing": "UPPER",
+            "connectionTest": "SELECT 1 FROM DUAL",
+            "getTablesUsesNullCatalog": True,
+            "subqueryAlias": False,
+            "approxCountDistinctFunction": "APPROX_COUNT_DISTINCT",
+            "dateArithmeticStyle": "DATEADD_DATEDIFF",
+            "rowLimitStyle": "TOP",
+            "tableSampleTemplate": "TABLESAMPLE BERNOULLI ({pct})",
+            "intervalCalcDatetimeTimestampTemplate": "DATEADD(second, ...)",
+            "intervalCalcDatetimeDateTemplate": "DATEADD(day, ...)",
+            "upperBoundDatetimeTimestampTemplate": "DATEADD(second, ...)",
+            "upperBoundDatetimeDateTemplate": "DATEADD(day, ...)",
+            "viewSampleFallback": "RANDOM",
+            "timestampLiteralStyle": "CAST_DATETIME2",
+            "dateLiteralStyle": "TO_DATE",
+            "schemaOnly": "SQLSERVER_TOP0",
+            "rowCount": "ALL_TABLES",
+        }
+        _, parsed, _, _ = self._parse(
+            probes=probes, dialect_class="com.example.Dialect$"
+        )
+        # Only these keys are allowed at the top level
+        allowed_top_keys = {"prefix", "className", "dialectClass", "config", "sql"}
+        extra = set(parsed.keys()) - allowed_top_keys
+        assert not extra, f"Unexpected top-level keys (should be in config or sql): {extra}"
+
+        # v1-style flat field names must not appear anywhere in the parsed output
+        v1_flat_names = {
+            "jdbcUrlTemplate", "jdbcUrlStaticParams", "jdbcUrlConditionalParams",
+            "jdbcUrlAuthVariants", "rowLimitSyntax", "subqueryRequiresAlias",
+            "validationQuery", "rowCountQueryStyle", "schemaOnlyQueryStyle",
+            "schemaExistenceQueryStyle", "maxPartitionParallelism", "dataSizeLimit",
+            "approxCountDistinctFunction", "viewSampleFallback",
+            "tableSampleTemplate", "dateArithmeticStyle",
+            "intervalCalcDatetimeTimestampTemplate", "intervalCalcDatetimeDateTemplate",
+            "upperBoundDatetimeTimestampTemplate", "upperBoundDatetimeDateTemplate",
+        }
+        for name in v1_flat_names:
+            assert name not in parsed, f"v1 flat field '{name}' leaked to top level"
+            assert name not in parsed.get("config", {}), (
+                f"v1 flat field '{name}' in config (should be restructured)"
+            )
+
+        # Verify all config fields are under config:
+        config = parsed["config"]
+        assert config["identifierQuoteChar"] == "`"
+        assert config["transactionIsolation"] == "SERIALIZABLE"
+        assert config["tableNameCasing"] == "UPPER"
+        assert config["connectionTest"] == "SELECT 1 FROM DUAL"
+        assert config["getTablesUsesNullCatalog"] is True
+        assert config["subqueryAlias"] is False
+        assert config["rowLimitStyle"] == "TOP"
+        assert config["timestampLiteralStyle"] == "CAST_DATETIME2"
+        assert config["dateLiteralStyle"] == "TO_DATE"
+
+        # Verify all SQL capabilities are under sql:
+        sql = parsed["sql"]
+        assert "APPROX_COUNT_DISTINCT" in sql["functions"]
+        assert "RANDOM" in sql["functions"]
+        assert "TABLESAMPLE_BERNOULLI" in sql["clauses"]
+        assert sql["queries"]["schemaOnly"] == "SQLSERVER_TOP0"
+        assert sql["queries"]["rowCount"] == "ALL_TABLES"
+        freshness = sql["queries"]["freshness"]
+        assert freshness["style"] == "DATEADD_DATEDIFF"
+        assert "intervalCalcDatetimeTimestampTemplate" in freshness
+
 
 # ---------------------------------------------------------------------------
 # _collect_todo_fields — indentation handling

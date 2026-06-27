@@ -48,6 +48,6 @@
 - [x] Regenerate or manually update `dist/META-INF/jdbc-drivers/redshift2.yaml` to v2 format
 
 ## Group 9: End-to-end validation
-- [ ] Review entire `_build_yaml()` flow for any remaining flat fields
+- [x] Review entire `_build_yaml()` flow for any remaining flat fields — all 22 probe fields correctly routed to `config:` or `sql:` sections; no v1-style flat fields remain at top level; added comprehensive `test_no_remaining_flat_fields` test
 - [ ] Ensure all enum values use exact case-sensitive dataplane values
 - [ ] Verify `connectionSpec` nesting is correct under `config`
