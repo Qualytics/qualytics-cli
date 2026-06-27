@@ -194,17 +194,17 @@ class TestBuildYamlStructure:
     def test_non_default_table_name_casing_in_config(self):
         probes = {**_MINIMAL_PROBES, "tableNameCasing": "lower"}
         _, parsed, _, _ = self._parse(probes=probes)
-        assert parsed["config"]["tableNameCasing"] == "lower"
+        assert parsed["config"]["tableNameCasing"] == "LOWER"
 
     def test_non_default_row_limit_in_config(self):
         probes = {**_MINIMAL_PROBES, "rowLimitSyntax": "TOP"}
         _, parsed, _, _ = self._parse(probes=probes)
-        assert parsed["config"]["rowLimitSyntax"] == "TOP"
+        assert parsed["config"]["rowLimitStyle"] == "TOP"
 
     def test_validation_query_in_config(self):
         probes = {**_MINIMAL_PROBES, "validationQuery": "SELECT 1 FROM DUAL"}
         _, parsed, _, _ = self._parse(probes=probes)
-        assert parsed["config"]["validationQuery"] == "SELECT 1 FROM DUAL"
+        assert parsed["config"]["connectionTest"] == "SELECT 1 FROM DUAL"
 
     def test_yaml_parses_as_valid_yaml(self):
         content, _, _, _ = self._parse()

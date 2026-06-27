@@ -844,62 +844,64 @@ def _build_yaml(
     elif quote_char:
         detected_fields.append("identifierQuoteChar")  # default — omitted
 
-    # tableNameCasing — omit if asis (default)
-    casing = probes.get("tableNameCasing", "asis")
-    if casing != "asis":
+    # tableNameCasing — omit if AS_IS (default)
+    casing_raw = probes.get("tableNameCasing", "asis")
+    casing_map = {"upper": "UPPER", "lower": "LOWER", "asis": "AS_IS"}
+    casing = casing_map.get(casing_raw, casing_raw.upper())
+    if casing != "AS_IS":
         lines.append(
             field(
                 "tableNameCasing",
                 casing,
-                "auto-detected — valid: upper (DB2/Oracle), lower (PostgreSQL), "
-                "asis (default, most others)",
+                "auto-detected — valid: UPPER (DB2/Oracle), LOWER (PostgreSQL), "
+                "AS_IS (default, most others)",
             )
         )
         detected_fields.append("tableNameCasing")
     else:
         detected_fields.append("tableNameCasing")  # default — omitted
 
-    # rowLimitSyntax — omit if LIMIT (default); TODO if probe couldn't determine
+    # rowLimitStyle — omit if LIMIT (default); TODO if probe couldn't determine
     row_limit = probes.get("rowLimitSyntax")
     if row_limit and row_limit != "LIMIT":
         lines.append(
             field(
-                "rowLimitSyntax",
+                "rowLimitStyle",
                 row_limit,
                 "auto-detected — valid: LIMIT (default), TOP (SQL Server), "
-                "ROWNUM (Oracle), FETCH_FIRST (DB2/Informix)",
+                "ROWNUM (Oracle)",
             )
         )
-        detected_fields.append("rowLimitSyntax")
+        detected_fields.append("rowLimitStyle")
     elif row_limit == "LIMIT":
-        detected_fields.append("rowLimitSyntax")  # default — omitted
+        detected_fields.append("rowLimitStyle")  # default — omitted
     else:
         lines.append(
             field(
-                "rowLimitSyntax",
+                "rowLimitStyle",
                 "LIMIT",
                 "TODO: valid: LIMIT (default, MySQL/PG/SQLite), TOP (SQL Server), "
-                "ROWNUM (Oracle), FETCH_FIRST (DB2/Informix/Spark)",
+                "ROWNUM (Oracle)",
             )
         )
-        todo_fields.append("rowLimitSyntax")
+        todo_fields.append("rowLimitStyle")
 
-    # subqueryRequiresAlias — omit if true (default); emit false if probe confirmed no alias needed
+    # subqueryAlias — omit if true (default); emit false if probe confirmed no alias needed
     sub_alias = probes.get("subqueryRequiresAlias", True)
     if isinstance(sub_alias, str):
         sub_alias = sub_alias.lower() != "false"
     if not sub_alias:
         lines.append(
             field(
-                "subqueryRequiresAlias",
+                "subqueryAlias",
                 False,
                 "auto-detected — false: subqueries do NOT need an AS alias "
                 "(rare; historically Oracle)",
             )
         )
-        detected_fields.append("subqueryRequiresAlias")
+        detected_fields.append("subqueryAlias")
     else:
-        detected_fields.append("subqueryRequiresAlias")  # default true — omitted
+        detected_fields.append("subqueryAlias")  # default true — omitted
 
     # timestampLiteralStyle — omit if PLAIN (default)
     ts_style = probes.get("timestampLiteralStyle", "PLAIN")
@@ -933,29 +935,29 @@ def _build_yaml(
         detected_fields.append("dateLiteralStyle")  # default — omitted
     # dateLiteralTemplate: escape hatch — omit unless enum styles are insufficient
 
-    # validationQuery — omit if SELECT 1 (default)
+    # connectionTest — omit if SELECT 1 (default)
     val_q = probes.get("validationQuery")
     if val_q and val_q != "SELECT 1":
         lines.append(
             field(
-                "validationQuery",
+                "connectionTest",
                 val_q,
                 "auto-detected — minimal SQL to test a pooled connection is alive",
             )
         )
-        detected_fields.append("validationQuery")
+        detected_fields.append("connectionTest")
     elif val_q:
-        detected_fields.append("validationQuery")  # default — omitted
+        detected_fields.append("connectionTest")  # default — omitted
     else:
         lines.append(
             field(
-                "validationQuery",
+                "connectionTest",
                 "SELECT 1",
                 "TODO: SQL to verify a live connection; try SELECT 1 FROM DUAL (Oracle), "
                 "VALUES 1 (DB2/H2)",
             )
         )
-        todo_fields.append("validationQuery")
+        todo_fields.append("connectionTest")
 
     lines.append("")
 
@@ -1761,9 +1763,9 @@ def generate_driver(
         ("identifierQuoteChar", probes.get("identifierQuoteChar")),
         ("transactionIsolation", probes.get("transactionIsolation")),
         ("tableNameCasing", probes.get("tableNameCasing")),
-        ("validationQuery", probes.get("validationQuery")),
+        ("connectionTest", probes.get("validationQuery")),
         (
-            "subqueryRequiresAlias",
+            "subqueryAlias",
             str(probes.get("subqueryRequiresAlias", True)).lower(),
         ),
         (
@@ -1775,7 +1777,7 @@ def generate_driver(
         ("schemaExistenceQueryStyle", probes.get("schemaExistenceQueryStyle")),
         ("schemaOnlyQueryStyle", probes.get("schemaOnlyQueryStyle")),
         ("dateArithmeticStyle", probes.get("dateArithmeticStyle")),
-        ("rowLimitSyntax", probes.get("rowLimitSyntax")),
+        ("rowLimitStyle", probes.get("rowLimitSyntax")),
         ("tableSampleTemplate", probes.get("tableSampleTemplate")),
         ("viewSampleFallback", probes.get("viewSampleFallback")),
         ("timestampLiteralStyle", probes.get("timestampLiteralStyle")),
