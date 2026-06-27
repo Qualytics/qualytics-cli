@@ -103,6 +103,41 @@ class TestBuildYamlStructure:
         assert "connectionProperties" in config
         assert "sessionInitStatements" in config
 
+    def test_config_contains_network_capable(self):
+        _, parsed, _, _ = self._parse()
+        assert parsed["config"]["networkCapable"] is True
+
+    def test_config_contains_read_only(self):
+        _, parsed, _, _ = self._parse()
+        assert parsed["config"]["readOnly"] is False
+
+    def test_config_contains_supports_long_limit(self):
+        _, parsed, _, _ = self._parse()
+        assert parsed["config"]["supportsLongLimit"] is False
+
+    def test_config_contains_default_insert_batch_size(self):
+        _, parsed, _, _ = self._parse()
+        assert "defaultInsertBatchSize" in parsed["config"]
+        assert parsed["config"]["defaultInsertBatchSize"] is None
+
+    def test_config_contains_connection_property_mappings(self):
+        _, parsed, _, _ = self._parse()
+        assert "connectionPropertyMappings" in parsed["config"]
+        assert parsed["config"]["connectionPropertyMappings"] == {}
+
+    def test_connection_spec_fields_have_aliases(self):
+        """Each connection spec field should have an aliases key."""
+        _, parsed, _, _ = self._parse()
+        fields = parsed["config"]["connectionSpec"]["fields"]
+        for f in fields:
+            assert "aliases" in f, f"field '{f['name']}' missing aliases key"
+            assert isinstance(f["aliases"], list)
+
+    def test_connection_spec_comment_mentions_depends_on_values(self):
+        """The connectionSpec comment should reference dependsOnValues (plural)."""
+        content, _, _, _ = self._parse()
+        assert "dependsOnValues" in content
+
     def test_config_contains_schema_filtering_fields(self):
         _, parsed, _, _ = self._parse()
         config = parsed["config"]

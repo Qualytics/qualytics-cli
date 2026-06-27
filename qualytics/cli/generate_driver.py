@@ -1022,11 +1022,44 @@ def _build_yaml(
     lines.append(
         _sec("# ── Connectivity ─────────────────────────────────────────────────────")
     )
-    # networkCapable: true (default) — omitted; readOnly: false (default) — omitted
+    lines.append(
+        field(
+            "networkCapable",
+            True,
+            "default true — set false for embedded/file-based drivers "
+            "(e.g. SQLite, H2 embedded) that need no network host",
+        )
+    )
+    lines.append(
+        field(
+            "readOnly",
+            False,
+            "default false — set true if this driver cannot write "
+            "(e.g. read-only replicas, analytical engines)",
+        )
+    )
+    lines.append(
+        field(
+            "supportsLongLimit",
+            False,
+            "default false — set true if LIMIT/TOP accepts values > Integer.MAX_VALUE "
+            "(2^31-1); needed for databases with very large tables",
+        )
+    )
+    lines.append(
+        f"{_indent[0]}defaultInsertBatchSize: null"
+        "         # optional: override the default JDBC batch size for INSERT statements "
+        "(e.g. 1000); null uses the platform default"
+    )
     lines.append(
         f"{_indent[0]}connectionProperties: {{}}"
         "        # TODO: key-value pairs injected into JDBC pool and Spark "
         "(e.g. {ssl: 'true', charset: 'utf8'})"
+    )
+    lines.append(
+        f"{_indent[0]}connectionPropertyMappings: {{}}"
+        "  # optional: map connection form field names to JDBC property keys "
+        "(e.g. {username: user, database: databaseName})"
     )
     lines.append(
         f"{_indent[0]}sessionInitStatements: []"
@@ -1094,7 +1127,13 @@ def _build_yaml(
         f"{ind}# Each field: name, label, fieldType (string/integer/boolean/password/enum/file),"
     )
     lines.append(
-        f"{ind}#             required, defaultValue, hint, options (for enum), dependsOn, dependsOnValue"
+        f"{ind}#             required, defaultValue, hint, options (for enum),"
+    )
+    lines.append(
+        f"{ind}#             aliases (list of alternate field names),"
+    )
+    lines.append(
+        f"{ind}#             dependsOn, dependsOnValues (list of values that activate this field)"
     )
     lines.append(f"{ind}connectionSpec:")
     lines.append(f"{ind}  supportsEnrichment: false  # custom drivers are source-only")
@@ -1104,6 +1143,7 @@ def _build_yaml(
         lines.append(f'{ind}      label: "Host"')
         lines.append(f"{ind}      fieldType: string")
         lines.append(f"{ind}      required: true")
+        lines.append(f"{ind}      aliases: []  # optional alternate field names")
     if "port" in url_components:
         lines.append(f"{ind}    - name: port")
         lines.append(f'{ind}      label: "Port"')
@@ -1111,19 +1151,23 @@ def _build_yaml(
         lines.append(f"{ind}      required: true")
         if default_port is not None:
             lines.append(f'{ind}      defaultValue: "{default_port}"')
+        lines.append(f"{ind}      aliases: []  # optional alternate field names")
     if "database" in url_components:
         lines.append(f"{ind}    - name: database")
         lines.append(f'{ind}      label: "Database"')
         lines.append(f"{ind}      fieldType: string")
         lines.append(f"{ind}      required: true")
+        lines.append(f"{ind}      aliases: []  # optional alternate field names")
     lines.append(f"{ind}    - name: username")
     lines.append(f'{ind}      label: "Username"')
     lines.append(f"{ind}      fieldType: string")
     lines.append(f"{ind}      required: true")
+    lines.append(f"{ind}      aliases: []  # optional alternate field names")
     lines.append(f"{ind}    - name: password")
     lines.append(f'{ind}      label: "Password"')
     lines.append(f"{ind}      fieldType: password")
     lines.append(f"{ind}      required: true")
+    lines.append(f"{ind}      aliases: []  # optional alternate field names")
     todo_fields.append("connectionSpec")
 
     # ══════════════════════════════════════════════════════════════════════════

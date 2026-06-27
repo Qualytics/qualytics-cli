@@ -26,17 +26,17 @@
 - [x] Map `rowCountQueryStyle`, `schemaOnlyQueryStyle`, date arithmetic templates → `sql.queries` using QuerySlot keys: `nullCheck`, `schemaOnly`, `rowCount`, `volume`, `freshness`, `partitionColumn`, `lineage`
 
 ## Group 5: Remove/remap fields not in dataplane schema
-- [ ] Remove or remap: `maxPartitionParallelism`, `dataSizeLimit`, `schemaExistenceQueryStyle`
-- [ ] Verify no other flat fields will be rejected by strict parser
+- [x] Remove or remap: `maxPartitionParallelism`, `dataSizeLimit`, `schemaExistenceQueryStyle`
+- [x] Verify no other flat fields will be rejected by strict parser
 
 ## Group 6: Add missing optional fields with smart defaults
-- [ ] `config.networkCapable` (default: `true`)
-- [ ] `config.readOnly` (default: `false`)
-- [ ] `config.defaultInsertBatchSize` (optional)
-- [ ] `config.supportsLongLimit` (default: `false`)
-- [ ] `config.connectionPropertyMappings` (optional)
-- [ ] `config.connectionSpec.fields[].aliases` (optional)
-- [ ] `config.connectionSpec.fields[].dependsOnValues` (plural, optional)
+- [x] `config.networkCapable` (default: `true`)
+- [x] `config.readOnly` (default: `false`)
+- [x] `config.defaultInsertBatchSize` (optional)
+- [x] `config.supportsLongLimit` (default: `false`)
+- [x] `config.connectionPropertyMappings` (optional)
+- [x] `config.connectionSpec.fields[].aliases` (optional)
+- [x] `config.connectionSpec.fields[].dependsOnValues` (plural, optional)
 
 ## Group 7: Update the Java probe and LLM resolver
 - [ ] Update Java probe output parsing to feed into new v2 structure
