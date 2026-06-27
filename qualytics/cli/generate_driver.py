@@ -1142,10 +1142,82 @@ def _build_yaml(
     _indent[0] = ""
     lines.append("")
 
-    # ── SQL capabilities (flat — will be wrapped under sql: in a future task) ─
+    # ══════════════════════════════════════════════════════════════════════════
+    # sql: section — SQL capabilities organized by type
+    # ══════════════════════════════════════════════════════════════════════════
+    lines.append("sql:")
+    _indent[0] = "  "
+
+    # ── sql.functions — SQL function identifiers ────────────────────────────
     lines.append(
-        "# ── SQL capabilities ─────────────────────────────────────────────────"
+        _sec("# ── SQL functions ────────────────────────────────────────────────")
     )
+    lines.append(_sec("functions:"))
+    _indent[0] = "    "
+
+    # approxCountDistinctFunction — omit if null (not supported, falls back to COUNT DISTINCT)
+    approx = probes.get("approxCountDistinctFunction")
+    if approx and approx != "null":
+        lines.append(
+            field(
+                "approxCountDistinctFunction",
+                approx,
+                "auto-detected — SQL function name for approximate COUNT DISTINCT",
+            )
+        )
+        detected_fields.append("approxCountDistinctFunction")
+    else:
+        detected_fields.append("approxCountDistinctFunction")  # null — omitted
+
+    # viewSampleFallback — omit if RAND (default)
+    vsf = probes.get("viewSampleFallback", "RAND")
+    if vsf != "RAND":
+        lines.append(
+            field(
+                "viewSampleFallback",
+                vsf,
+                "auto-detected — random fn for view sampling. "
+                "Valid: RAND (default), RANDOM (PostgreSQL/Redshift), "
+                "NEWID (SQL Server), DBMS_RANDOM (Oracle), SAMPLE_N (Teradata), "
+                "NONE (BigQuery)",
+            )
+        )
+        detected_fields.append("viewSampleFallback")
+    else:
+        detected_fields.append("viewSampleFallback")  # default — omitted
+    # viewSampleFallbackSql: escape hatch — omit unless enum styles are insufficient
+
+    _indent[0] = "  "
+
+    # ── sql.clauses — SQL clause templates ──────────────────────────────────
+    lines.append(
+        _sec("# ── SQL clauses ──────────────────────────────────────────────────")
+    )
+    lines.append(_sec("clauses:"))
+    _indent[0] = "    "
+
+    # tableSampleTemplate — omit if null (not supported = default "no template")
+    sample_tmpl = probes.get("tableSampleTemplate")
+    if sample_tmpl and sample_tmpl != "null":
+        lines.append(
+            field(
+                "tableSampleTemplate",
+                sample_tmpl,
+                "auto-detected — TABLESAMPLE syntax; {pct} = percent, {rows} = row count",
+            )
+        )
+        detected_fields.append("tableSampleTemplate")
+    else:
+        detected_fields.append("tableSampleTemplate")  # null/not supported — omitted
+
+    _indent[0] = "  "
+
+    # ── sql.queries — query construction strategies ─────────────────────────
+    lines.append(
+        _sec("# ── SQL queries ──────────────────────────────────────────────────")
+    )
+    lines.append(_sec("queries:"))
+    _indent[0] = "    "
 
     # schemaOnlyQueryStyle — if CTE (probe fallback, unconfirmed) → TODO; else emit as detected
     schema_only = probes.get("schemaOnlyQueryStyle", "CTE")
@@ -1173,52 +1245,6 @@ def _build_yaml(
             )
         )
         todo_fields.append("schemaOnlyQueryStyle")
-
-    # tableSampleTemplate — omit if null (not supported = default "no template")
-    sample_tmpl = probes.get("tableSampleTemplate")
-    if sample_tmpl and sample_tmpl != "null":
-        lines.append(
-            field(
-                "tableSampleTemplate",
-                sample_tmpl,
-                "auto-detected — TABLESAMPLE syntax; {pct} = percent, {rows} = row count",
-            )
-        )
-        detected_fields.append("tableSampleTemplate")
-    else:
-        detected_fields.append("tableSampleTemplate")  # null/not supported — omitted
-
-    # viewSampleFallback — omit if RAND (default)
-    vsf = probes.get("viewSampleFallback", "RAND")
-    if vsf != "RAND":
-        lines.append(
-            field(
-                "viewSampleFallback",
-                vsf,
-                "auto-detected — random fn for view sampling. "
-                "Valid: RAND (default), RANDOM (PostgreSQL/Redshift), "
-                "NEWID (SQL Server), DBMS_RANDOM (Oracle), SAMPLE_N (Teradata), "
-                "NONE (BigQuery)",
-            )
-        )
-        detected_fields.append("viewSampleFallback")
-    else:
-        detected_fields.append("viewSampleFallback")  # default — omitted
-    # viewSampleFallbackSql: escape hatch — omit unless enum styles are insufficient
-
-    # approxCountDistinctFunction — omit if null (not supported, falls back to COUNT DISTINCT)
-    approx = probes.get("approxCountDistinctFunction")
-    if approx and approx != "null":
-        lines.append(
-            field(
-                "approxCountDistinctFunction",
-                approx,
-                "auto-detected — SQL function name for approximate COUNT DISTINCT",
-            )
-        )
-        detected_fields.append("approxCountDistinctFunction")
-    else:
-        detected_fields.append("approxCountDistinctFunction")  # null — omitted
 
     # rowCountQueryStyle — emit as TODO if COUNT_STAR (default/unconfirmed), else auto-detected
     row_count_style = probes.get("rowCountQueryStyle", "COUNT_STAR")
@@ -1276,7 +1302,6 @@ def _build_yaml(
         detected_fields.append("dateArithmeticStyle")
     else:
         detected_fields.append("dateArithmeticStyle")  # default — omitted
-    lines.append("")
 
     # ── Date arithmetic templates (only when non-null) ────────────────────────
     int_ts = probes.get("intervalCalcDatetimeTimestampTemplate")
@@ -1287,11 +1312,15 @@ def _build_yaml(
     has_templates = any(v and v != "null" for v in [int_ts, int_dt, up_ts, up_dt])
     if has_templates:
         lines.append(
-            "# ── Date arithmetic templates ─────────────────────────────────────────"
+            _sec(
+                "# ── Date arithmetic templates ─────────────────────────────────"
+            )
         )
         lines.append(
-            "# Placeholders: {col} = column name, MIN_{col} = min value, "
-            "MAX_{col} = max value, {interval} = midpoint expression"
+            _sec(
+                "# Placeholders: {col} = column name, MIN_{col} = min value, "
+                "MAX_{col} = max value, {interval} = midpoint expression"
+            )
         )
         if int_ts and int_ts != "null":
             lines.append(
@@ -1313,7 +1342,12 @@ def _build_yaml(
                 field("upperBoundDatetimeDateTemplate", up_dt, "auto-detected")
             )
             detected_fields.append("upperBoundDatetimeDateTemplate")
-        lines.append("")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # End of sql: section — reset indentation
+    # ══════════════════════════════════════════════════════════════════════════
+    _indent[0] = ""
+    lines.append("")
 
     return "\n".join(lines) + "\n", detected_fields, todo_fields
 

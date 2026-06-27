@@ -54,13 +54,15 @@ class TestBuildYamlStructure:
         return content, parsed, detected, todos
 
     def test_top_level_keys(self):
-        """prefix, className, dialectClass stay at top level; config is a section."""
+        """prefix, className, dialectClass stay at top level; config and sql are sections."""
         _, parsed, _, _ = self._parse()
         assert "prefix" in parsed
         assert "className" in parsed
         assert "dialectClass" in parsed
         assert "config" in parsed
         assert isinstance(parsed["config"], dict)
+        assert "sql" in parsed
+        assert isinstance(parsed["sql"], dict)
 
     def test_dialect_class_at_top_level(self):
         _, parsed, _, _ = self._parse(dialect_class="com.example.Dialect$")
@@ -111,11 +113,19 @@ class TestBuildYamlStructure:
         assert "systemSchemaExclusionPrefixes" in config
         assert "systemCatalogExclusions" in config
 
-    def test_sql_capabilities_at_top_level(self):
-        """SQL capability fields should NOT be under config."""
+    def test_sql_section_structure(self):
+        """SQL section should have functions, clauses, queries sub-keys."""
+        _, parsed, _, _ = self._parse()
+        sql = parsed["sql"]
+        assert "queries" in sql
+        # functions and clauses may be None when all values are defaults
+
+    def test_sql_capabilities_under_sql_queries(self):
+        """SQL query-style fields should be under sql.queries, not top-level or config."""
         probes = {**_MINIMAL_PROBES, "schemaOnlyQueryStyle": "PG_CTE"}
         _, parsed, _, _ = self._parse(probes=probes)
-        assert "schemaOnlyQueryStyle" in parsed
+        assert parsed["sql"]["queries"]["schemaOnlyQueryStyle"] == "PG_CTE"
+        assert "schemaOnlyQueryStyle" not in parsed
         assert "schemaOnlyQueryStyle" not in parsed.get("config", {})
 
     def test_sql_capabilities_with_detected_values(self):
@@ -127,20 +137,40 @@ class TestBuildYamlStructure:
             "approxCountDistinctFunction": "APPROX_COUNT_DISTINCT",
         }
         _, parsed, _, _ = self._parse(probes=probes)
-        assert parsed["schemaOnlyQueryStyle"] == "SQLSERVER_TOP0"
-        assert parsed["dateArithmeticStyle"] == "DATEADD_DATEDIFF"
-        assert parsed["schemaExistenceQueryStyle"] == "INFORMATION_SCHEMA"
-        assert parsed["approxCountDistinctFunction"] == "APPROX_COUNT_DISTINCT"
+        queries = parsed["sql"]["queries"]
+        functions = parsed["sql"]["functions"]
+        assert queries["schemaOnlyQueryStyle"] == "SQLSERVER_TOP0"
+        assert queries["dateArithmeticStyle"] == "DATEADD_DATEDIFF"
+        assert queries["schemaExistenceQueryStyle"] == "INFORMATION_SCHEMA"
+        assert functions["approxCountDistinctFunction"] == "APPROX_COUNT_DISTINCT"
 
-    def test_date_templates_at_top_level(self):
+    def test_sql_functions_with_detected_values(self):
+        probes = {**_MINIMAL_PROBES, "viewSampleFallback": "RANDOM"}
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert parsed["sql"]["functions"]["viewSampleFallback"] == "RANDOM"
+
+    def test_sql_clauses_with_detected_values(self):
+        probes = {
+            **_MINIMAL_PROBES,
+            "tableSampleTemplate": "TABLESAMPLE SYSTEM ({pct})",
+        }
+        _, parsed, _, _ = self._parse(probes=probes)
+        assert (
+            parsed["sql"]["clauses"]["tableSampleTemplate"]
+            == "TABLESAMPLE SYSTEM ({pct})"
+        )
+
+    def test_date_templates_under_sql_queries(self):
         probes = {
             **_MINIMAL_PROBES,
             "intervalCalcDatetimeTimestampTemplate": "DATEADD(second, ...)",
             "upperBoundDatetimeDateTemplate": "DATEADD(day, ...)",
         }
         _, parsed, _, _ = self._parse(probes=probes)
-        assert "intervalCalcDatetimeTimestampTemplate" in parsed
-        assert "upperBoundDatetimeDateTemplate" in parsed
+        queries = parsed["sql"]["queries"]
+        assert queries["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
+        assert queries["upperBoundDatetimeDateTemplate"] == "DATEADD(day, ...)"
+        assert "intervalCalcDatetimeTimestampTemplate" not in parsed
         assert "intervalCalcDatetimeTimestampTemplate" not in parsed.get("config", {})
 
     def test_config_fields_not_at_top_level(self):
