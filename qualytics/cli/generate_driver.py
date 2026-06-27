@@ -214,10 +214,10 @@ public class JdbcProbe {
         }
 
         // approxCountDistinctFunction
+        // Closed vocab: APPROX_COUNT_DISTINCT, APPROX_DISTINCT (NDV is not a valid dataplane token)
         String approxFn = "null";
         if (tryQuery(conn, "SELECT APPROX_COUNT_DISTINCT(1)", 5)) approxFn = "\"APPROX_COUNT_DISTINCT\"";
         else if (tryQuery(conn, "SELECT APPROX_DISTINCT(1)", 5)) approxFn = "\"APPROX_DISTINCT\"";
-        else if (tryQuery(conn, "SELECT NDV(1)", 5)) approxFn = "\"NDV\"";
 
         // dateArithmeticStyle + interval templates
         String dateArith = "\"STANDARD\"";
@@ -586,6 +586,80 @@ _TABLESAMPLE_TOKEN_MAP: dict[str, str] = {
     "SAMPLE ({pct})": "SAMPLE_PERCENT",
     "SAMPLE ({pct} PERCENT)": "SAMPLE_PERCENT",
 }
+
+# ---------------------------------------------------------------------------
+# Dataplane v2 closed vocabularies — canonical case-sensitive enum values
+# ---------------------------------------------------------------------------
+VALID_TRANSACTION_ISOLATION: frozenset[str] = frozenset(
+    {"NONE", "READ_UNCOMMITTED", "READ_COMMITTED", "REPEATABLE_READ", "SERIALIZABLE"}
+)
+VALID_TABLE_NAME_CASING: frozenset[str] = frozenset({"UPPER", "LOWER", "AS_IS"})
+VALID_ROW_LIMIT_STYLE: frozenset[str] = frozenset({"LIMIT", "TOP", "ROWNUM"})
+VALID_TIMESTAMP_LITERAL_STYLE: frozenset[str] = frozenset(
+    {
+        "PLAIN",
+        "TIMESTAMP_PREFIX",
+        "CAST_DATETIME2",
+        "TO_TIMESTAMP",
+        "CAST_AS_TIMESTAMP",
+        "CAST_DATE_FORMAT",
+    }
+)
+VALID_DATE_LITERAL_STYLE: frozenset[str] = frozenset(
+    {"PLAIN", "DATE_PREFIX", "TO_DATE"}
+)
+VALID_SQL_FUNCTIONS: frozenset[str] = frozenset(
+    {
+        "APPROX_COUNT_DISTINCT",
+        "APPROX_DISTINCT",
+        "RANDOM",
+        "RAND",
+        "NEWID",
+        "DBMS_RANDOM_VALUE",
+    }
+)
+VALID_SQL_CLAUSES: frozenset[str] = frozenset(
+    {
+        "TABLESAMPLE_SYSTEM",
+        "TABLESAMPLE_SYSTEM_PERCENT",
+        "TABLESAMPLE_BERNOULLI",
+        "TABLESAMPLE_PERCENT",
+        "TABLESAMPLE_ROWS",
+        "SAMPLE_PERCENT",
+        "SAMPLE_ROWS",
+        "LIMIT",
+        "OFFSET_FETCH",
+        "ROWNUM",
+    }
+)
+VALID_SCHEMA_ONLY: frozenset[str] = frozenset(
+    {
+        "CTE",
+        "PG_CTE",
+        "SQLSERVER_TOP0",
+        "WHERE_FALSE_QUERYA",
+        "ORACLE_WHERE_FALSE",
+        "HIVE_LIMIT0",
+    }
+)
+VALID_ROW_COUNT: frozenset[str] = frozenset(
+    {
+        "COUNT_STAR",
+        "BQ_TABLES",
+        "INFORMATION_SCHEMA_ROW_COUNT",
+        "INFORMATION_SCHEMA_TABLES_WITH_SIZE",
+        "ALL_TABLES",
+    }
+)
+VALID_DATE_ARITHMETIC_STYLE: frozenset[str] = frozenset(
+    {
+        "STANDARD",
+        "DATEADD_DATEDIFF",
+        "NUMTODSINTERVAL",
+        "TIMESTAMP_ADD",
+        "TIMESTAMPDIFF_DB2",
+    }
+)
 
 
 def _detect_dialect_class(prefix: str, jar_path: str) -> str | None:

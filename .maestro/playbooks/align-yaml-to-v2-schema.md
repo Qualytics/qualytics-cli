@@ -49,5 +49,5 @@
 
 ## Group 9: End-to-end validation
 - [x] Review entire `_build_yaml()` flow for any remaining flat fields — all 22 probe fields correctly routed to `config:` or `sql:` sections; no v1-style flat fields remain at top level; added comprehensive `test_no_remaining_flat_fields` test
-- [ ] Ensure all enum values use exact case-sensitive dataplane values
+- [x] Ensure all enum values use exact case-sensitive dataplane values — removed invalid `NDV` probe from Java source, added `VALID_*` frozenset constants for all 10 enum fields, added 46 parametrized tests validating every probe-emittable value against the dataplane closed vocabularies
 - [ ] Verify `connectionSpec` nesting is correct under `config`

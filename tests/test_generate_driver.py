@@ -1,8 +1,19 @@
 """Tests for qualytics.cli.generate_driver — YAML generation and helpers."""
 
+import pytest
 import yaml
 
 from qualytics.cli.generate_driver import (
+    VALID_DATE_ARITHMETIC_STYLE,
+    VALID_DATE_LITERAL_STYLE,
+    VALID_ROW_COUNT,
+    VALID_ROW_LIMIT_STYLE,
+    VALID_SCHEMA_ONLY,
+    VALID_SQL_CLAUSES,
+    VALID_SQL_FUNCTIONS,
+    VALID_TABLE_NAME_CASING,
+    VALID_TIMESTAMP_LITERAL_STYLE,
+    VALID_TRANSACTION_ISOLATION,
     _apply_llm_suggestions,
     _build_yaml,
     _collect_todo_fields,
@@ -475,3 +486,190 @@ class TestApplyLlmSuggestions:
         updated, count = _apply_llm_suggestions(yaml_content, suggestions)
         assert count == 0
         assert "# TODO:" in updated
+
+
+# ---------------------------------------------------------------------------
+# Enum value validation — ensure all generated values match dataplane vocab
+# ---------------------------------------------------------------------------
+
+
+class TestEnumValuesMatchDataplane:
+    """Verify every enum value emitted by _build_yaml uses exact dataplane values."""
+
+    def _parse(self, probes=None, url=None, **kwargs):
+        content, detected, todos = _build_yaml(
+            "testdb",
+            probes or _MINIMAL_PROBES,
+            url or _JDBC_URL,
+            **kwargs,
+        )
+        parsed = yaml.safe_load(content)
+        return parsed
+
+    # -- transactionIsolation --
+
+    @pytest.mark.parametrize(
+        "value",
+        ["NONE", "READ_UNCOMMITTED", "READ_COMMITTED", "REPEATABLE_READ", "SERIALIZABLE"],
+    )
+    def test_transaction_isolation_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "transactionIsolation": value}
+        parsed = self._parse(probes=probes)
+        emitted = parsed["config"].get("transactionIsolation", "READ_UNCOMMITTED")
+        assert emitted in VALID_TRANSACTION_ISOLATION
+
+    # -- tableNameCasing --
+
+    @pytest.mark.parametrize("value", ["UPPER", "LOWER", "AS_IS"])
+    def test_table_name_casing_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "tableNameCasing": value}
+        parsed = self._parse(probes=probes)
+        emitted = parsed["config"].get("tableNameCasing", "AS_IS")
+        assert emitted in VALID_TABLE_NAME_CASING
+
+    # -- rowLimitStyle --
+
+    @pytest.mark.parametrize("value", ["LIMIT", "TOP", "ROWNUM"])
+    def test_row_limit_style_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": value}
+        parsed = self._parse(probes=probes)
+        emitted = parsed["config"].get("rowLimitStyle", "LIMIT")
+        assert emitted in VALID_ROW_LIMIT_STYLE
+
+    def test_fetch_first_not_emitted_as_row_limit_style(self):
+        """FETCH_FIRST is NOT a valid rowLimitStyle — must map to OFFSET_FETCH clause."""
+        probes = {**_MINIMAL_PROBES, "rowLimitStyle": "FETCH_FIRST"}
+        parsed = self._parse(probes=probes)
+        assert "rowLimitStyle" not in parsed.get("config", {})
+        assert "OFFSET_FETCH" in parsed["sql"]["clauses"]
+        assert "OFFSET_FETCH" in VALID_SQL_CLAUSES
+
+    # -- timestampLiteralStyle --
+
+    @pytest.mark.parametrize(
+        "value",
+        ["PLAIN", "TIMESTAMP_PREFIX", "CAST_DATETIME2", "TO_TIMESTAMP"],
+    )
+    def test_timestamp_literal_style_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "timestampLiteralStyle": value}
+        parsed = self._parse(probes=probes)
+        emitted = parsed["config"].get("timestampLiteralStyle", "PLAIN")
+        assert emitted in VALID_TIMESTAMP_LITERAL_STYLE
+
+    # -- dateLiteralStyle --
+
+    @pytest.mark.parametrize("value", ["PLAIN", "TO_DATE"])
+    def test_date_literal_style_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "dateLiteralStyle": value}
+        parsed = self._parse(probes=probes)
+        emitted = parsed["config"].get("dateLiteralStyle", "PLAIN")
+        assert emitted in VALID_DATE_LITERAL_STYLE
+
+    # -- sql.functions --
+
+    @pytest.mark.parametrize("value", ["APPROX_COUNT_DISTINCT", "APPROX_DISTINCT"])
+    def test_approx_function_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "approxCountDistinctFunction": value}
+        parsed = self._parse(probes=probes)
+        for fn in parsed["sql"]["functions"]:
+            assert fn in VALID_SQL_FUNCTIONS, f"{fn} not in valid sql.functions vocab"
+
+    @pytest.mark.parametrize("value", ["RAND", "RANDOM", "NEWID"])
+    def test_view_sample_fallback_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "viewSampleFallback": value}
+        parsed = self._parse(probes=probes)
+        for fn in parsed["sql"]["functions"]:
+            assert fn in VALID_SQL_FUNCTIONS, f"{fn} not in valid sql.functions vocab"
+
+    # -- sql.clauses --
+
+    @pytest.mark.parametrize(
+        "template,expected_token",
+        [
+            ("TABLESAMPLE SYSTEM ({pct})", "TABLESAMPLE_SYSTEM"),
+            ("TABLESAMPLE BERNOULLI ({pct})", "TABLESAMPLE_BERNOULLI"),
+            ("TABLESAMPLE SYSTEM ({pct} PERCENT)", "TABLESAMPLE_SYSTEM_PERCENT"),
+            ("TABLESAMPLE ({pct})", "TABLESAMPLE_PERCENT"),
+            ("SAMPLE ({pct})", "SAMPLE_PERCENT"),
+            ("SAMPLE ({pct} PERCENT)", "SAMPLE_PERCENT"),
+        ],
+    )
+    def test_table_sample_clause_valid(self, template, expected_token):
+        probes = {**_MINIMAL_PROBES, "tableSampleTemplate": template}
+        parsed = self._parse(probes=probes)
+        assert expected_token in parsed["sql"]["clauses"]
+        assert expected_token in VALID_SQL_CLAUSES
+
+    # -- sql.queries.schemaOnly --
+
+    @pytest.mark.parametrize("value", ["CTE", "SQLSERVER_TOP0", "ORACLE_WHERE_FALSE"])
+    def test_schema_only_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "schemaOnly": value}
+        parsed = self._parse(probes=probes)
+        assert parsed["sql"]["queries"]["schemaOnly"] in VALID_SCHEMA_ONLY
+
+    # -- sql.queries.rowCount --
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "COUNT_STAR",
+            "BQ_TABLES",
+            "INFORMATION_SCHEMA_ROW_COUNT",
+            "INFORMATION_SCHEMA_TABLES_WITH_SIZE",
+            "ALL_TABLES",
+        ],
+    )
+    def test_row_count_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "rowCount": value}
+        parsed = self._parse(probes=probes)
+        assert parsed["sql"]["queries"]["rowCount"] in VALID_ROW_COUNT
+
+    # -- sql.queries.freshness.style --
+
+    @pytest.mark.parametrize(
+        "value",
+        ["STANDARD", "DATEADD_DATEDIFF", "NUMTODSINTERVAL", "TIMESTAMP_ADD", "TIMESTAMPDIFF_DB2"],
+    )
+    def test_date_arithmetic_style_valid(self, value):
+        probes = {**_MINIMAL_PROBES, "dateArithmeticStyle": value}
+        parsed = self._parse(probes=probes)
+        if "freshness" in parsed["sql"]["queries"]:
+            assert parsed["sql"]["queries"]["freshness"]["style"] in VALID_DATE_ARITHMETIC_STYLE
+
+    # -- exhaustive: every probe output → valid enum --
+
+    def test_all_non_default_enums_valid(self):
+        """With every enum set to a non-default value, all emitted values are valid."""
+        probes = {
+            **_MINIMAL_PROBES,
+            "transactionIsolation": "SERIALIZABLE",
+            "tableNameCasing": "UPPER",
+            "rowLimitStyle": "TOP",
+            "timestampLiteralStyle": "CAST_DATETIME2",
+            "dateLiteralStyle": "TO_DATE",
+            "approxCountDistinctFunction": "APPROX_COUNT_DISTINCT",
+            "viewSampleFallback": "RANDOM",
+            "tableSampleTemplate": "TABLESAMPLE BERNOULLI ({pct})",
+            "schemaOnly": "SQLSERVER_TOP0",
+            "rowCount": "ALL_TABLES",
+            "dateArithmeticStyle": "DATEADD_DATEDIFF",
+        }
+        parsed = self._parse(probes=probes)
+        config = parsed["config"]
+        sql = parsed["sql"]
+
+        assert config["transactionIsolation"] in VALID_TRANSACTION_ISOLATION
+        assert config["tableNameCasing"] in VALID_TABLE_NAME_CASING
+        assert config["rowLimitStyle"] in VALID_ROW_LIMIT_STYLE
+        assert config["timestampLiteralStyle"] in VALID_TIMESTAMP_LITERAL_STYLE
+        assert config["dateLiteralStyle"] in VALID_DATE_LITERAL_STYLE
+
+        for fn in sql["functions"]:
+            assert fn in VALID_SQL_FUNCTIONS, f"sql.functions: {fn} not valid"
+        for cl in sql["clauses"]:
+            assert cl in VALID_SQL_CLAUSES, f"sql.clauses: {cl} not valid"
+
+        assert sql["queries"]["schemaOnly"] in VALID_SCHEMA_ONLY
+        assert sql["queries"]["rowCount"] in VALID_ROW_COUNT
+        assert sql["queries"]["freshness"]["style"] in VALID_DATE_ARITHMETIC_STYLE
