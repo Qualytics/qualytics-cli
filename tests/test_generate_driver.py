@@ -121,7 +121,9 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse()
         sql = parsed["sql"]
         assert "queries" in sql
-        # functions and clauses may be None when all values are defaults
+        assert "functions" in sql
+        assert isinstance(sql["functions"], list)  # empty list when all defaults
+        # clauses may be None when all values are defaults
 
     def test_sql_capabilities_under_sql_queries(self):
         """SQL query-style fields should be under sql.queries, not top-level or config."""
@@ -145,12 +147,12 @@ class TestBuildYamlStructure:
         assert queries["schemaOnlyQueryStyle"] == "SQLSERVER_TOP0"
         assert queries["dateArithmeticStyle"] == "DATEADD_DATEDIFF"
         assert queries["schemaExistenceQueryStyle"] == "INFORMATION_SCHEMA"
-        assert functions["approxCountDistinctFunction"] == "APPROX_COUNT_DISTINCT"
+        assert "APPROX_COUNT_DISTINCT" in functions
 
     def test_sql_functions_with_detected_values(self):
         probes = {**_MINIMAL_PROBES, "viewSampleFallback": "RANDOM"}
         _, parsed, _, _ = self._parse(probes=probes)
-        assert parsed["sql"]["functions"]["viewSampleFallback"] == "RANDOM"
+        assert "RANDOM" in parsed["sql"]["functions"]
 
     def test_sql_clauses_with_detected_values(self):
         probes = {

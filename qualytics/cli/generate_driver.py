@@ -1151,46 +1151,44 @@ def _build_yaml(
     lines.append("sql:")
     _indent[0] = "  "
 
-    # ── sql.functions — SQL function identifiers ────────────────────────────
+    # ── sql.functions — capability tokens (list) ─────────────────────────
     lines.append(
         _sec("# ── SQL functions ────────────────────────────────────────────────")
     )
-    lines.append(_sec("functions:"))
-    _indent[0] = "    "
+    lines.append(
+        _sec(
+            "# Closed vocab: APPROX_COUNT_DISTINCT, APPROX_DISTINCT, RANDOM, "
+            "RAND, NEWID, DBMS_RANDOM_VALUE"
+        )
+    )
 
-    # approxCountDistinctFunction — omit if null (not supported, falls back to COUNT DISTINCT)
+    func_entries: list[tuple[str, str]] = []  # (token, comment)
+
+    # approxCountDistinctFunction → entry in sql.functions list
     approx = probes.get("approxCountDistinctFunction")
     if approx and approx != "null":
-        lines.append(
-            field(
-                "approxCountDistinctFunction",
-                approx,
-                "auto-detected — SQL function name for approximate COUNT DISTINCT",
-            )
-        )
+        func_entries.append((approx, "auto-detected — approximate COUNT DISTINCT"))
         detected_fields.append("approxCountDistinctFunction")
     else:
         detected_fields.append("approxCountDistinctFunction")  # null — omitted
 
-    # viewSampleFallback — omit if RAND (default)
+    # viewSampleFallback → entry in sql.functions list (omit if RAND = default)
     vsf = probes.get("viewSampleFallback", "RAND")
     if vsf != "RAND":
-        lines.append(
-            field(
-                "viewSampleFallback",
-                vsf,
-                "auto-detected — random fn for view sampling. "
-                "Valid: RAND (default), RANDOM (PostgreSQL/Redshift), "
-                "NEWID (SQL Server), DBMS_RANDOM (Oracle), SAMPLE_N (Teradata), "
-                "NONE (BigQuery)",
-            )
+        func_entries.append(
+            (vsf, "auto-detected — random function for view sampling")
         )
         detected_fields.append("viewSampleFallback")
     else:
-        detected_fields.append("viewSampleFallback")  # default — omitted
-    # viewSampleFallbackSql: escape hatch — omit unless enum styles are insufficient
+        detected_fields.append("viewSampleFallback")  # default RAND — omitted
 
-    _indent[0] = "  "
+    ind_sql = _indent[0]  # "  " inside sql:
+    if func_entries:
+        lines.append(f"{ind_sql}functions:")
+        for token, comment in func_entries:
+            lines.append(f"{ind_sql}  - {token}  # {comment}")
+    else:
+        lines.append(f"{ind_sql}functions: []")
 
     # ── sql.clauses — SQL clause templates ──────────────────────────────────
     lines.append(

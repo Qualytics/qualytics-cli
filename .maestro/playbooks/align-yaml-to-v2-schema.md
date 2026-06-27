@@ -19,7 +19,7 @@
 - [x] Add support for `config.url.paramSeparator`
 
 ## Group 4: Restructure SQL capabilities into `sql` section
-- [ ] Map `approxCountDistinctFunction` → entry in `sql.functions` list (closed vocab: `APPROX_COUNT_DISTINCT`, `APPROX_DISTINCT`, `RANDOM`, `RAND`, `NEWID`, `DBMS_RANDOM_VALUE`)
+- [x] Map `approxCountDistinctFunction` → entry in `sql.functions` list (closed vocab: `APPROX_COUNT_DISTINCT`, `APPROX_DISTINCT`, `RANDOM`, `RAND`, `NEWID`, `DBMS_RANDOM_VALUE`)
 - [ ] Map `viewSampleFallback` → entry in `sql.functions`
 - [ ] Map `tableSampleTemplate` → entry in `sql.clauses` (closed vocab: `TABLESAMPLE_SYSTEM`, `TABLESAMPLE_SYSTEM_PERCENT`, `TABLESAMPLE_BERNOULLI`, `TABLESAMPLE_PERCENT`, `TABLESAMPLE_ROWS`, `SAMPLE_PERCENT`, `SAMPLE_ROWS`, `LIMIT`, `OFFSET_FETCH`, `ROWNUM`)
 - [ ] Map `FETCH_FIRST` rowLimit → `OFFSET_FETCH` in `sql.clauses` (NOT a rowLimitStyle)
