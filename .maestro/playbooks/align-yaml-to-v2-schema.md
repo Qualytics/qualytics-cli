@@ -1,0 +1,53 @@
+# Align CLI YAML Output to Dataplane v2 Schema
+
+## Group 1: Restructure `_build_yaml()` to emit three top-level sections
+- [x] Wrap all config fields under a `config:` key
+- [x] Wrap all SQL capability fields under a `sql:` key with `functions`, `clauses`, `queries` sub-keys
+- [x] Keep `dialectClass` at top level (already correct)
+
+## Group 2: Rename config fields to match dataplane schema
+- [x] `rowLimitSyntax` → `rowLimitStyle` (valid values: `LIMIT`, `TOP`, `ROWNUM`)
+- [x] `subqueryRequiresAlias` → `subqueryAlias`
+- [x] `validationQuery` → `connectionTest`
+- [x] `tableNameCasing` values: `upper` → `UPPER`, `lower` → `LOWER`, `asis` → `AS_IS`
+
+## Group 3: Restructure URL fields into `config.url` sub-object
+- [x] `jdbcUrlTemplate` → `config.url.template`
+- [x] `jdbcUrlStaticParams` → `config.url.staticParams`
+- [x] `jdbcUrlConditionalParams` → `config.url.conditionalParams` (each item: `{key: ..., param: ...}`)
+- [x] `jdbcUrlAuthVariants` → `config.url.authVariants` using full DriverAuthVariant structure (each value: object with optional keys `urlTemplate`, `staticParams`, `conditionalParams`, `connectionProperties`, `connectionPropertyMappings`)
+- [x] Add support for `config.url.paramSeparator`
+
+## Group 4: Restructure SQL capabilities into `sql` section
+- [x] Map `approxCountDistinctFunction` → entry in `sql.functions` list (closed vocab: `APPROX_COUNT_DISTINCT`, `APPROX_DISTINCT`, `RANDOM`, `RAND`, `NEWID`, `DBMS_RANDOM_VALUE`)
+- [x] Map `viewSampleFallback` → entry in `sql.functions`
+- [x] Map `tableSampleTemplate` → entry in `sql.clauses` (closed vocab: `TABLESAMPLE_SYSTEM`, `TABLESAMPLE_SYSTEM_PERCENT`, `TABLESAMPLE_BERNOULLI`, `TABLESAMPLE_PERCENT`, `TABLESAMPLE_ROWS`, `SAMPLE_PERCENT`, `SAMPLE_ROWS`, `LIMIT`, `OFFSET_FETCH`, `ROWNUM`)
+- [x] Map `FETCH_FIRST` rowLimit → `OFFSET_FETCH` in `sql.clauses` (NOT a rowLimitStyle)
+- [x] Map `rowCountQueryStyle`, `schemaOnlyQueryStyle`, date arithmetic templates → `sql.queries` using QuerySlot keys: `nullCheck`, `schemaOnly`, `rowCount`, `volume`, `freshness`, `partitionColumn`, `lineage`
+
+## Group 5: Remove/remap fields not in dataplane schema
+- [x] Remove or remap: `maxPartitionParallelism`, `dataSizeLimit`, `schemaExistenceQueryStyle`
+- [x] Verify no other flat fields will be rejected by strict parser
+
+## Group 6: Add missing optional fields with smart defaults
+- [x] `config.networkCapable` (default: `true`)
+- [x] `config.readOnly` (default: `false`)
+- [x] `config.defaultInsertBatchSize` (optional)
+- [x] `config.supportsLongLimit` (default: `false`)
+- [x] `config.connectionPropertyMappings` (optional)
+- [x] `config.connectionSpec.fields[].aliases` (optional)
+- [x] `config.connectionSpec.fields[].dependsOnValues` (plural, optional)
+
+## Group 7: Update the Java probe and LLM resolver
+- [x] Update Java probe output parsing to feed into new v2 structure
+- [x] Update LLM prompt/resolver to produce field names matching v2 schema
+- [x] Update TODO comment generation to reference correct v2 field names
+
+## Group 8: Update example YAML files
+- [x] Regenerate or manually update `dist/META-INF/jdbc-drivers/mongodb.yaml` to v2 format
+- [x] Regenerate or manually update `dist/META-INF/jdbc-drivers/redshift2.yaml` to v2 format
+
+## Group 9: End-to-end validation
+- [x] Review entire `_build_yaml()` flow for any remaining flat fields — all 22 probe fields correctly routed to `config:` or `sql:` sections; no v1-style flat fields remain at top level; added comprehensive `test_no_remaining_flat_fields` test
+- [x] Ensure all enum values use exact case-sensitive dataplane values — removed invalid `NDV` probe from Java source, added `VALID_*` frozenset constants for all 10 enum fields, added 46 parametrized tests validating every probe-emittable value against the dataplane closed vocabularies
+- [x] Verify `connectionSpec` nesting is correct under `config` — confirmed: connectionSpec is nested under config: with correct indentation; added 5 new tests verifying field schema (name/label/fieldType/required), URL-component-driven field inclusion/omission, port defaultValue, and top-level exclusion; all 93 tests pass
