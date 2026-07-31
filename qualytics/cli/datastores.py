@@ -144,7 +144,7 @@ def datastores_create(
             enrichment_source_record_limit=enrichment_source_record_limit,
             enrichment_remediation_strategy=enrichment_remediation_strategy,
             high_count_rollup_threshold=high_count_rollup_threshold,
-            trigger_catalog=trigger_sync,
+            trigger_sync=trigger_sync,
             database=database,
             schema=schema,
         )

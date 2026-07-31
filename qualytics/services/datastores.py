@@ -66,7 +66,7 @@ def build_create_datastore_payload(
     enrichment_source_record_limit: int | None = None,
     enrichment_remediation_strategy: str = "none",
     high_count_rollup_threshold: int | None = None,
-    trigger_catalog: bool = True,
+    trigger_sync: bool = True,
     database: str,
     schema: str,
 ) -> dict:
@@ -76,7 +76,7 @@ def build_create_datastore_payload(
         "connection_id": int(connection_id),
         "enrichment_only": enrichment_only,
         "enrichment_remediation_strategy": enrichment_remediation_strategy,
-        "trigger_catalog": trigger_catalog,
+        "trigger_sync": trigger_sync,
         "tags": tags,
         "teams": teams,
         "database": database,

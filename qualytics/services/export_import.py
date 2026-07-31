@@ -627,6 +627,14 @@ def _import_datastore(
             result["failed"] += 1
             return result
 
+        if "trigger_catalog" in data:
+            result["errors"].append(
+                f"Skipped {ds_file}: 'trigger_catalog' is no longer supported; "
+                "use 'trigger_sync'"
+            )
+            result["failed"] += 1
+            return result
+
         ds_name = data["name"]
 
         # Resolve connection_name → connection_id
@@ -666,8 +674,8 @@ def _import_datastore(
             # Fetch full datastore (list endpoint returns lightweight objects
             # missing the connection object needed for proper merging)
             full_existing = get_datastore(client, ds_id)
-            # Don't send trigger_catalog on update
-            data.pop("trigger_catalog", None)
+            # trigger_sync applies only when creating a datastore.
+            data.pop("trigger_sync", None)
             # PUT requires full payload — merge import data on top of current state
             from .datastores import flatten_datastore_for_put
 
