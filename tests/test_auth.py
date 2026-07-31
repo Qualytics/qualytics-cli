@@ -279,7 +279,7 @@ class TestAuthStatusCommand:
         """Test that status displays the hostname from URL."""
         token = jwt.encode(
             {"sub": "user", "exp": int(time.time()) + 86400},
-            key="",
+            key="test-secret-key-with-at-least-32-bytes",
             algorithm="HS256",
         )
         config = {
@@ -296,7 +296,7 @@ class TestAuthStatusCommand:
         """Test that status masks the token (shows first 4 chars + asterisks)."""
         token = jwt.encode(
             {"sub": "user", "exp": int(time.time()) + 86400},
-            key="",
+            key="test-secret-key-with-at-least-32-bytes",
             algorithm="HS256",
         )
         config = {
@@ -315,7 +315,7 @@ class TestAuthStatusCommand:
         """Test that status shows token expiry information."""
         token = jwt.encode(
             {"sub": "user", "exp": int(time.time()) + 86400 * 30},
-            key="",
+            key="test-secret-key-with-at-least-32-bytes",
             algorithm="HS256",
         )
         config = {
@@ -332,7 +332,7 @@ class TestAuthStatusCommand:
         """Test that status detects expired tokens."""
         token = jwt.encode(
             {"sub": "user", "exp": int(time.time()) - 86400},
-            key="",
+            key="test-secret-key-with-at-least-32-bytes",
             algorithm="HS256",
         )
         config = {
@@ -349,7 +349,7 @@ class TestAuthStatusCommand:
         """Test that status shows SSL verification status."""
         token = jwt.encode(
             {"sub": "user", "exp": int(time.time()) + 86400},
-            key="",
+            key="test-secret-key-with-at-least-32-bytes",
             algorithm="HS256",
         )
         config = {

@@ -115,6 +115,10 @@ class TestIsTokenValid:
         """A JWT with no expiration claim should still be considered valid."""
         import jwt
 
-        token = jwt.encode({"sub": "user123"}, key="", algorithm="HS256")
+        token = jwt.encode(
+            {"sub": "user123"},
+            key="test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
         result = is_token_valid(token)
         assert result == token
