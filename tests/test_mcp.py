@@ -37,7 +37,7 @@ class TestAuthStatusTool:
         """Test that auth_status returns structured status."""
         token = jwt.encode(
             {"sub": "user", "exp": int(time.time()) + 86400},
-            key="",
+            key="test-secret-key-with-at-least-32-bytes",
             algorithm="HS256",
         )
         config = {
@@ -57,7 +57,7 @@ class TestAuthStatusTool:
         """Test that auth_status detects expired tokens."""
         token = jwt.encode(
             {"sub": "user", "exp": int(time.time()) - 86400},
-            key="",
+            key="test-secret-key-with-at-least-32-bytes",
             algorithm="HS256",
         )
         config = {
@@ -128,7 +128,11 @@ class TestMCPCommand:
         """Test that mcp serve constructs the proxy URL from config."""
         import jwt as _jwt
 
-        token = _jwt.encode({"sub": "u"}, key="", algorithm="HS256")
+        token = _jwt.encode(
+            {"sub": "u"},
+            key="test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
         config = {
             "url": "https://demo.qualytics.io/api",
             "token": token,
@@ -161,7 +165,11 @@ class TestMCPCommand:
         """Test that ssl_verify=False is wired into the httpx client factory."""
         import jwt as _jwt
 
-        token = _jwt.encode({"sub": "u"}, key="", algorithm="HS256")
+        token = _jwt.encode(
+            {"sub": "u"},
+            key="test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
         config = {
             "url": "https://demo.qualytics.io/api",
             "token": token,

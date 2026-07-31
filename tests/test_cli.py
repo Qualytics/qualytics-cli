@@ -439,7 +439,11 @@ class TestDoctorCommand:
 
         # Create a token that expires in 30 days
         future_exp = int(time.time()) + 30 * 86400
-        token = pyjwt.encode({"exp": future_exp}, "", algorithm="HS256")
+        token = pyjwt.encode(
+            {"exp": future_exp},
+            "test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
 
         config_file = tmp_path / "config.yaml"
         config_data = {
@@ -473,7 +477,11 @@ class TestDoctorCommand:
 
         # Create a token that expired 5 days ago
         past_exp = int(time.time()) - 5 * 86400
-        token = pyjwt.encode({"exp": past_exp}, "", algorithm="HS256")
+        token = pyjwt.encode(
+            {"exp": past_exp},
+            "test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
 
         config_data = {
             "url": "https://test.qualytics.io/api/",
@@ -507,7 +515,11 @@ class TestDoctorCommand:
         import requests
 
         future_exp = int(time.time()) + 30 * 86400
-        token = pyjwt.encode({"exp": future_exp}, "", algorithm="HS256")
+        token = pyjwt.encode(
+            {"exp": future_exp},
+            "test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
 
         config_data = {
             "url": "https://test.qualytics.io/api/",
@@ -539,7 +551,11 @@ class TestDoctorCommand:
 
         # Token expires in 3 days
         soon_exp = int(time.time()) + 3 * 86400
-        token = pyjwt.encode({"exp": soon_exp}, "", algorithm="HS256")
+        token = pyjwt.encode(
+            {"exp": soon_exp},
+            "test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
 
         config_data = {
             "url": "https://test.qualytics.io/api/",
