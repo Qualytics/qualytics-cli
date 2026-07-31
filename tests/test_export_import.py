@@ -466,6 +466,25 @@ class TestImportConnections:
 
 
 class TestImportDatastore:
+    def test_rejects_legacy_trigger_catalog(self, mock_client, tmp_path):
+        ds_dir = tmp_path / "my_ds"
+        ds_dir.mkdir()
+        ds_file = ds_dir / "_datastore.yaml"
+        ds_file.write_text(
+            yaml.safe_dump(
+                {
+                    "name": "my-ds",
+                    "connection_name": "prod-pg",
+                    "trigger_catalog": True,
+                }
+            )
+        )
+
+        result = _import_datastore(mock_client, ds_dir)
+
+        assert result["failed"] == 1
+        assert "'trigger_catalog' is no longer supported" in result["errors"][0]
+
     def test_creates_new_datastore(self, mock_client, tmp_path):
         ds_dir = tmp_path / "my_ds"
         ds_dir.mkdir()
@@ -476,6 +495,7 @@ class TestImportDatastore:
                     "database": "db",
                     "schema": "public",
                     "connection_name": "prod-pg",
+                    "trigger_sync": True,
                 }
             )
         )
@@ -499,6 +519,9 @@ class TestImportDatastore:
         assert result["created"] == 1
         assert result["datastore_id"] == 10
         mock_create.assert_called_once()
+        payload = mock_create.call_args.args[1]
+        assert payload["trigger_sync"] is True
+        assert "trigger_catalog" not in payload
 
     def test_updates_existing_datastore(self, mock_client, tmp_path):
         ds_dir = tmp_path / "my_ds"
@@ -510,6 +533,7 @@ class TestImportDatastore:
                     "database": "db",
                     "schema": "public",
                     "connection_name": "prod-pg",
+                    "trigger_sync": True,
                 }
             )
         )
@@ -532,6 +556,8 @@ class TestImportDatastore:
         assert result["updated"] == 1
         assert result["datastore_id"] == 10
         mock_update.assert_called_once()
+        payload = mock_update.call_args.args[2]
+        assert "trigger_sync" not in payload
 
     def test_connection_not_found(self, mock_client, tmp_path):
         ds_dir = tmp_path / "my_ds"

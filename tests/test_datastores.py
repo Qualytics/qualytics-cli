@@ -277,6 +277,18 @@ class TestBuildCreateDatastorePayload:
         assert payload["connection_id"] == 5
         assert payload["database"] == "mydb"
         assert payload["schema"] == "public"
+        assert payload["trigger_sync"] is True
+        assert "trigger_catalog" not in payload
+
+    def test_can_disable_initial_sync(self):
+        payload = build_create_datastore_payload(
+            name="ds1",
+            connection_id=5,
+            database="mydb",
+            schema="public",
+            trigger_sync=False,
+        )
+        assert payload["trigger_sync"] is False
 
 
 class TestBuildUpdateDatastorePayload:
@@ -342,6 +354,9 @@ class TestDatastoresCreateCLI:
         assert result.exit_code == 0
         assert "created successfully" in result.output
         mock_create.assert_called_once()
+        payload = mock_create.call_args.args[1]
+        assert payload["trigger_sync"] is True
+        assert "trigger_catalog" not in payload
 
     @patch("qualytics.cli.datastores.create_datastore")
     @patch("qualytics.cli.datastores.get_connection_by")
