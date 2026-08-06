@@ -16,10 +16,12 @@ def validate_and_format_url(url: str) -> str:
     else:
         url = "https://" + url
 
-    # Remove any trailing slashes or '/api' or '/api/'
-    url = url.rstrip("/").rstrip("/api").rstrip("/")
+    # Normalize an existing API path without stripping valid hostname characters.
+    url = url.rstrip("/")
+    if url.endswith("/api"):
+        url = url[:-4]
 
     # Append '/api/' to the URL
-    url += "/api/"
+    url = url.rstrip("/") + "/api/"
 
     return url

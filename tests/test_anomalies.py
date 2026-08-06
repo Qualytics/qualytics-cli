@@ -50,7 +50,7 @@ class TestListAnomalies:
             datastore=42,
             container=10,
             quality_check=5,
-            status="Active",
+            status=["Active"],
             anomaly_type="record",
             tag=["prod"],
             start_date="2024-01-01",
@@ -60,7 +60,7 @@ class TestListAnomalies:
         assert params["datastore"] == 42
         assert params["container"] == 10
         assert params["quality_check"] == 5
-        assert params["status"] == "Active"
+        assert params["status"] == ["Active"]
         assert params["anomaly_type"] == "record"
         assert params["tag"] == ["prod"]
         assert params["start_date"] == "2024-01-01"
@@ -260,7 +260,56 @@ class TestAnomaliesListCLI:
         assert kwargs["datastore"] == 42
         assert kwargs["container"] == 10
         assert kwargs["quality_check"] == 5
+        assert kwargs["status"] == ["Active"]
         assert kwargs["anomaly_type"] == "record"
+
+    @patch("qualytics.cli.anomalies.list_all_anomalies")
+    @patch("qualytics.cli.anomalies.get_client")
+    def test_list_repeats_multiple_status_values(self, mock_gc, mock_list, cli_runner):
+        mock_gc.return_value = _mock_client()
+        mock_list.return_value = []
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "anomalies",
+                "list",
+                "--datastore-id",
+                "42",
+                "--status",
+                "Active,Acknowledged",
+            ],
+        )
+
+        assert result.exit_code == 0
+        _, kwargs = mock_list.call_args
+        assert kwargs["status"] == ["Active", "Acknowledged"]
+        assert kwargs["archived"] is None
+
+    @patch("qualytics.cli.anomalies.list_all_anomalies")
+    @patch("qualytics.cli.anomalies.get_client")
+    def test_list_includes_archived_for_mixed_statuses(
+        self, mock_gc, mock_list, cli_runner
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_list.return_value = []
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "anomalies",
+                "list",
+                "--datastore-id",
+                "42",
+                "--status",
+                "Active,Resolved",
+            ],
+        )
+
+        assert result.exit_code == 0
+        _, kwargs = mock_list.call_args
+        assert kwargs["status"] == ["Active", "Resolved"]
+        assert kwargs["archived"] == "include"
 
     @patch("qualytics.cli.anomalies.list_all_anomalies")
     @patch("qualytics.cli.anomalies.get_client")
@@ -350,6 +399,33 @@ class TestAnomaliesUpdateCLI:
         items = mock_bulk.call_args.args[1]
         assert len(items) == 3
         assert all(item["status"] == "Acknowledged" for item in items)
+
+    @patch("qualytics.cli.anomalies.bulk_update_anomalies")
+    @patch("qualytics.cli.anomalies.get_client")
+    def test_update_bulk_includes_description_and_tags(
+        self, mock_gc, mock_bulk, cli_runner
+    ):
+        mock_gc.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "anomalies",
+                "update",
+                "--ids",
+                "1,2",
+                "--status",
+                "Acknowledged",
+                "--description",
+                "Known issue",
+                "--tags",
+                "reviewed,ci",
+            ],
+        )
+
+        assert result.exit_code == 0
+        items = mock_bulk.call_args.args[1]
+        assert all(item["description"] == "Known issue" for item in items)
+        assert all(item["tags"] == ["reviewed", "ci"] for item in items)
 
     def test_update_rejects_archived_status(self, cli_runner):
         with patch("qualytics.cli.anomalies.get_client"):

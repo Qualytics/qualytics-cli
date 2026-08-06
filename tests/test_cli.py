@@ -58,6 +58,15 @@ def test_schedule_command_registered(cli_runner):
     assert "schedule" in result.output.lower() or "export" in result.output.lower()
 
 
+def test_scheduled_export_url_keeps_all_container_filters_quoted_together():
+    from qualytics.cli.schedule import _build_export_url
+
+    assert (
+        _build_export_url("https://example.com/api/", "checks", "42", [1, 2])
+        == "https://example.com/api/export/checks?datastore=42&containers=1&containers=2"
+    )
+
+
 def test_containers_command_registered(cli_runner):
     """Test that the 'containers' command group is registered."""
     result = cli_runner.invoke(app, ["containers", "--help"])
@@ -464,12 +473,17 @@ class TestDoctorCommand:
         mock_resp.ok = True
         mock_resp.status_code = 200
 
-        with patch("qualytics.cli.doctor.requests.get", return_value=mock_resp):
+        with patch(
+            "qualytics.cli.doctor.requests.get", return_value=mock_resp
+        ) as mock_get:
             result = cli_runner.invoke(app, ["doctor"])
 
         output = _strip_ansi(result.output)
         assert result.exit_code == 0
         assert "All checks passed" in output
+        assert {call.args[0] for call in mock_get.call_args_list} == {
+            "https://test.qualytics.io/api/status"
+        }
 
     def test_doctor_expired_token(self, cli_runner, tmp_path, monkeypatch):
         """doctor detects an expired token."""

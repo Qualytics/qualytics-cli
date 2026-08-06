@@ -11,6 +11,7 @@ import typer
 from rich import print
 
 from ..config import CONFIG_PATH, __version__, load_config
+from ..utils import validate_and_format_url
 from . import BRAND, print_banner
 
 
@@ -138,16 +139,17 @@ def doctor() -> None:
     ssl_verify = config.get("ssl_verify", True)
 
     if base_url:
+        status_url = validate_and_format_url(base_url) + "status"
         try:
             start = time.monotonic()
             resp = requests.get(
-                base_url,
+                status_url,
                 headers={"Authorization": f"Bearer {token}"},
                 verify=ssl_verify,
                 timeout=10,
             )
             elapsed_ms = int((time.monotonic() - start) * 1000)
-            display_url = base_url.rstrip("/")
+            display_url = status_url
 
             if resp.ok or resp.status_code in (401, 403, 404):
                 # Server is reachable (even 401/403/404 means server responded)
@@ -198,7 +200,7 @@ def doctor() -> None:
         warned += 1
     elif base_url:
         try:
-            requests.get(base_url, verify=True, timeout=10)
+            requests.get(status_url, verify=True, timeout=10)
             print(f"  {_check_mark(True)} [bold]SSL certificate[/bold] Valid")
             passed += 1
         except requests.exceptions.SSLError:

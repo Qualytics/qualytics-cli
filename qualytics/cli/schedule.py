@@ -4,6 +4,7 @@ import platform
 import subprocess
 import typer
 from datetime import datetime
+from urllib.parse import urlencode
 from croniter import croniter
 from rich import print
 
@@ -22,6 +23,14 @@ from . import add_suggestion_callback
 # Create Typer instance for schedule
 schedule_app = typer.Typer(name="schedule", help="Manage scheduled operations")
 add_suggestion_callback(schedule_app, "schedule")
+
+
+def _build_export_url(
+    base_url: str, option: str, datastore: str, containers: list[int] | None
+) -> str:
+    query: list[tuple[str, str | int]] = [("datastore", datastore)]
+    query.extend(("containers", container) for container in containers or [])
+    return f"{base_url}export/{option}?{urlencode(query)}"
 
 
 @schedule_app.command("export-metadata")
@@ -75,23 +84,13 @@ def schedule(
 
         for option in options:
             log_file_path = f"{BASE_PATH}/schedule_{option}.txt"
+            export_url = _build_export_url(base_url, option, datastore, containers)
             if operating_system == "Windows":
-                if containers:
-                    containers_string = "".join(
-                        f"&containers={container}" for container in containers
-                    )
-                    powershell_script = (
-                        f"Invoke-RestMethod -Method 'Post' "
-                        f'-Uri "{base_url}export/{option}?datastore={datastore}{containers_string}" '
-                        f"-Headers @{{'Authorization' = 'Bearer {token}'; 'Content-Type' = 'application/json'}} "
-                    )
-
-                else:
-                    powershell_script = (
-                        f"Invoke-RestMethod -Method 'Post' "
-                        f"-Uri {base_url}export/{option}?datastore={datastore} "
-                        f"-Headers @{{'Authorization' = 'Bearer {token}'; 'Content-Type' = 'application/json'}} "
-                    )
+                powershell_script = (
+                    f"Invoke-RestMethod -Method 'Post' "
+                    f'-Uri "{export_url}" '
+                    f"-Headers @{{'Authorization' = 'Bearer {token}'; 'Content-Type' = 'application/json'}} "
+                )
 
                 # powershell_script += f'$response | Out-File \'{log_file_path}\' -Append\''
                 script_name = f"task_scheduler_script_{option}_{datastore}.ps1"
@@ -106,16 +105,11 @@ def schedule(
                 )
 
             elif operating_system == "Linux":
-                if containers:
-                    command = (
-                        f"{crontab_expression} /usr/bin/curl --request POST --url '{base_url}export/{option}?datastore={datastore}'"
-                        + "".join(
-                            f"&containers={container}" for container in containers
-                        )
-                        + f" --header 'Authorization: Bearer {token}'  >> {log_file_path} 2>&1"
-                    )
-                else:
-                    command = f"{crontab_expression} /usr/bin/curl --request POST --url '{base_url}export/{option}?datastore={datastore}' --header 'Authorization: Bearer {token}' >> {log_file_path} 2>&1"
+                command = (
+                    f"{crontab_expression} /usr/bin/curl --request POST "
+                    f"--url '{export_url}' --header 'Authorization: Bearer {token}' "
+                    f">> {log_file_path} 2>&1"
+                )
                 commands.append(command)
 
         if operating_system == "Linux":

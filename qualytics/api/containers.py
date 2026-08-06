@@ -22,12 +22,10 @@ def update_container(
     associated quality checks or anomalies.  Without the flag the API
     returns 409 when fields would be lost.
     """
-    params: dict = {}
+    request_payload = dict(payload)
     if force_drop_fields:
-        params["force_drop_fields"] = True
-    response = client.put(
-        f"containers/{container_id}", json=payload, params=params or None
-    )
+        request_payload["force_drop_fields"] = True
+    response = client.put(f"containers/{container_id}", json=request_payload)
     return response.json()
 
 
@@ -130,7 +128,12 @@ def list_containers_listing(
 ) -> list[dict]:
     """Lightweight non-paginated container listing for name→ID resolution."""
     params: dict = {"datastore": datastore_id}
-    if container_type is not None:
-        params["type"] = container_type
     response = client.get("containers/listing", params=params)
-    return response.json()
+    containers = response.json()
+    if container_type is None:
+        return containers
+    return [
+        container
+        for container in containers
+        if container.get("container_type") == container_type
+    ]

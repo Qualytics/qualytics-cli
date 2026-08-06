@@ -6,12 +6,16 @@ from pathlib import Path
 import yaml
 
 from ..api.client import QualyticsClient
+from ..api.containers import get_container
+from ..api.datastores import get_datastore
 from ..api.quality_checks import (
-    list_all_quality_checks,
     create_quality_check,
+    get_quality_check,
+    list_all_quality_checks,
     update_quality_check,
 )
-from ..services.containers import get_table_ids
+from ..services.containers import get_container_by_name, get_table_ids
+from ..services.datastores import get_datastore_by_name
 from ..utils.serialization import _SafeStringLoader
 
 # ── Stable UID ────────────────────────────────────────────────────────────
@@ -55,6 +59,7 @@ _PORTABLE_FIELD_ORDER = [
     "fields",
     "coverage",
     "filter",
+    "anomaly_message_field",
     "properties",
     "tags",
     "status",
@@ -62,8 +67,15 @@ _PORTABLE_FIELD_ORDER = [
 ]
 
 
-def strip_for_export(check: dict) -> dict:
+def strip_for_export(
+    check: dict,
+    *,
+    containers_by_id: dict[int, dict] | None = None,
+    datastores_by_id: dict[int, dict] | None = None,
+) -> dict:
     """Convert an API response check into a portable, git-friendly dict."""
+    containers_by_id = containers_by_id or {}
+    datastores_by_id = datastores_by_id or {}
     container_name = ""
     if check.get("container"):
         container_name = check["container"].get("name", "")
@@ -77,15 +89,31 @@ def strip_for_export(check: dict) -> dict:
         tag_names = [t["name"] for t in check["global_tags"]]
 
     # Copy properties and resolve cross-references to names
-    properties = check.get("properties") or {}
+    properties = dict(check.get("properties") or {})
+    if check.get("rule_type") in _CROSS_REF_RULES:
+        ref_container_id = properties.pop("ref_container_id", None)
+        ref_container = containers_by_id.get(ref_container_id)
+        if ref_container and ref_container.get("name"):
+            properties["ref_container_name"] = ref_container["name"]
+        elif ref_container_id is not None:
+            properties["ref_container_id"] = ref_container_id
+
+        ref_datastore_id = properties.pop("ref_datastore_id", None)
+        ref_datastore = datastores_by_id.get(ref_datastore_id)
+        if ref_datastore and ref_datastore.get("name"):
+            properties["ref_datastore_name"] = ref_datastore["name"]
+        elif ref_datastore_id is not None:
+            properties["ref_datastore_id"] = ref_datastore_id
 
     portable: dict = {
         "rule_type": check.get("rule_type"),
-        "description": check.get("description", ""),
+        "description": check.get("description")
+        or f"{check.get('rule_type', 'Quality')} quality check",
         "container": container_name,
         "fields": field_names,
         "coverage": check.get("coverage"),
         "filter": check.get("filter"),
+        "anomaly_message_field": check.get("anomaly_message_field"),
         "properties": properties,
         "tags": tag_names,
         "status": check.get("status", "Active"),
@@ -108,7 +136,13 @@ def strip_for_export(check: dict) -> dict:
 # ── Directory-based export ────────────────────────────────────────────────
 
 
-def export_checks_to_directory(checks: list[dict], output_dir: str) -> dict[str, int]:
+def export_checks_to_directory(
+    checks: list[dict],
+    output_dir: str,
+    *,
+    containers_by_id: dict[int, dict] | None = None,
+    datastores_by_id: dict[int, dict] | None = None,
+) -> dict[str, int]:
     """Write one YAML file per check, organized by container.
 
     Returns {"exported": N, "containers": M}.
@@ -120,7 +154,11 @@ def export_checks_to_directory(checks: list[dict], output_dir: str) -> dict[str,
     exported = 0
 
     for check in checks:
-        portable = strip_for_export(check)
+        portable = strip_for_export(
+            check,
+            containers_by_id=containers_by_id,
+            datastores_by_id=datastores_by_id,
+        )
         container = portable["container"] or "_no_container"
         container_slug = (
             _slugify(container) if container != "_no_container" else container
@@ -160,6 +198,29 @@ def export_checks_to_directory(checks: list[dict], output_dir: str) -> dict[str,
     return {"exported": exported, "containers": len(containers_seen)}
 
 
+def get_quality_check_reference_maps(
+    client: QualyticsClient, checks: list[dict]
+) -> tuple[dict[int, dict], dict[int, dict]]:
+    """Fetch the assets needed to replace cross-environment reference IDs."""
+    containers_by_id: dict[int, dict] = {}
+    datastores_by_id: dict[int, dict] = {}
+    for check in checks:
+        properties = check.get("properties") or {}
+        ref_container_id = properties.get("ref_container_id")
+        if (
+            isinstance(ref_container_id, int)
+            and ref_container_id not in containers_by_id
+        ):
+            containers_by_id[ref_container_id] = get_container(client, ref_container_id)
+        ref_datastore_id = properties.get("ref_datastore_id")
+        if (
+            isinstance(ref_datastore_id, int)
+            and ref_datastore_id not in datastores_by_id
+        ):
+            datastores_by_id[ref_datastore_id] = get_datastore(client, ref_datastore_id)
+    return containers_by_id, datastores_by_id
+
+
 # ── Directory-based import ────────────────────────────────────────────────
 
 
@@ -189,10 +250,19 @@ def _build_uid_lookup(client: QualyticsClient, datastore_id: int) -> dict[str, i
 
 
 def _user_ref(value):
-    """Normalize a user-id reference: 0 (or any falsy non-None) means clear."""
+    """Normalize an optional user-id reference; zero clears nullable references."""
     if value is None:
         return ...  # sentinel: caller should not include the key
     return value if value else None
+
+
+def _owner_ref(value):
+    """Normalize an owner id; the API does not support clearing ownership."""
+    if value is None:
+        return ...
+    if value <= 0:
+        raise ValueError("owner_id must be a positive user ID")
+    return value
 
 
 def _build_create_payload(check: dict, container_id: int) -> dict:
@@ -200,7 +270,7 @@ def _build_create_payload(check: dict, container_id: int) -> dict:
     payload = {
         "container_id": container_id,
         "rule": check.get("rule_type") or check.get("rule", ""),
-        "description": check.get("description", ""),
+        "description": check.get("description") or "Imported quality check",
         "fields": check.get("fields") or [],
         "coverage": check.get("coverage"),
         "filter": check.get("filter"),
@@ -209,19 +279,21 @@ def _build_create_payload(check: dict, container_id: int) -> dict:
         "additional_metadata": check.get("additional_metadata") or {},
         "status": check.get("status", "Active"),
     }
-    owner = _user_ref(check.get("owner_id"))
+    owner = _owner_ref(check.get("owner_id"))
     if owner is not ...:
         payload["owner_id"] = owner
     assignee = _user_ref(check.get("default_anomaly_assignee_id"))
     if assignee is not ...:
         payload["default_anomaly_assignee_id"] = assignee
+    if "anomaly_message_field" in check:
+        payload["anomaly_message_field"] = check["anomaly_message_field"]
     return payload
 
 
 def _build_update_payload(check: dict) -> dict:
     """Convert a portable check dict into a PUT /quality-checks/{id} payload."""
     payload = {
-        "description": check.get("description", ""),
+        "description": check.get("description") or "Imported quality check",
         "fields": check.get("fields") or [],
         "coverage": check.get("coverage"),
         "filter": check.get("filter"),
@@ -230,13 +302,69 @@ def _build_update_payload(check: dict) -> dict:
         "additional_metadata": check.get("additional_metadata") or {},
         "status": check.get("status", "Active"),
     }
-    owner = _user_ref(check.get("owner_id"))
+    owner = _owner_ref(check.get("owner_id"))
     if owner is not ...:
         payload["owner_id"] = owner
     assignee = _user_ref(check.get("default_anomaly_assignee_id"))
     if assignee is not ...:
         payload["default_anomaly_assignee_id"] = assignee
+    if "anomaly_message_field" in check:
+        payload["anomaly_message_field"] = check["anomaly_message_field"]
     return payload
+
+
+def merge_quality_check_update(existing: dict, changes: dict) -> dict:
+    """Merge a partial portable definition over the current API response."""
+    current_tags = existing.get("global_tags") or existing.get("tags") or []
+    merged = {
+        "description": existing.get("description"),
+        "fields": [
+            field["name"] if isinstance(field, dict) else field
+            for field in existing.get("fields") or []
+        ],
+        "coverage": existing.get("coverage"),
+        "filter": existing.get("filter"),
+        "anomaly_message_field": existing.get("anomaly_message_field"),
+        "properties": existing.get("properties") or {},
+        "tags": [tag["name"] if isinstance(tag, dict) else tag for tag in current_tags],
+        "additional_metadata": existing.get("additional_metadata") or {},
+        "status": existing.get("status") or "Active",
+    }
+    merged.update(changes)
+    return merged
+
+
+def resolve_quality_check_references(
+    client: QualyticsClient, check: dict, datastore_id: int
+) -> dict:
+    """Resolve portable cross-reference names for a target datastore."""
+    resolved = dict(check)
+    properties = resolved.get("properties")
+    if not isinstance(properties, dict):
+        return resolved
+
+    properties = dict(properties)
+    ref_datastore_name = properties.pop("ref_datastore_name", None)
+    if ref_datastore_name and "ref_datastore_id" not in properties:
+        datastore = get_datastore_by_name(client, ref_datastore_name)
+        if not datastore:
+            raise ValueError(f"Referenced datastore '{ref_datastore_name}' not found")
+        properties["ref_datastore_id"] = datastore["id"]
+
+    ref_container_name = properties.pop("ref_container_name", None)
+    if ref_container_name and "ref_container_id" not in properties:
+        reference_datastore_id = properties.get("ref_datastore_id", datastore_id)
+        container = get_container_by_name(
+            client, reference_datastore_id, ref_container_name
+        )
+        if not container:
+            raise ValueError(
+                f"Referenced container '{ref_container_name}' not found in datastore"
+            )
+        properties["ref_container_id"] = container["id"]
+
+    resolved["properties"] = properties
+    return resolved
 
 
 def import_checks_to_datastore(
@@ -303,15 +431,20 @@ def import_checks_to_datastore(
             continue
 
         try:
+            resolved_check = resolve_quality_check_references(
+                client, check, datastore_id
+            )
             if uid and uid in uid_lookup:
                 # Update existing check
                 existing_id = uid_lookup[uid]
-                payload = _build_update_payload(check)
+                existing = get_quality_check(client, existing_id)
+                update_source = merge_quality_check_update(existing, resolved_check)
+                payload = _build_update_payload(update_source)
                 update_quality_check(client, existing_id, payload)
                 updated += 1
             else:
                 # Create new check
-                payload = _build_create_payload(check, container_id)
+                payload = _build_create_payload(resolved_check, container_id)
                 result = create_quality_check(client, payload)
                 created += 1
                 # Register UID for subsequent duplicate detection within this run

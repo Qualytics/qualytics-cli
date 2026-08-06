@@ -1,5 +1,6 @@
 """Tests for quality checks — API, services, and CLI."""
 
+import pytest
 import yaml
 from unittest.mock import MagicMock, patch
 
@@ -8,8 +9,10 @@ from qualytics.services.quality_checks import (
     check_filename,
     strip_for_export,
     export_checks_to_directory,
+    get_quality_check_reference_maps,
     load_checks_from_directory,
     import_checks_to_datastore,
+    resolve_quality_check_references,
     _build_create_payload,
     _build_update_payload,
     _build_uid_lookup,
@@ -19,6 +22,7 @@ from qualytics.api.quality_checks import (
     list_quality_checks,
     get_quality_check,
     create_quality_check,
+    create_quality_check_template,
     update_quality_check,
     delete_quality_check,
     bulk_delete_quality_checks,
@@ -196,6 +200,92 @@ class TestStripForExport:
         result = strip_for_export(check)
         assert result["tags"] == []
 
+    def test_preserves_anomaly_message_field(self):
+        result = strip_for_export(_make_api_check(anomaly_message_field="customer_id"))
+        assert result["anomaly_message_field"] == "customer_id"
+
+    def test_null_description_gets_importable_fallback(self):
+        result = strip_for_export(_make_api_check(description=None))
+        assert result["description"] == "notNull quality check"
+
+    def test_resolves_cross_reference_ids_to_names(self):
+        check = _make_api_check(
+            rule_type="existsIn",
+            properties={
+                "field_name": "customer_id",
+                "ref_container_id": 200,
+                "ref_datastore_id": 20,
+            },
+        )
+        result = strip_for_export(
+            check,
+            containers_by_id={200: {"id": 200, "name": "customers"}},
+            datastores_by_id={20: {"id": 20, "name": "crm"}},
+        )
+        assert result["properties"] == {
+            "field_name": "customer_id",
+            "ref_container_name": "customers",
+            "ref_datastore_name": "crm",
+        }
+
+
+class TestQualityCheckReferences:
+    @patch("qualytics.services.quality_checks.get_datastore")
+    @patch("qualytics.services.quality_checks.get_container")
+    def test_builds_deduplicated_reference_maps(
+        self, mock_get_container, mock_get_datastore
+    ):
+        client = _mock_client()
+        mock_get_container.return_value = {"id": 200, "name": "customers"}
+        mock_get_datastore.return_value = {"id": 20, "name": "crm"}
+        checks = [
+            {
+                "properties": {
+                    "ref_container_id": 200,
+                    "ref_datastore_id": 20,
+                }
+            },
+            {
+                "properties": {
+                    "ref_container_id": 200,
+                    "ref_datastore_id": 20,
+                }
+            },
+        ]
+
+        containers, datastores = get_quality_check_reference_maps(client, checks)
+
+        assert containers == {200: {"id": 200, "name": "customers"}}
+        assert datastores == {20: {"id": 20, "name": "crm"}}
+        mock_get_container.assert_called_once_with(client, 200)
+        mock_get_datastore.assert_called_once_with(client, 20)
+
+    @patch("qualytics.services.quality_checks.get_container_by_name")
+    @patch("qualytics.services.quality_checks.get_datastore_by_name")
+    def test_resolves_portable_reference_names(
+        self, mock_get_datastore, mock_get_container
+    ):
+        client = _mock_client()
+        mock_get_datastore.return_value = {"id": 20, "name": "crm"}
+        mock_get_container.return_value = {"id": 200, "name": "customers"}
+
+        result = resolve_quality_check_references(
+            client,
+            {
+                "properties": {
+                    "ref_datastore_name": "crm",
+                    "ref_container_name": "customers",
+                }
+            },
+            datastore_id=10,
+        )
+
+        assert result["properties"] == {
+            "ref_datastore_id": 20,
+            "ref_container_id": 200,
+        }
+        mock_get_container.assert_called_once_with(client, 20, "customers")
+
 
 # ── Directory export/import ──────────────────────────────────────────────
 
@@ -320,10 +410,25 @@ class TestPayloadBuilders:
         assert "container_id" not in payload
         assert "rule" not in payload
 
+    def test_payloads_preserve_anomaly_message_field_when_present(self):
+        check = {
+            "rule_type": "notNull",
+            "description": "Customer identifier required",
+            "anomaly_message_field": "customer_id",
+        }
+        assert _build_create_payload(check, 42)["anomaly_message_field"] == (
+            "customer_id"
+        )
+        assert _build_update_payload(check)["anomaly_message_field"] == ("customer_id")
+
+    def test_update_omits_anomaly_message_field_for_legacy_files(self):
+        payload = _build_update_payload({"description": "Legacy check"})
+        assert "anomaly_message_field" not in payload
+
     def test_create_payload_defaults_missing_fields(self):
         check = {"rule_type": "notNull"}
         payload = _build_create_payload(check, container_id=1)
-        assert payload["description"] == ""
+        assert payload["description"] == "Imported quality check"
         assert payload["fields"] == []
         assert payload["properties"] == {}
         assert payload["tags"] == []
@@ -351,24 +456,20 @@ class TestPayloadBuilders:
         assert payload["owner_id"] == 9
         assert payload["default_anomaly_assignee_id"] == 13
 
-    def test_payload_treats_zero_as_clear(self):
-        # YAML `owner_id: 0` and `--owner-id 0` should behave identically:
-        # both mean "clear the value" (user IDs are positive).
-        check = {
-            "description": "x",
-            "owner_id": 0,
-            "default_anomaly_assignee_id": 0,
-        }
-        update_payload = _build_update_payload(check)
-        assert update_payload["owner_id"] is None
+    def test_zero_clears_default_assignee(self):
+        update_payload = _build_update_payload(
+            {"description": "x", "default_anomaly_assignee_id": 0}
+        )
         assert update_payload["default_anomaly_assignee_id"] is None
 
-        create_payload = _build_create_payload(
-            {"rule_type": "notNull", "owner_id": 0, "default_anomaly_assignee_id": 0},
-            container_id=1,
-        )
-        assert create_payload["owner_id"] is None
-        assert create_payload["default_anomaly_assignee_id"] is None
+    def test_zero_owner_is_rejected(self):
+        with pytest.raises(ValueError, match="positive user ID"):
+            _build_update_payload({"description": "x", "owner_id": 0})
+        with pytest.raises(ValueError, match="positive user ID"):
+            _build_create_payload(
+                {"rule_type": "notNull", "owner_id": 0},
+                container_id=1,
+            )
 
 
 # ── Load from directory ──────────────────────────────────────────────────
@@ -482,6 +583,21 @@ class TestCreateQualityCheck:
         result = create_quality_check(client, payload)
         client.post.assert_called_once_with("quality-checks", json=payload)
         assert result["id"] == 100
+
+
+class TestCreateQualityCheckTemplate:
+    def test_posts_to_template_endpoint(self):
+        client = _mock_client()
+        client.post.return_value.json.return_value = {
+            "id": 101,
+            "rule_type": "notNull",
+        }
+        payload = {"rule": "notNull", "description": "Required value"}
+
+        result = create_quality_check_template(client, payload)
+
+        client.post.assert_called_once_with("quality-check-templates", json=payload)
+        assert result["id"] == 101
 
 
 class TestUpdateQualityCheck:
@@ -651,6 +767,55 @@ class TestImportChecksToDatastore:
         assert result["updated"] == 1
         assert result["failed"] == 0
         mock_update.assert_called_once()
+
+    @patch("qualytics.services.quality_checks.get_quality_check")
+    @patch("qualytics.services.quality_checks.update_quality_check")
+    @patch("qualytics.services.quality_checks.list_all_quality_checks")
+    @patch("qualytics.services.quality_checks.get_table_ids")
+    def test_partial_import_preserves_omitted_existing_fields(
+        self, mock_tables, mock_list, mock_update, mock_get
+    ):
+        client = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        uid = generate_check_uid("orders", "notNull", ["order_id"])
+        mock_list.return_value = [
+            {"id": 50, "additional_metadata": {_UID_KEY: uid}},
+        ]
+        mock_get.return_value = {
+            "id": 50,
+            "description": "Required order identifier",
+            "fields": [{"name": "order_id"}],
+            "coverage": 0.8,
+            "filter": "order_id IS NOT NULL",
+            "properties": {"is_element_context": False},
+            "global_tags": [{"name": "critical"}],
+            "additional_metadata": {_UID_KEY: uid, "source": "manual"},
+            "status": "Draft",
+            "anomaly_message_field": "order_id",
+        }
+
+        result = import_checks_to_datastore(
+            client,
+            42,
+            [
+                {
+                    "container": "orders",
+                    "description": "Updated description",
+                    "additional_metadata": {_UID_KEY: uid},
+                }
+            ],
+        )
+
+        assert result["updated"] == 1
+        payload = mock_update.call_args.args[2]
+        assert payload["description"] == "Updated description"
+        assert payload["fields"] == ["order_id"]
+        assert payload["coverage"] == 0.8
+        assert payload["filter"] == "order_id IS NOT NULL"
+        assert payload["properties"] == {"is_element_context": False}
+        assert payload["tags"] == ["critical"]
+        assert payload["status"] == "Draft"
+        assert payload["anomaly_message_field"] == "order_id"
 
     @patch("qualytics.services.quality_checks.list_all_quality_checks")
     @patch("qualytics.services.quality_checks.get_table_ids")
@@ -992,7 +1157,9 @@ class TestChecksUpdateCLI:
 
     @patch("qualytics.cli.checks.update_quality_check")
     @patch("qualytics.cli.checks.get_client")
-    def test_update_owner_zero_clears(self, mock_gc, mock_update, cli_runner, tmp_path):
+    def test_update_owner_zero_is_rejected(
+        self, mock_gc, mock_update, cli_runner, tmp_path
+    ):
         mock_gc.return_value = _mock_client()
         mock_update.return_value = {"id": 42}
 
@@ -1012,9 +1179,9 @@ class TestChecksUpdateCLI:
                 "0",
             ],
         )
-        assert result.exit_code == 0
-        payload = mock_update.call_args.args[2]
-        assert payload["owner_id"] is None
+        assert result.exit_code == 1
+        assert "positive user ID" in result.output
+        mock_update.assert_not_called()
 
     @patch("qualytics.cli.checks.update_quality_check")
     @patch("qualytics.cli.checks.get_client")
@@ -1417,3 +1584,103 @@ class TestPromotionWorkflow:
         result2 = import_checks_to_datastore(client, 10, loaded)
         assert result2["updated"] == 3
         assert result2["created"] == 0
+
+
+class TestCheckContractRegressions:
+    @patch("qualytics.cli.checks.create_quality_check_template")
+    @patch("qualytics.cli.checks.get_client")
+    def test_import_templates_uses_template_endpoint_payload(
+        self, mock_get_client, mock_create_template, cli_runner, tmp_path
+    ):
+        mock_get_client.return_value = _mock_client()
+        mock_create_template.return_value = {"id": 88}
+        input_file = tmp_path / "templates.yaml"
+        input_file.write_text(
+            yaml.safe_dump(
+                [
+                    {
+                        "id": 7,
+                        "rule_type": "notNull",
+                        "description": "Required value",
+                        "fields": [{"name": "ignored_for_templates"}],
+                        "coverage": 1.0,
+                        "properties": {},
+                        "global_tags": [{"name": "critical"}],
+                    }
+                ]
+            )
+        )
+
+        result = cli_runner.invoke(
+            app,
+            ["checks", "import-templates", "--input", str(input_file)],
+        )
+
+        assert result.exit_code == 0
+        payload = mock_create_template.call_args.args[1]
+        assert payload["rule"] == "notNull"
+        assert payload["tags"] == ["critical"]
+        assert "fields" not in payload
+        assert "container_id" not in payload
+        assert "template_only" not in payload
+
+    @patch("qualytics.cli.checks.update_quality_check")
+    @patch("qualytics.cli.checks.get_quality_check")
+    @patch("qualytics.cli.checks.get_client")
+    def test_activate_preserves_anomaly_message_field(
+        self, mock_get_client, mock_get_check, mock_update, cli_runner
+    ):
+        mock_get_client.return_value = _mock_client()
+        mock_get_check.return_value = {
+            "id": 42,
+            "rule_type": "notNull",
+            "description": "Required value",
+            "fields": [{"name": "customer_id"}],
+            "global_tags": [],
+            "anomaly_message_field": "customer_id",
+        }
+
+        result = cli_runner.invoke(app, ["checks", "activate", "--id", "42"])
+
+        assert result.exit_code == 0
+        payload = mock_update.call_args.args[2]
+        assert payload["anomaly_message_field"] == "customer_id"
+
+    @patch("qualytics.cli.checks.update_quality_check")
+    @patch("qualytics.cli.checks.get_quality_check")
+    @patch("qualytics.cli.checks.get_client")
+    def test_update_preserves_existing_anomaly_message_field(
+        self, mock_get_client, mock_get_check, mock_update, cli_runner, tmp_path
+    ):
+        mock_get_client.return_value = _mock_client()
+        mock_get_check.return_value = {
+            "rule_type": "notNull",
+            "description": "Required value",
+            "fields": [{"name": "customer_id"}],
+            "coverage": 0.75,
+            "filter": "customer_id IS NOT NULL",
+            "properties": {"is_element_context": False},
+            "global_tags": [{"name": "critical"}],
+            "additional_metadata": {"source": "manual"},
+            "status": "Draft",
+            "anomaly_message_field": "customer_id",
+        }
+        update_file = tmp_path / "update.yaml"
+        update_file.write_text("description: Updated description\n")
+        mock_update.return_value = {"id": 42}
+
+        result = cli_runner.invoke(
+            app,
+            ["checks", "update", "--id", "42", "--file", str(update_file)],
+        )
+
+        assert result.exit_code == 0
+        payload = mock_update.call_args.args[2]
+        assert payload["anomaly_message_field"] == "customer_id"
+        assert payload["fields"] == ["customer_id"]
+        assert payload["coverage"] == 0.75
+        assert payload["filter"] == "customer_id IS NOT NULL"
+        assert payload["properties"] == {"is_element_context": False}
+        assert payload["tags"] == ["critical"]
+        assert payload["additional_metadata"] == {"source": "manual"}
+        assert payload["status"] == "Draft"

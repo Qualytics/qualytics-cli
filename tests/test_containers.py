@@ -66,9 +66,7 @@ class TestUpdateContainer:
         client = _mock_client()
         client.put.return_value.json.return_value = {"id": 1, "name": "updated"}
         result = update_container(client, 1, {"name": "updated"})
-        client.put.assert_called_once_with(
-            "containers/1", json={"name": "updated"}, params=None
-        )
+        client.put.assert_called_once_with("containers/1", json={"name": "updated"})
         assert result["name"] == "updated"
 
     def test_force_drop_fields(self):
@@ -77,17 +75,14 @@ class TestUpdateContainer:
         update_container(client, 1, {"name": "x"}, force_drop_fields=True)
         client.put.assert_called_once_with(
             "containers/1",
-            json={"name": "x"},
-            params={"force_drop_fields": True},
+            json={"name": "x", "force_drop_fields": True},
         )
 
     def test_no_force_drop_fields(self):
         client = _mock_client()
         client.put.return_value.json.return_value = {"id": 1}
         update_container(client, 1, {"name": "x"}, force_drop_fields=False)
-        client.put.assert_called_once_with(
-            "containers/1", json={"name": "x"}, params=None
-        )
+        client.put.assert_called_once_with("containers/1", json={"name": "x"})
 
 
 class TestGetContainer:
@@ -259,10 +254,14 @@ class TestListContainersListing:
 
     def test_with_container_type(self):
         client = _mock_client()
-        client.get.return_value.json.return_value = []
-        list_containers_listing(client, 10, container_type="computed_table")
+        client.get.return_value.json.return_value = [
+            {"id": 1, "container_type": "table"},
+            {"id": 2, "container_type": "computed_table"},
+        ]
+        result = list_containers_listing(client, 10, container_type="computed_table")
         params = client.get.call_args.kwargs["params"]
-        assert params["type"] == "computed_table"
+        assert "type" not in params
+        assert result == [{"id": 2, "container_type": "computed_table"}]
 
     def test_without_container_type(self):
         client = _mock_client()
@@ -543,6 +542,94 @@ class TestBuildUpdateContainerPayload:
         )
         assert payload["description"] == "updated"
         assert payload["tags"] == ["a", "b"]
+
+    @pytest.mark.parametrize(
+        ("container_type", "existing_fields"),
+        [
+            (
+                "table",
+                {
+                    "partition_field": "event_date",
+                    "incremental_field_name": "updated_at",
+                    "incremental_identifier_type": "last-modified",
+                    "infer_datatypes": True,
+                },
+            ),
+            (
+                "file",
+                {
+                    "escape_character": '"',
+                    "infer_datatypes": False,
+                    "has_header": False,
+                    "treat_empty_as_null": True,
+                },
+            ),
+        ],
+    )
+    def test_preserves_discovered_container_settings(
+        self, container_type, existing_fields
+    ):
+        existing = {"container_type": container_type, **existing_fields}
+        payload = build_update_container_payload(existing, description="updated")
+        for key, value in existing_fields.items():
+            assert payload[key] == value
+
+    def test_preserves_computed_container_settings(self):
+        computed_table = build_update_container_payload(
+            {
+                "container_type": "computed_table",
+                "name": "orders",
+                "query": "SELECT * FROM orders",
+                "incremental_field_name": "updated_at",
+                "incremental_identifier_type": "last-modified",
+            },
+            description="updated",
+        )
+        assert computed_table["incremental_field_name"] == "updated_at"
+        assert computed_table["incremental_identifier_type"] == "last-modified"
+
+        computed_file = build_update_container_payload(
+            {
+                "container_type": "computed_file",
+                "name": "orders",
+                "select_clause": "*",
+                "where_clause": "active = true",
+                "group_by_clause": "customer_id",
+                "lateral_views": ["EXPLODE(items) item"],
+            },
+            description="updated",
+        )
+        assert computed_file["where_clause"] == "active = true"
+        assert computed_file["group_by_clause"] == "customer_id"
+        assert computed_file["lateral_views"] == ["EXPLODE(items) item"]
+
+    def test_preserves_pairwise_join_clauses_but_not_sql_mode_shape(self):
+        pairwise = build_update_container_payload(
+            {
+                "container_type": "computed_join",
+                "name": "joined",
+                "where_clause": "left.id > 0",
+                "group_by_clause": "left.id",
+            },
+            description="updated",
+        )
+        assert pairwise["where_clause"] == "left.id > 0"
+        assert pairwise["group_by_clause"] == "left.id"
+
+        sql_mode = build_update_container_payload(
+            {
+                "container_type": "computed_join",
+                "name": "joined",
+                "query": "SELECT * FROM left JOIN right",
+                "sources": [{"container_id": 1, "alias": "left"}],
+                "where_clause": None,
+                "group_by_clause": None,
+            },
+            description="updated",
+        )
+        assert "query" not in sql_mode
+        assert "sources" not in sql_mode
+        assert "where_clause" not in sql_mode
 
 
 # ══════════════════════════════════════════════════════════════════════════

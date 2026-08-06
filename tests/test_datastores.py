@@ -19,6 +19,7 @@ from qualytics.services.datastores import (
     get_datastore_by_name,
     build_create_datastore_payload,
     build_update_datastore_payload,
+    flatten_datastore_for_put,
 )
 from qualytics.qualytics import app
 
@@ -28,6 +29,19 @@ from qualytics.qualytics import app
 
 def _mock_client():
     return MagicMock()
+
+
+def test_flatten_native_datastore_adds_discriminator_marker():
+    payload = flatten_datastore_for_put(
+        {
+            "name": "lakehouse",
+            "store_type": "native",
+            "type": "databricks_native",
+            "connection_id": 7,
+        }
+    )
+
+    assert payload["connection"] == {"type": "databricks_native"}
 
 
 # ══════════════════════════════════════════════════════════════════════════

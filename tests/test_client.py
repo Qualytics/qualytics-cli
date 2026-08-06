@@ -227,6 +227,18 @@ class TestValidateAndFormatUrl:
             == "http://localhost:8000/api/"
         )
 
+    def test_hostname_ending_in_api_characters_is_not_corrupted(self):
+        assert (
+            validate_and_format_url("https://qualytics.ai")
+            == "https://qualytics.ai/api/"
+        )
+
+    def test_non_api_path_suffix_is_not_stripped(self):
+        assert (
+            validate_and_format_url("https://example.com/capi")
+            == "https://example.com/capi/api/"
+        )
+
 
 class TestGetClient:
     """Tests for the get_client factory function."""

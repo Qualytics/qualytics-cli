@@ -348,7 +348,7 @@ class TestRunForDatastores:
             None,
             ["prod"],
             True,
-            "append",
+            None,
             None,
             100,
             None,
@@ -360,10 +360,36 @@ class TestRunForDatastores:
         payload = mock_run.call_args.args[1]
         assert payload["type"] == "scan"
         assert payload["incremental"] is True
-        assert payload["remediation"] == "append"
+        assert "remediation" not in payload
         assert payload["enrichment_source_record_limit"] == 100
         # Default: not in payload, so server default (True) fires.
         assert "auto_resolve_passed_anomalies" not in payload
+
+    @patch("qualytics.services.operations.run_operation")
+    @patch("qualytics.services.operations.wait_for_operation")
+    def test_scan_accepts_legacy_none_without_sending_it(self, mock_wait, mock_run):
+        mock_run.return_value = {"id": 300}
+        mock_wait.return_value = {"result": "success", "message": None}
+
+        from qualytics.services.operations import run_scan
+
+        run_scan(
+            _mock_client(),
+            [42],
+            None,
+            None,
+            False,
+            "none",
+            None,
+            None,
+            None,
+            None,
+            False,
+            poll_interval=1,
+            timeout=10,
+        )
+
+        assert "remediation" not in mock_run.call_args.args[1]
 
     @patch("qualytics.services.operations.run_operation")
     @patch("qualytics.services.operations.wait_for_operation")
@@ -380,7 +406,7 @@ class TestRunForDatastores:
             None,
             None,
             None,
-            "none",
+            None,
             None,
             None,
             None,
@@ -408,7 +434,7 @@ class TestRunForDatastores:
             None,
             None,
             None,
-            "none",
+            None,
             None,
             None,
             None,
@@ -677,7 +703,9 @@ class TestOperationsScanCLI:
 
     @patch("qualytics.cli.operations.get_client")
     @patch("qualytics.cli.operations.run_scan")
-    def test_scan_with_kebab_case_flags(self, mock_run, mock_get_client, cli_runner):
+    def test_scan_rejects_deprecated_remediation_flag(
+        self, mock_run, mock_get_client, cli_runner
+    ):
         mock_get_client.return_value = _mock_client()
         result = cli_runner.invoke(
             app,
@@ -695,12 +723,53 @@ class TestOperationsScanCLI:
                 "500",
             ],
         )
+        assert result.exit_code == 1
+        assert "datastores update" in result.output
+        mock_run.assert_not_called()
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_scan")
+    def test_scan_omits_removed_remediation_field(
+        self, mock_run, mock_get_client, cli_runner
+    ):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "scan",
+                "--datastore-id",
+                "42",
+                "--enrichment-source-record-limit",
+                "500",
+            ],
+        )
         assert result.exit_code == 0
         kwargs = mock_run.call_args.kwargs
-        assert kwargs["remediation"] == "append"
+        assert kwargs["remediation"] is None
         assert kwargs["enrichment_source_record_limit"] == 500
-        # No flag passed → None, so we don't override the server default.
-        assert kwargs["auto_resolve_passed_anomalies"] is None
+
+    @patch("qualytics.cli.operations.get_client")
+    @patch("qualytics.cli.operations.run_scan")
+    def test_scan_accepts_legacy_none_remediation_flag(
+        self, mock_run, mock_get_client, cli_runner
+    ):
+        mock_get_client.return_value = _mock_client()
+        result = cli_runner.invoke(
+            app,
+            [
+                "operations",
+                "scan",
+                "--datastore-id",
+                "42",
+                "--remediation",
+                "none",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "deprecated" in result.output
+        assert mock_run.call_args.kwargs["remediation"] is None
 
     @patch("qualytics.cli.operations.get_client")
     @patch("qualytics.cli.operations.run_scan")

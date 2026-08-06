@@ -292,12 +292,16 @@ def run_scan(
 ):
     """Run scan operation for specified datastores."""
 
+    if remediation not in (None, "none"):
+        raise ValueError(
+            "Scan remediation is configured on the datastore, not the scan operation."
+        )
+
     def build_payload(datastore_id):
         payload = {
             "datastore_id": datastore_id,
             "type": "scan",
             "incremental": incremental if incremental is not None else False,
-            "remediation": remediation,
             "auto_resolve_passed_anomalies": auto_resolve_passed_anomalies,
             "max_records_analyzed_per_partition": max_records_analyzed_per_partition,
             "enrichment_source_record_limit": enrichment_source_record_limit,
