@@ -100,12 +100,12 @@ def anomalies_list(
         open_vals = [s for s in statuses if s in _OPEN_STATUSES]
         if archive_vals and not open_vals:
             archived = "only"
-            api_status = ",".join(archive_vals)
+            api_status = archive_vals
         elif archive_vals:
-            # Mixed — pass as-is, let API handle
-            api_status = ",".join(statuses)
+            archived = "include"
+            api_status = statuses
         else:
-            api_status = ",".join(statuses)
+            api_status = statuses
 
     tag_list = [tag] if tag else None
 
@@ -195,6 +195,10 @@ def anomalies_update(
             id_list.extend(int(x) for x in _parse_comma_list(ids))
 
         item_template: dict = {"status": status}
+        if description is not None:
+            item_template["description"] = description
+        if tags:
+            item_template["tags"] = _parse_comma_list(tags)
         if parsed_assignees is not None:
             item_template["assignee_ids"] = parsed_assignees
         items = [{"id": aid, **item_template} for aid in id_list]

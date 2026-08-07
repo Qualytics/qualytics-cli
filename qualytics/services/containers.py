@@ -169,6 +169,36 @@ def build_update_container_payload(existing: dict, **changes) -> dict:
 
     ct = existing["container_type"]
 
+    preserved_fields = {
+        "table": (
+            "partition_field",
+            "incremental_field_name",
+            "incremental_identifier_type",
+            "infer_datatypes",
+        ),
+        "file": (
+            "escape_character",
+            "infer_datatypes",
+            "has_header",
+            "treat_empty_as_null",
+        ),
+        "computed_table": (
+            "incremental_field_name",
+            "incremental_identifier_type",
+        ),
+        "computed_file": ("where_clause", "group_by_clause", "lateral_views"),
+    }
+    for field in preserved_fields.get(ct, ()):
+        if field in existing:
+            payload[field] = existing[field]
+
+    # Omitted clauses are assigned as null by the pairwise-join update path.
+    # SQL-mode joins intentionally preserve their query/sources when omitted.
+    if ct == "computed_join" and not (existing.get("query") or existing.get("sources")):
+        for field in ("where_clause", "group_by_clause"):
+            if field in existing:
+                payload[field] = existing[field]
+
     # For computed types, name is required in the PUT body
     if ct in _COMPUTED_TYPES:
         payload["name"] = changes.pop("name", existing.get("name"))

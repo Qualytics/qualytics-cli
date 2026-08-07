@@ -351,9 +351,14 @@ YAML is the default format for all CLI input/output. JSON is supported via `--fo
 - `yaml.safe_dump(sort_keys=False)` preserves key order for human-readable output
 
 ```python
-from qualytics.utils import OutputFormat, load_data_file, dump_data_file, format_for_display
+from qualytics.utils import (
+    OutputFormat,
+    load_data_file,
+    dump_data_file,
+    format_for_display,
+)
 
-data = load_data_file("checks.yaml")          # Auto-detects format
+data = load_data_file("checks.yaml")  # Auto-detects format
 dump_data_file(data, "out.yaml", OutputFormat.YAML)
 print(format_for_display(data, OutputFormat.JSON))
 ```

@@ -33,6 +33,7 @@ from ..api.computed_fields import (
 )
 from ..api.connections import (
     create_connection,
+    get_connection_api,
     update_connection,
 )
 from ..api.containers import (
@@ -54,6 +55,7 @@ from ..services.containers import get_container_by_name
 from ..services.datastores import get_datastore_by_name
 from ..services.quality_checks import (
     export_checks_to_directory,
+    get_quality_check_reference_maps,
     import_checks_to_datastore,
     load_checks_from_directory,
 )
@@ -97,12 +99,14 @@ def _generate_env_var_name(connection_name: str, field: str) -> str:
 
 # ── Secrets fields to strip / placeholder ────────────────────────────────
 
-_CONNECTION_SECRET_FIELDS = frozenset({"password", "secret_key", "credentials_payload"})
+_CONNECTION_SECRET_FIELDS = frozenset(
+    {"password", "passphrase", "secret_key", "credentials_payload"}
+)
 
 # Fields the API never returns (already masked), but we still want
 # placeholder env vars in the export for documentation.
 _CONNECTION_SENSITIVE_FIELDS = frozenset(
-    {"password", "secret_key", "credentials_payload", "access_key"}
+    {"password", "passphrase", "secret_key", "credentials_payload", "access_key"}
 )
 
 # Internal-only connection fields to strip on export
@@ -271,16 +275,38 @@ def strip_connection_for_export(conn: dict) -> dict:
     for key, value in conn.items():
         if key in _CONNECTION_INTERNAL_FIELDS:
             continue
+        if key == "secrets_manager" and isinstance(value, dict):
+            secrets_manager = dict(value)
+            secrets_manager.setdefault(
+                "credentials_payload",
+                _generate_env_var_name(
+                    conn.get("name", "unknown"), "credentials_payload"
+                ),
+            )
+            portable[key] = secrets_manager
+            continue
         if key in _CONNECTION_SENSITIVE_FIELDS:
             # Replace with env-var placeholder
             conn_name = conn.get("name", "unknown")
             portable[key] = _generate_env_var_name(conn_name, key)
             continue
         portable[key] = value
+
+    connection_type = str(conn.get("connection_type") or "").lower()
+    has_secrets_manager = isinstance(conn.get("secrets_manager"), dict)
+    conn_name = conn.get("name", "unknown")
+    if connection_type == "jdbc" and conn.get("username") and not has_secrets_manager:
+        portable.setdefault("password", _generate_env_var_name(conn_name, "password"))
+    if connection_type == "dfs" and conn.get("access_key") and not has_secrets_manager:
+        portable.setdefault(
+            "secret_key", _generate_env_var_name(conn_name, "secret_key")
+        )
     return portable
 
 
-def strip_datastore_for_export(ds: dict) -> dict:
+def strip_datastore_for_export(
+    ds: dict, *, resolved_connection: dict | None = None
+) -> dict:
     """Convert an API datastore response into a portable YAML dict.
 
     Replaces ``connection`` object with ``connection_name`` string.
@@ -289,7 +315,7 @@ def strip_datastore_for_export(ds: dict) -> dict:
     portable: dict = {}
 
     # Connection reference → name (with fallbacks)
-    conn = ds.get("connection")
+    conn = resolved_connection or ds.get("connection")
     if conn and isinstance(conn, dict):
         conn_name = conn.get("name")
         if conn_name:
@@ -316,6 +342,9 @@ def strip_datastore_for_export(ds: dict) -> dict:
             portable[key] = [t["name"] if isinstance(t, dict) else t for t in value]
             continue
         if key == "global_tags" and isinstance(value, list):
+            portable["tags"] = [t["name"] if isinstance(t, dict) else t for t in value]
+            continue
+        if key == "tags" and isinstance(value, list):
             portable[key] = [t["name"] if isinstance(t, dict) else t for t in value]
             continue
         portable[key] = value
@@ -323,16 +352,54 @@ def strip_datastore_for_export(ds: dict) -> dict:
     return portable
 
 
-def strip_container_for_export(container: dict, ds_name: str) -> dict:
+def strip_container_for_export(
+    container: dict,
+    ds_name: str,
+    *,
+    containers_by_id: dict[int, dict] | None = None,
+) -> dict:
     """Convert an API container response into a portable YAML dict.
 
     Only computed containers are exported (table/view/file are discovered by sync).
     Replaces ID references with name references.
     """
     portable: dict = {}
+    containers_by_id = containers_by_id or {}
+
+    reference_fields = (
+        ("source_container_id", "source_container_name", None),
+        ("left_container_id", "left_container_name", "left_datastore_name"),
+        ("right_container_id", "right_container_name", "right_datastore_name"),
+    )
+    resolved_reference_ids: set[str] = set()
+    for id_key, name_key, datastore_name_key in reference_fields:
+        ref_id = container.get(id_key)
+        ref = containers_by_id.get(ref_id) if isinstance(ref_id, int) else None
+        if not ref or not ref.get("name"):
+            continue
+        portable[name_key] = ref["name"]
+        resolved_reference_ids.add(id_key)
+        ref_datastore = ref.get("datastore")
+        if (
+            datastore_name_key
+            and isinstance(ref_datastore, dict)
+            and ref_datastore.get("name")
+            and ref_datastore["name"] != ds_name
+        ):
+            portable[datastore_name_key] = ref_datastore["name"]
 
     for key, value in container.items():
         if key in _CONTAINER_INTERNAL_FIELDS:
+            continue
+        if key == "global_tags" and isinstance(value, list):
+            portable["tags"] = [
+                tag["name"] if isinstance(tag, dict) else tag for tag in value
+            ]
+            continue
+        if key == "tags" and isinstance(value, list):
+            portable[key] = [
+                tag["name"] if isinstance(tag, dict) else tag for tag in value
+            ]
             continue
         # Replace source_container_id → source_container_name
         if key == "source_container" and isinstance(value, dict):
@@ -344,13 +411,42 @@ def strip_container_for_export(container: dict, ds_name: str) -> dict:
         if key == "right_container" and isinstance(value, dict):
             portable["right_container_name"] = value.get("name", "")
             continue
-        # Skip raw ID fields (we use names instead)
-        if key in (
-            "source_container_id",
-            "left_container_id",
-            "right_container_id",
-            "datastore_id",
-        ):
+        if key == "sources" and isinstance(value, list):
+            portable_sources: list[dict] = []
+            for source in value:
+                if not isinstance(source, dict):
+                    portable_sources.append(source)
+                    continue
+                portable_source = {
+                    source_key: source_value
+                    for source_key, source_value in source.items()
+                    if source_key not in {"container_id", "datastore_id", "ordinal"}
+                }
+                source_id = source.get("container_id")
+                ref = (
+                    containers_by_id.get(source_id)
+                    if isinstance(source_id, int)
+                    else None
+                )
+                if ref and ref.get("name"):
+                    portable_source["container_name"] = ref["name"]
+                    ref_datastore = ref.get("datastore")
+                    if (
+                        isinstance(ref_datastore, dict)
+                        and ref_datastore.get("name")
+                        and ref_datastore["name"] != ds_name
+                    ):
+                        portable_source["datastore_name"] = ref_datastore["name"]
+                elif source_id is not None:
+                    portable_source["container_id"] = source_id
+                portable_sources.append(portable_source)
+            portable[key] = portable_sources
+            continue
+        # Skip raw ID fields after replacing them with names. Keep an unresolved
+        # source ID rather than producing an unusable definition.
+        if key in resolved_reference_ids:
+            continue
+        if key in ("datastore_id", "right_datastore_id"):
             continue
         portable[key] = value
 
@@ -358,19 +454,48 @@ def strip_container_for_export(container: dict, ds_name: str) -> dict:
     return portable
 
 
-def strip_computed_field_for_export(cf: dict) -> dict:
+def strip_computed_field_for_export(
+    cf: dict,
+    *,
+    containers_by_id: dict[int, dict] | None = None,
+    datastores_by_id: dict[int, dict] | None = None,
+) -> dict:
     """Convert an API computed field into a portable YAML dict.
 
     Strips internal IDs and resolves ``ref_container_id`` /
     ``ref_datastore_id`` in properties to name-based references.
     """
     portable: dict = {}
+    containers_by_id = containers_by_id or {}
+    datastores_by_id = datastores_by_id or {}
     for key, value in cf.items():
         if key in _COMPUTED_FIELD_INTERNAL_FIELDS:
             continue
         # Normalize transformation key name
         if key == "transformation_type":
             portable["transformation"] = value
+            continue
+        if key == "source_fields" and isinstance(value, list):
+            portable[key] = [
+                field["name"] if isinstance(field, dict) else field for field in value
+            ]
+            continue
+        if key == "properties" and isinstance(value, dict):
+            properties = dict(value)
+            ref_container_id = properties.pop("ref_container_id", None)
+            ref_container = containers_by_id.get(ref_container_id)
+            if ref_container and ref_container.get("name"):
+                properties["ref_container_name"] = ref_container["name"]
+            elif ref_container_id is not None:
+                properties["ref_container_id"] = ref_container_id
+
+            ref_datastore_id = properties.pop("ref_datastore_id", None)
+            ref_datastore = datastores_by_id.get(ref_datastore_id)
+            if ref_datastore and ref_datastore.get("name"):
+                properties["ref_datastore_name"] = ref_datastore["name"]
+            elif ref_datastore_id is not None:
+                properties["ref_datastore_id"] = ref_datastore_id
+            portable[key] = properties
             continue
         portable[key] = value
 
@@ -421,16 +546,34 @@ def export_config(
         "checks": 0,
     }
     seen_connections: set[str] = set()
+    connections_by_id: dict[int, dict] = {}
+    datastores_by_id: dict[int, dict] = {}
 
     for ds_id in datastore_ids:
         # Fetch datastore
         ds = get_datastore(client, ds_id)
+        datastores_by_id[ds_id] = ds
         ds_name = ds.get("name", f"datastore_{ds_id}")
         ds_slug = _slugify(ds_name)
 
+        # Current datastore responses expose only connection_id. Resolve it once
+        # so both the datastore file and connection export use portable names.
+        resolved_connection = ds.get("connection")
+        connection_id = ds.get("connection_id")
+        if (
+            ("connections" in include or "datastores" in include)
+            and not isinstance(resolved_connection, dict)
+            and isinstance(connection_id, int)
+        ):
+            if connection_id not in connections_by_id:
+                connections_by_id[connection_id] = get_connection_api(
+                    client, connection_id
+                )
+            resolved_connection = connections_by_id[connection_id]
+
         # ── Connection ───────────────────────────────────────────────
         if "connections" in include:
-            conn = ds.get("connection")
+            conn = resolved_connection
             if conn and isinstance(conn, dict):
                 conn_name = conn.get("name", "")
                 if conn_name and conn_name not in seen_connections:
@@ -443,7 +586,26 @@ def export_config(
             # Also export enrichment connection if present
             enrichment_ds = ds.get("enrich_datastore")
             if enrichment_ds and isinstance(enrichment_ds, dict):
+                enrichment_id = enrichment_ds.get("id")
+                if not isinstance(enrichment_ds.get("connection"), dict) and isinstance(
+                    enrichment_id, int
+                ):
+                    if enrichment_id not in datastores_by_id:
+                        datastores_by_id[enrichment_id] = get_datastore(
+                            client, enrichment_id
+                        )
+                    enrichment_ds = datastores_by_id[enrichment_id]
+
                 enr_conn = enrichment_ds.get("connection")
+                enrichment_connection_id = enrichment_ds.get("connection_id")
+                if not isinstance(enr_conn, dict) and isinstance(
+                    enrichment_connection_id, int
+                ):
+                    if enrichment_connection_id not in connections_by_id:
+                        connections_by_id[enrichment_connection_id] = (
+                            get_connection_api(client, enrichment_connection_id)
+                        )
+                    enr_conn = connections_by_id[enrichment_connection_id]
                 if enr_conn and isinstance(enr_conn, dict):
                     enr_conn_name = enr_conn.get("name", "")
                     if enr_conn_name and enr_conn_name not in seen_connections:
@@ -457,7 +619,9 @@ def export_config(
 
         # ── Datastore ────────────────────────────────────────────────
         if "datastores" in include:
-            portable_ds = strip_datastore_for_export(ds)
+            portable_ds = strip_datastore_for_export(
+                ds, resolved_connection=resolved_connection
+            )
             ds_path = base / "datastores" / ds_slug / "_datastore.yaml"
             _write_yaml(ds_path, portable_ds)
             summary["datastores"] += 1
@@ -467,6 +631,32 @@ def export_config(
         export_cfields = "computed_fields" in include
         if export_containers or export_cfields:
             all_containers = list_all_containers(client, datastore=[ds_id])
+            containers_by_id = {
+                container["id"]: container
+                for container in all_containers
+                if isinstance(container.get("id"), int)
+            }
+
+            # Computed joins expose raw source IDs. Resolve any sources outside
+            # this datastore so their portable names can be exported too.
+            referenced_ids: set[int] = set()
+            for container in all_containers:
+                for key in (
+                    "source_container_id",
+                    "left_container_id",
+                    "right_container_id",
+                ):
+                    ref_id = container.get(key)
+                    if isinstance(ref_id, int):
+                        referenced_ids.add(ref_id)
+                for source in container.get("sources") or []:
+                    if isinstance(source, dict) and isinstance(
+                        source.get("container_id"), int
+                    ):
+                        referenced_ids.add(source["container_id"])
+
+            for ref_id in referenced_ids - containers_by_id.keys():
+                containers_by_id[ref_id] = get_container(client, ref_id)
 
             for container in all_containers:
                 c_name = container.get("name", "")
@@ -477,7 +667,11 @@ def export_config(
 
                 # Export computed container definition
                 if export_containers and ct in _COMPUTED_TYPES:
-                    portable_c = strip_container_for_export(container, ds_name)
+                    portable_c = strip_container_for_export(
+                        container,
+                        ds_name,
+                        containers_by_id=containers_by_id,
+                    )
                     c_path = (
                         base
                         / "datastores"
@@ -498,7 +692,28 @@ def export_config(
                         detail = get_container(client, container["id"])
                         cfs = detail.get("computed_fields") or []
                     for cf in cfs:
-                        portable_cf = strip_computed_field_for_export(cf)
+                        properties = cf.get("properties") or {}
+                        ref_container_id = properties.get("ref_container_id")
+                        if (
+                            isinstance(ref_container_id, int)
+                            and ref_container_id not in containers_by_id
+                        ):
+                            containers_by_id[ref_container_id] = get_container(
+                                client, ref_container_id
+                            )
+                        ref_datastore_id = properties.get("ref_datastore_id")
+                        if (
+                            isinstance(ref_datastore_id, int)
+                            and ref_datastore_id not in datastores_by_id
+                        ):
+                            datastores_by_id[ref_datastore_id] = get_datastore(
+                                client, ref_datastore_id
+                            )
+                        portable_cf = strip_computed_field_for_export(
+                            cf,
+                            containers_by_id=containers_by_id,
+                            datastores_by_id=datastores_by_id,
+                        )
                         cf_slug = _slugify(cf.get("name", "unknown"))
                         cf_path = (
                             base
@@ -517,7 +732,15 @@ def export_config(
             all_checks = list_all_quality_checks(client, ds_id)
             if all_checks:
                 checks_dir = base / "datastores" / ds_slug / "checks"
-                result = export_checks_to_directory(all_checks, str(checks_dir))
+                check_containers, check_datastores = get_quality_check_reference_maps(
+                    client, all_checks
+                )
+                result = export_checks_to_directory(
+                    all_checks,
+                    str(checks_dir),
+                    containers_by_id=check_containers,
+                    datastores_by_id=check_datastores,
+                )
                 summary["checks"] += result["exported"]
 
     return summary
@@ -536,6 +759,14 @@ def _resolve_connection_secrets(portable: dict) -> dict:
     for field in _CONNECTION_SENSITIVE_FIELDS:
         if field in resolved and isinstance(resolved[field], str):
             resolved[field] = resolve_env_vars(resolved[field])
+    if isinstance(resolved.get("secrets_manager"), dict):
+        secrets_manager = dict(resolved["secrets_manager"])
+        credentials_payload = secrets_manager.get("credentials_payload")
+        if isinstance(credentials_payload, str):
+            secrets_manager["credentials_payload"] = resolve_env_vars(
+                credentials_payload
+            )
+        resolved["secrets_manager"] = secrets_manager
     return resolved
 
 
@@ -660,8 +891,15 @@ def _import_datastore(
         for field in _DATASTORE_READONLY_FIELDS:
             data.pop(field, None)
 
+        # Current GET responses call this relationship global_tags, while
+        # create/update payloads accept tags.
+        if "global_tags" in data:
+            if "tags" not in data:
+                data["tags"] = data["global_tags"]
+            data.pop("global_tags")
+
         # Flatten teams/tags that may be stored as objects in older exports
-        for list_key in ("teams", "global_tags"):
+        for list_key in ("teams", "tags"):
             if list_key in data and isinstance(data[list_key], list):
                 data[list_key] = [
                     t["name"] if isinstance(t, dict) else t for t in data[list_key]
@@ -680,6 +918,13 @@ def _import_datastore(
             from .datastores import flatten_datastore_for_put
 
             full_payload = {**flatten_datastore_for_put(full_existing), **data}
+            if "global_tags" in full_payload:
+                if "tags" not in full_payload:
+                    full_payload["tags"] = [
+                        tag["name"] if isinstance(tag, dict) else tag
+                        for tag in full_payload["global_tags"] or []
+                    ]
+                full_payload.pop("global_tags")
             # Strip read-only fields that flatten may have carried over
             for field in _DATASTORE_READONLY_FIELDS:
                 full_payload.pop(field, None)
@@ -759,6 +1004,14 @@ def _import_containers(
             # Strip non-API fields
             data.pop("datastore_name", None)
 
+            if "global_tags" in data:
+                if "tags" not in data:
+                    data["tags"] = [
+                        tag["name"] if isinstance(tag, dict) else tag
+                        for tag in data["global_tags"] or []
+                    ]
+                data.pop("global_tags")
+
             # Resolve name references to IDs
             _resolve_container_refs(client, data, datastore_id)
 
@@ -777,7 +1030,13 @@ def _import_containers(
                 result["updated"] += 1
             else:
                 data["datastore_id"] = datastore_id
-                create_container(client, data)
+                tags = data.pop("tags", None)
+                created = create_container(client, data)
+                if tags:
+                    client.patch(
+                        "containers",
+                        json=[{"id": created["id"], "tags": tags}],
+                    )
                 result["created"] += 1
 
         except Exception as e:
@@ -847,6 +1106,7 @@ def _import_computed_fields(
                     continue
 
                 cf_name = data["name"]
+                _resolve_computed_field_refs(client, data, datastore_id)
 
                 if dry_run:
                     if cf_name in existing_cfs:
@@ -873,6 +1133,54 @@ def _import_computed_fields(
     return result
 
 
+def _resolve_computed_field_refs(
+    client: QualyticsClient, data: dict, datastore_id: int
+) -> None:
+    """Resolve portable computed-field property references in-place."""
+    properties = data.get("properties")
+    if not isinstance(properties, dict):
+        return
+
+    properties = dict(properties)
+    ref_datastore_name = properties.pop("ref_datastore_name", None)
+    if ref_datastore_name and "ref_datastore_id" not in properties:
+        datastore = get_datastore_by_name(client, ref_datastore_name)
+        if not datastore:
+            raise ValueError(f"Referenced datastore '{ref_datastore_name}' not found")
+        properties["ref_datastore_id"] = datastore["id"]
+
+    ref_container_name = properties.pop("ref_container_name", None)
+    if ref_container_name and "ref_container_id" not in properties:
+        reference_datastore_id = properties.get("ref_datastore_id", datastore_id)
+        container = get_container_by_name(
+            client, reference_datastore_id, ref_container_name
+        )
+        if not container:
+            raise ValueError(
+                f"Referenced container '{ref_container_name}' not found in datastore"
+            )
+        properties["ref_container_id"] = container["id"]
+
+    data["properties"] = properties
+
+
+def _resolve_container_name(
+    client: QualyticsClient,
+    name: str,
+    datastore_id: int,
+    datastore_name: str | None = None,
+) -> int:
+    if datastore_name:
+        datastore = get_datastore_by_name(client, datastore_name)
+        if not datastore:
+            raise ValueError(f"Referenced datastore '{datastore_name}' not found")
+        datastore_id = datastore["id"]
+    container = get_container_by_name(client, datastore_id, name)
+    if not container:
+        raise ValueError(f"Referenced container '{name}' not found in datastore")
+    return container["id"]
+
+
 def _resolve_container_refs(
     client: QualyticsClient, data: dict, datastore_id: int
 ) -> None:
@@ -881,20 +1189,37 @@ def _resolve_container_refs(
     Handles ``source_container_name``, ``left_container_name``,
     ``right_container_name``.
     """
-    for name_key, id_key in [
-        ("source_container_name", "source_container_id"),
-        ("left_container_name", "left_container_id"),
-        ("right_container_name", "right_container_id"),
+    for name_key, id_key, datastore_name_key in [
+        ("source_container_name", "source_container_id", None),
+        ("left_container_name", "left_container_id", "left_datastore_name"),
+        ("right_container_name", "right_container_id", "right_datastore_name"),
     ]:
         ref_name = data.pop(name_key, None)
+        ref_datastore_name = (
+            data.pop(datastore_name_key, None) if datastore_name_key else None
+        )
         if ref_name and id_key not in data:
-            ref = get_container_by_name(client, datastore_id, ref_name)
-            if ref:
-                data[id_key] = ref["id"]
-            else:
-                raise ValueError(
-                    f"Referenced container '{ref_name}' not found in datastore"
+            data[id_key] = _resolve_container_name(
+                client, ref_name, datastore_id, ref_datastore_name
+            )
+
+    if isinstance(data.get("sources"), list):
+        resolved_sources: list = []
+        for source in data["sources"]:
+            if not isinstance(source, dict):
+                resolved_sources.append(source)
+                continue
+            resolved_source = dict(source)
+            ref_name = resolved_source.pop("container_name", None)
+            ref_datastore_name = resolved_source.pop("datastore_name", None)
+            resolved_source.pop("datastore_id", None)
+            resolved_source.pop("ordinal", None)
+            if ref_name and "container_id" not in resolved_source:
+                resolved_source["container_id"] = _resolve_container_name(
+                    client, ref_name, datastore_id, ref_datastore_name
                 )
+            resolved_sources.append(resolved_source)
+        data["sources"] = resolved_sources
 
 
 def import_config(

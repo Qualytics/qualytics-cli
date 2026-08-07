@@ -279,10 +279,10 @@ def scan_operation(
         "--incremental",
         help="Process only new or updated records since last scan",
     ),
-    remediation: str = typer.Option(
-        "none",
+    remediation: str | None = typer.Option(
+        None,
         "--remediation",
-        help="Replication strategy: 'append', 'overwrite', or 'none'",
+        help="Deprecated: configure remediation on the datastore instead",
     ),
     max_records_analyzed_per_partition: int | None = typer.Option(
         None,
@@ -346,11 +346,24 @@ def scan_operation(
             "[bold red]--max-records-analyzed-per-partition must be >= -1.[/bold red]"
         )
         raise typer.Exit(code=1)
-    if remediation not in _VALID_REMEDIATION:
+    if remediation is not None and remediation not in _VALID_REMEDIATION:
         print(
             f"[bold red]--remediation must be one of: {', '.join(sorted(_VALID_REMEDIATION))}.[/bold red]"
         )
         raise typer.Exit(code=1)
+    if remediation not in (None, "none"):
+        print(
+            "[bold red]--remediation is no longer accepted for scan operations. "
+            "Set it with 'qualytics datastores update --id <ID> "
+            "--enrichment-remediation-strategy <VALUE>', then rerun the scan "
+            "without --remediation.[/bold red]"
+        )
+        raise typer.Exit(code=1)
+    if remediation == "none":
+        print(
+            "[yellow]--remediation none is deprecated and is no longer sent to "
+            "the API.[/yellow]"
+        )
 
     names_list = _parse_comma_list(container_names) if container_names else None
     tags_list = _parse_comma_list(container_tags) if container_tags else None
@@ -366,7 +379,7 @@ def scan_operation(
         container_names=names_list,
         container_tags=tags_list,
         incremental=incremental if incremental else None,
-        remediation=remediation,
+        remediation=None,
         max_records_analyzed_per_partition=max_records_analyzed_per_partition,
         enrichment_source_record_limit=enrichment_source_record_limit,
         auto_resolve_passed_anomalies=auto_resolve_passed_anomalies,

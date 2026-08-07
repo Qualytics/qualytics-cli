@@ -12,7 +12,7 @@ def create_connection(client: QualyticsClient, payload: dict) -> dict:
 def update_connection(
     client: QualyticsClient, connection_id: int, payload: dict
 ) -> dict:
-    """Update an existing connection (partial PUT). Returns updated connection."""
+    """Update an existing connection. Returns the updated connection."""
     response = client.put(f"connections/{connection_id}", json=payload)
     return response.json()
 
@@ -84,4 +84,6 @@ def test_connection(
     if payload is not None:
         kwargs["json"] = payload
     response = client.post(f"connections/{connection_id}/test", **kwargs)
+    if not response.content or response.status_code == 204:
+        return {"connected": True}
     return response.json()

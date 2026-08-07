@@ -17,6 +17,7 @@ from ..api.connections import (
 from ..services.connections import (
     build_create_connection_payload,
     build_update_connection_payload,
+    complete_connection_update_payload,
     get_connection_by_name,
 )
 from ..utils import (
@@ -76,6 +77,26 @@ def _resolve_sensitive_flags(
         except ValueError as e:
             print(f"[red]{e}[/red]")
             raise typer.Exit(code=1)
+    return resolved
+
+
+def _resolve_parameter_secrets(parameters: dict) -> dict:
+    """Resolve env placeholders in sensitive ``--parameters`` values."""
+    if not isinstance(parameters, dict):
+        raise ValueError("--parameters must be a JSON object")
+    sensitive_fields = {
+        "password",
+        "passphrase",
+        "access_key",
+        "secret_key",
+        "credentials_payload",
+    }
+    resolved = dict(parameters)
+    for key, value in resolved.items():
+        if key in sensitive_fields and isinstance(value, str):
+            resolved[key] = resolve_env_vars(value)
+        elif isinstance(value, dict):
+            resolved[key] = _resolve_parameter_secrets(value)
     return resolved
 
 
@@ -182,9 +203,12 @@ def connections_create(
     extra_params = None
     if parameters is not None:
         try:
-            extra_params = json.loads(parameters)
+            extra_params = _resolve_parameter_secrets(json.loads(parameters))
         except json.JSONDecodeError as e:
             print(f"[red]Invalid JSON in --parameters: {e}[/red]")
+            raise typer.Exit(code=1)
+        except ValueError as e:
+            print(f"[red]{e}[/red]")
             raise typer.Exit(code=1)
 
     try:
@@ -285,9 +309,12 @@ def connections_update(
     extra_params = None
     if parameters is not None:
         try:
-            extra_params = json.loads(parameters)
+            extra_params = _resolve_parameter_secrets(json.loads(parameters))
         except json.JSONDecodeError as e:
             print(f"[red]Invalid JSON in --parameters: {e}[/red]")
+            raise typer.Exit(code=1)
+        except ValueError as e:
+            print(f"[red]{e}[/red]")
             raise typer.Exit(code=1)
 
     try:
@@ -303,21 +330,20 @@ def connections_update(
             authentication_type=authentication_type,
             role_arn=role_arn,
             external_id=external_id,
+            parameters=extra_params,
         )
     except ValueError as e:
         print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
-
-    # Merge extra parameters
-    if extra_params:
-        changes.update(extra_params)
 
     if not changes:
         print("[yellow]No fields to update. Provide at least one option.[/yellow]")
         raise typer.Exit(code=1)
 
     client = get_client()
-    result = update_connection(client, connection_id, changes)
+    existing = get_connection_api(client, connection_id)
+    full_payload = complete_connection_update_payload(existing, changes)
+    result = update_connection(client, connection_id, full_payload)
     print(f"[green]Connection {connection_id} updated successfully.[/green]")
     print(format_for_display(redact_payload(result), fmt))
 
@@ -453,11 +479,12 @@ def connections_test(
     # Resolve env vars if any overrides provided
     resolved = _resolve_sensitive_flags(host=host, username=username, password=password)
 
+    client = get_client()
     payload = None
     if resolved:
-        payload = resolved
+        existing = get_connection_api(client, connection_id)
+        payload = complete_connection_update_payload(existing, resolved)
 
-    client = get_client()
     result = test_connection(client, connection_id, payload=payload)
 
     connected = result.get("connected", result.get("success", False))

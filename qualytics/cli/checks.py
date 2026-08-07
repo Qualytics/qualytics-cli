@@ -13,6 +13,7 @@ from ..api.quality_checks import (
     get_quality_check,
     list_all_quality_checks,
     create_quality_check,
+    create_quality_check_template,
     update_quality_check,
     delete_quality_check,
     bulk_delete_quality_checks,
@@ -27,9 +28,12 @@ from ..utils import (
     format_for_display,
 )
 from ..services.quality_checks import (
+    _build_update_payload,
     export_checks_to_directory,
-    load_checks_from_directory,
+    get_quality_check_reference_maps,
     import_checks_to_datastore,
+    load_checks_from_directory,
+    merge_quality_check_update,
     _build_create_payload,
 )
 from ..services.containers import get_table_ids
@@ -215,7 +219,7 @@ def checks_update(
     owner_id: int | None = typer.Option(
         None,
         "--owner-id",
-        help="Owner user ID (overrides file). Pass 0 to clear.",
+        help="Owner user ID (overrides file)",
     ),
     default_anomaly_assignee_id: int | None = typer.Option(
         None,
@@ -227,27 +231,22 @@ def checks_update(
     client = get_client()
     data = load_data_file(file)
 
-    payload = {
-        "description": data.get("description", ""),
-        "fields": data.get("fields") or [],
-        "coverage": data.get("coverage"),
-        "filter": data.get("filter"),
-        "properties": data.get("properties") or {},
-        "tags": data.get("tags") or [],
-        "additional_metadata": data.get("additional_metadata") or {},
-        "status": data.get("status", "Active"),
-    }
-
     # CLI flag (if given) takes precedence over the file value.
-    # Pass through to the same normalization the service uses (0 → clear).
     effective_owner = owner_id if owner_id is not None else data.get("owner_id")
+    if effective_owner is not None and effective_owner <= 0:
+        print("[red]--owner-id must be a positive user ID.[/red]")
+        raise typer.Exit(code=1)
     effective_assignee = (
         default_anomaly_assignee_id
         if default_anomaly_assignee_id is not None
         else data.get("default_anomaly_assignee_id")
     )
+
+    existing = get_quality_check(client, check_id)
+    payload = _build_update_payload(merge_quality_check_update(existing, data))
+
     if effective_owner is not None:
-        payload["owner_id"] = effective_owner if effective_owner else None
+        payload["owner_id"] = effective_owner
     if effective_assignee is not None:
         payload["default_anomaly_assignee_id"] = (
             effective_assignee if effective_assignee else None
@@ -331,7 +330,8 @@ def checks_activate(
         try:
             existing = get_quality_check(client, cid)
             payload = {
-                "description": existing.get("description", ""),
+                "description": existing.get("description")
+                or f"{existing.get('rule_type', 'Quality')} quality check",
                 "fields": [f["name"] for f in existing.get("fields", [])],
                 "coverage": existing.get("coverage"),
                 "filter": existing.get("filter"),
@@ -340,6 +340,8 @@ def checks_activate(
                 "additional_metadata": existing.get("additional_metadata") or {},
                 "status": "Active",
             }
+            if "anomaly_message_field" in existing:
+                payload["anomaly_message_field"] = existing["anomaly_message_field"]
             update_quality_check(client, cid, payload)
             print(f"[green]({i}/{total}) Activated quality check {cid}.[/green]")
             activated += 1
@@ -406,7 +408,15 @@ def checks_export(
         raise typer.Exit(code=0)
 
     print(f"[cyan]Exporting {len(all_checks)} checks to {output}/...[/cyan]")
-    result = export_checks_to_directory(all_checks, output)
+    containers_by_id, datastores_by_id = get_quality_check_reference_maps(
+        client, all_checks
+    )
+    result = export_checks_to_directory(
+        all_checks,
+        output,
+        containers_by_id=containers_by_id,
+        datastores_by_id=datastores_by_id,
+    )
 
     print(
         f"[bold green]Exported {result['exported']} checks "
@@ -588,6 +598,8 @@ def check_templates_import(
     error_log_path = f"/errors-{datetime.now().strftime('%Y-%m-%d')}.log"
 
     all_check_templates = load_data_file(input_file)
+    if isinstance(all_check_templates, dict):
+        all_check_templates = [all_check_templates]
     total_created_templates = 0
 
     for check_template in track(
@@ -604,22 +616,27 @@ def check_templates_import(
                 check_template["additional_metadata"].update(additional_metadata)
 
             payload = {
-                "fields": [field["name"] for field in check_template["fields"]],
-                "description": check_template["description"],
+                "description": check_template.get("description")
+                or f"{check_template['rule_type']} quality check template",
                 "rule": check_template["rule_type"],
-                "coverage": check_template["coverage"],
-                "properties": check_template["properties"],
+                "coverage": check_template.get("coverage"),
+                "filter": check_template.get("filter"),
+                "properties": check_template.get("properties") or {},
                 "tags": [
-                    global_tag["name"] for global_tag in check_template["global_tags"]
+                    global_tag["name"]
+                    for global_tag in check_template.get("global_tags") or []
                 ],
                 "template_locked": check_template.get("template_locked", False),
-                "template_only": True,
                 "additional_metadata": check_template.get("additional_metadata", None),
             }
+            if "anomaly_message_field" in check_template:
+                payload["anomaly_message_field"] = check_template[
+                    "anomaly_message_field"
+                ]
 
-            response = client.post("quality-checks", json=payload)
+            response = create_quality_check_template(client, payload)
             print(
-                f"[bold green]Check template id: {response.json()['id']} "
+                f"[bold green]Check template id: {response['id']} "
                 f"created successfully[/bold green]"
             )
             total_created_templates += 1

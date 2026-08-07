@@ -1,7 +1,7 @@
 """Tests for the export/import config-as-code feature."""
 
 import re
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 import yaml
@@ -20,6 +20,7 @@ from qualytics.services.export_import import (
     _import_containers,
     _import_datastore,
     _resolve_connection_secrets,
+    _resolve_computed_field_refs,
     _resolve_container_refs,
     _slugify,
     _write_yaml,
@@ -211,6 +212,50 @@ class TestStripConnectionForExport:
         assert result["username"] == "admin"
         assert result["jdbc_fetch_size"] == 1000
 
+    def test_adds_password_placeholder_for_current_jdbc_response(self):
+        result = strip_connection_for_export(
+            {
+                "id": 1,
+                "name": "prod-pg",
+                "type": "postgresql",
+                "connection_type": "jdbc",
+                "username": "admin",
+            }
+        )
+        assert result["password"] == "${PROD_PG_PASSWORD}"
+
+    def test_adds_secret_key_placeholder_for_current_dfs_response(self):
+        result = strip_connection_for_export(
+            {
+                "id": 1,
+                "name": "data-lake",
+                "type": "s3",
+                "connection_type": "dfs",
+                "uri": "s3://bucket",
+                "access_key": "AKIA...",
+            }
+        )
+        assert result["access_key"] == "${DATA_LAKE_ACCESS_KEY}"
+        assert result["secret_key"] == "${DATA_LAKE_SECRET_KEY}"
+
+    def test_adds_nested_secrets_manager_credentials_placeholder(self):
+        result = strip_connection_for_export(
+            {
+                "id": 1,
+                "name": "vault-db",
+                "type": "postgresql",
+                "connection_type": "jdbc",
+                "secrets_manager": {
+                    "login_url": "https://vault.example/login",
+                    "secret_url": "https://vault.example/secret",
+                },
+            }
+        )
+        assert result["secrets_manager"]["credentials_payload"] == (
+            "${VAULT_DB_CREDENTIALS_PAYLOAD}"
+        )
+        assert "password" not in result
+
 
 class TestStripDatastoreForExport:
     def test_replaces_connection_with_name(self, sample_datastore):
@@ -242,6 +287,22 @@ class TestStripDatastoreForExport:
         assert result["schema"] == "public"
         assert result["tags"] == ["production"]
 
+    def test_uses_resolved_connection_for_current_response_shape(self):
+        result = strip_datastore_for_export(
+            {
+                "id": 10,
+                "name": "prod-warehouse",
+                "connection_id": 1,
+                "global_tags": [{"name": "production", "type": "normal"}],
+            },
+            resolved_connection={"id": 1, "name": "prod-pg"},
+        )
+
+        assert result["connection_name"] == "prod-pg"
+        assert result["tags"] == ["production"]
+        assert "connection_id" not in result
+        assert "global_tags" not in result
+
 
 class TestStripContainerForExport:
     def test_removes_internal_fields(self, sample_container):
@@ -268,6 +329,45 @@ class TestStripContainerForExport:
         assert "left_container_id" not in result
         assert "right_container_id" not in result
 
+    def test_resolves_sql_join_sources(self):
+        container = {
+            "id": 101,
+            "name": "combined",
+            "container_type": "computed_join",
+            "query": "SELECT * FROM orders o JOIN customers c ON o.id = c.id",
+            "sources": [
+                {"container_id": 100, "datastore_id": 10, "alias": "o", "ordinal": 0},
+                {"container_id": 200, "datastore_id": 20, "alias": "c", "ordinal": 1},
+            ],
+        }
+        containers_by_id = {
+            100: {
+                "id": 100,
+                "name": "orders",
+                "datastore": {"id": 10, "name": "prod-warehouse"},
+            },
+            200: {
+                "id": 200,
+                "name": "customers",
+                "datastore": {"id": 20, "name": "crm"},
+            },
+        }
+
+        result = strip_container_for_export(
+            container,
+            "prod-warehouse",
+            containers_by_id=containers_by_id,
+        )
+
+        assert result["sources"] == [
+            {"alias": "o", "container_name": "orders"},
+            {
+                "alias": "c",
+                "container_name": "customers",
+                "datastore_name": "crm",
+            },
+        ]
+
 
 # ── Import helpers ───────────────────────────────────────────────────────
 
@@ -278,6 +378,11 @@ class TestResolveConnectionSecrets:
         data = {"name": "test", "password": "${MY_PASSWORD}"}
         result = _resolve_connection_secrets(data)
         assert result["password"] == "secret123"
+
+    def test_resolves_keypair_passphrase(self, monkeypatch):
+        monkeypatch.setenv("KEY_PASSPHRASE", "secret123")
+        result = _resolve_connection_secrets({"passphrase": "${KEY_PASSPHRASE}"})
+        assert result["passphrase"] == "secret123"
 
     def test_raises_on_unresolved(self):
         data = {"password": "${NONEXISTENT_VAR_12345}"}
@@ -290,6 +395,17 @@ class TestResolveConnectionSecrets:
         result = _resolve_connection_secrets(data)
         assert result["host"] == "localhost"
         assert result["name"] == "test"
+
+    def test_resolves_nested_secrets_manager_credentials(self, monkeypatch):
+        monkeypatch.setenv("VAULT_CREDENTIALS", '{"role_id":"abc"}')
+        data = {
+            "secrets_manager": {
+                "credentials_payload": "${VAULT_CREDENTIALS}",
+                "secret_url": "https://vault.example/secret",
+            }
+        }
+        result = _resolve_connection_secrets(data)
+        assert result["secrets_manager"]["credentials_payload"] == ('{"role_id":"abc"}')
 
 
 class TestResolveContainerRefs:
@@ -328,6 +444,62 @@ class TestResolveContainerRefs:
         ):
             with pytest.raises(ValueError, match="not found"):
                 _resolve_container_refs(mock_client, data, 10)
+
+    def test_resolves_cross_datastore_join_name(self, mock_client):
+        data = {
+            "right_container_name": "customers",
+            "right_datastore_name": "crm",
+            "container_type": "computed_join",
+        }
+        with (
+            patch(
+                "qualytics.services.export_import.get_datastore_by_name",
+                return_value={"id": 20, "name": "crm"},
+            ),
+            patch(
+                "qualytics.services.export_import.get_container_by_name",
+                return_value={"id": 200, "name": "customers"},
+            ) as mock_get_container,
+        ):
+            _resolve_container_refs(mock_client, data, 10)
+
+        assert data["right_container_id"] == 200
+        assert "right_container_name" not in data
+        assert "right_datastore_name" not in data
+        mock_get_container.assert_called_once_with(mock_client, 20, "customers")
+
+    def test_resolves_sql_join_source_names(self, mock_client):
+        data = {
+            "container_type": "computed_join",
+            "sources": [
+                {"container_name": "orders", "alias": "o"},
+                {
+                    "container_name": "customers",
+                    "datastore_name": "crm",
+                    "alias": "c",
+                },
+            ],
+        }
+
+        def mock_get_container(client, ds_id, name):
+            return {"id": 100 if name == "orders" else 200, "name": name}
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_datastore_by_name",
+                return_value={"id": 20, "name": "crm"},
+            ),
+            patch(
+                "qualytics.services.export_import.get_container_by_name",
+                side_effect=mock_get_container,
+            ),
+        ):
+            _resolve_container_refs(mock_client, data, 10)
+
+        assert data["sources"] == [
+            {"alias": "o", "container_id": 100},
+            {"alias": "c", "container_id": 200},
+        ]
 
 
 # ── Import connections ───────────────────────────────────────────────────
@@ -496,6 +668,7 @@ class TestImportDatastore:
                     "schema": "public",
                     "connection_name": "prod-pg",
                     "trigger_sync": True,
+                    "global_tags": [{"name": "production"}],
                 }
             )
         )
@@ -521,7 +694,9 @@ class TestImportDatastore:
         mock_create.assert_called_once()
         payload = mock_create.call_args.args[1]
         assert payload["trigger_sync"] is True
+        assert payload["tags"] == ["production"]
         assert "trigger_catalog" not in payload
+        assert "global_tags" not in payload
 
     def test_updates_existing_datastore(self, mock_client, tmp_path):
         ds_dir = tmp_path / "my_ds"
@@ -655,6 +830,7 @@ class TestImportContainers:
                     "container_type": "computed_table",
                     "query": "SELECT * FROM orders",
                     "datastore_name": "my-ds",
+                    "tags": ["curated"],
                 }
             )
         )
@@ -673,6 +849,10 @@ class TestImportContainers:
 
         assert result["created"] == 1
         mock_create.assert_called_once()
+        assert "tags" not in mock_create.call_args.args[1]
+        mock_client.patch.assert_called_once_with(
+            "containers", json=[{"id": 100, "tags": ["curated"]}]
+        )
 
     def test_updates_existing_container(self, mock_client, tmp_path):
         ds_dir = tmp_path / "my_ds"
@@ -862,6 +1042,172 @@ class TestExportConfig:
 
         assert result["connections"] == 1
 
+    def test_resolves_and_deduplicates_connection_ids(self, mock_client, tmp_path):
+        mock_ds = {
+            "id": 10,
+            "name": "ds-a",
+            "connection_id": 1,
+            "store_type": "jdbc",
+            "type": "postgresql",
+        }
+        mock_ds2 = {**mock_ds, "id": 20, "name": "ds-b"}
+        mock_connection = {
+            "id": 1,
+            "name": "shared-conn",
+            "type": "postgresql",
+            "connection_type": "jdbc",
+        }
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_datastore",
+                side_effect=[mock_ds, mock_ds2],
+            ),
+            patch(
+                "qualytics.services.export_import.get_connection_api",
+                return_value=mock_connection,
+            ) as mock_get_connection,
+        ):
+            result = export_config(
+                mock_client,
+                [10, 20],
+                str(tmp_path),
+                include={"connections", "datastores"},
+            )
+
+        assert result["connections"] == 1
+        mock_get_connection.assert_called_once_with(mock_client, 1)
+        ds_data = yaml.safe_load(
+            (tmp_path / "datastores" / "ds_a" / "_datastore.yaml").read_text()
+        )
+        assert ds_data["connection_name"] == "shared-conn"
+        assert "connection_id" not in ds_data
+        assert (tmp_path / "connections" / "shared_conn.yaml").exists()
+
+    def test_resolves_enrichment_connection_from_current_response_shape(
+        self, mock_client, tmp_path
+    ):
+        source = {
+            "id": 10,
+            "name": "source",
+            "connection_id": 1,
+            "enrich_datastore": {"id": 20, "name": "enrichment"},
+        }
+        enrichment = {
+            "id": 20,
+            "name": "enrichment",
+            "connection_id": 2,
+        }
+
+        def get_connection(_client, connection_id):
+            return {
+                "id": connection_id,
+                "name": f"connection-{connection_id}",
+                "type": "postgresql",
+                "connection_type": "jdbc",
+            }
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_datastore",
+                side_effect=[source, enrichment],
+            ) as mock_get_datastore,
+            patch(
+                "qualytics.services.export_import.get_connection_api",
+                side_effect=get_connection,
+            ) as mock_get_connection,
+        ):
+            result = export_config(
+                mock_client,
+                [10],
+                str(tmp_path),
+                include={"connections", "datastores"},
+            )
+
+        assert result["connections"] == 2
+        assert mock_get_datastore.call_args_list == [
+            call(mock_client, 10),
+            call(mock_client, 20),
+        ]
+        assert mock_get_connection.call_args_list == [
+            call(mock_client, 1),
+            call(mock_client, 2),
+        ]
+        assert (tmp_path / "connections" / "connection_1.yaml").exists()
+        assert (tmp_path / "connections" / "connection_2.yaml").exists()
+
+    def test_exports_join_id_references_as_names(self, mock_client, tmp_path):
+        mock_ds = {
+            "id": 10,
+            "name": "sales",
+            "connection_id": 1,
+        }
+        join = {
+            "id": 300,
+            "name": "orders_customers",
+            "container_type": "computed_join",
+            "left_container_id": 100,
+            "right_container_id": 200,
+            "left_join_field_name": "customer_id",
+            "right_join_field_name": "id",
+            "select_clause": "left.*, right.*",
+            "right_datastore_id": 20,
+            "global_tags": [{"name": "curated", "type": "normal"}],
+        }
+        left = {
+            "id": 100,
+            "name": "orders",
+            "container_type": "table",
+            "datastore": {"id": 10, "name": "sales"},
+        }
+        right = {
+            "id": 200,
+            "name": "customers",
+            "container_type": "table",
+            "datastore": {"id": 20, "name": "crm"},
+        }
+
+        with (
+            patch(
+                "qualytics.services.export_import.get_datastore",
+                return_value=mock_ds,
+            ),
+            patch(
+                "qualytics.services.export_import.list_all_containers",
+                return_value=[join, left],
+            ),
+            patch(
+                "qualytics.services.export_import.get_container",
+                return_value=right,
+            ) as mock_get_container,
+        ):
+            result = export_config(
+                mock_client,
+                [10],
+                str(tmp_path),
+                include={"containers"},
+            )
+
+        assert result["containers"] == 1
+        mock_get_container.assert_called_once_with(mock_client, 200)
+        join_data = yaml.safe_load(
+            (
+                tmp_path
+                / "datastores"
+                / "sales"
+                / "containers"
+                / "orders_customers"
+                / "_container.yaml"
+            ).read_text()
+        )
+        assert join_data["left_container_name"] == "orders"
+        assert join_data["right_container_name"] == "customers"
+        assert join_data["right_datastore_name"] == "crm"
+        assert join_data["tags"] == ["curated"]
+        assert "left_container_id" not in join_data
+        assert "right_container_id" not in join_data
+        assert "right_datastore_id" not in join_data
+
     def test_skips_non_computed_containers(self, mock_client, tmp_path):
         mock_ds = {
             "id": 10,
@@ -951,6 +1297,69 @@ class TestStripComputedFieldForExport:
         assert result["source_fields"] is None
         assert result["properties"]["column_expression"] == "CONCAT(first, ' ', last)"
         assert result["additional_metadata"]["note"] == "user-defined"
+
+    def test_normalizes_source_field_objects_to_names(self):
+        cf = {
+            "id": 1,
+            "name": "full_name",
+            "container_id": 100,
+            "transformation_type": "concatenate",
+            "source_fields": [
+                {"id": 10, "name": "first_name"},
+                {"id": 11, "name": "last_name"},
+            ],
+        }
+
+        result = strip_computed_field_for_export(cf)
+
+        assert result["source_fields"] == ["first_name", "last_name"]
+
+    def test_resolves_property_reference_ids_to_names(self):
+        cf = {
+            "name": "customer_name",
+            "transformation_type": "entityNameLookup",
+            "properties": {
+                "ref_datastore_id": 20,
+                "ref_container_id": 200,
+            },
+        }
+
+        result = strip_computed_field_for_export(
+            cf,
+            containers_by_id={200: {"id": 200, "name": "customers"}},
+            datastores_by_id={20: {"id": 20, "name": "crm"}},
+        )
+
+        assert result["properties"] == {
+            "ref_container_name": "customers",
+            "ref_datastore_name": "crm",
+        }
+
+
+class TestResolveComputedFieldRefs:
+    def test_resolves_portable_property_names(self, mock_client):
+        data = {
+            "properties": {
+                "ref_datastore_name": "crm",
+                "ref_container_name": "customers",
+            }
+        }
+        with (
+            patch(
+                "qualytics.services.export_import.get_datastore_by_name",
+                return_value={"id": 20, "name": "crm"},
+            ),
+            patch(
+                "qualytics.services.export_import.get_container_by_name",
+                return_value={"id": 200, "name": "customers"},
+            ),
+        ):
+            _resolve_computed_field_refs(mock_client, data, datastore_id=10)
+
+        assert data["properties"] == {
+            "ref_datastore_id": 20,
+            "ref_container_id": 200,
+        }
 
 
 class TestExportComputedFields:

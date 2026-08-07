@@ -114,6 +114,12 @@ def flatten_datastore_for_put(datastore: dict) -> dict:
         flat.setdefault("connection_id", flat["connection"]["id"])
         del flat["connection"]
 
+    # The controlplane's update discriminator currently recognizes native
+    # datastores only from this embedded marker. The schema ignores it after
+    # selecting the native update model.
+    if flat.get("store_type") == "native":
+        flat["connection"] = {"type": flat.get("type")}
+
     return flat
 
 

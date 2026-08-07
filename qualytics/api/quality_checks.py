@@ -43,6 +43,12 @@ def create_quality_check(client: QualyticsClient, payload: dict) -> dict:
     return response.json()
 
 
+def create_quality_check_template(client: QualyticsClient, payload: dict) -> dict:
+    """Create a quality check template. Returns the created template."""
+    response = client.post("quality-check-templates", json=payload)
+    return response.json()
+
+
 def update_quality_check(client: QualyticsClient, check_id: int, payload: dict) -> dict:
     """Full update of a quality check. Returns the updated check."""
     response = client.put(f"quality-checks/{check_id}", json=payload)

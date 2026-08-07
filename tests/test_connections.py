@@ -17,6 +17,7 @@ from qualytics.services.connections import (
     get_connection_by_name,
     build_create_connection_payload,
     build_update_connection_payload,
+    complete_connection_update_payload,
 )
 from qualytics.utils.secrets import resolve_env_vars, redact_payload
 from qualytics.qualytics import app
@@ -189,6 +190,16 @@ class TestTestConnection:
         client.post.assert_called_once_with("connections/10/test", json=override)
         assert result["connected"] is True
 
+    def test_204_response_is_success(self):
+        client = _mock_client()
+        client.post.return_value.content = b""
+        client.post.return_value.status_code = 204
+
+        result = api_test_connection(client, 10)
+
+        assert result == {"connected": True}
+        client.post.return_value.json.assert_not_called()
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # 2. SERVICE LAYER
@@ -303,16 +314,27 @@ class TestBuildCreateConnectionPayload:
             name="sf-conn",
             parameters={"role": "ADMIN", "warehouse": "WH"},
         )
-        assert payload["role"] == "ADMIN"
-        assert payload["warehouse"] == "WH"
+        assert payload["parameters"] == {"role": "ADMIN", "warehouse": "WH"}
 
-    def test_parameters_overrides_dedicated_flags(self):
+    def test_schema_fields_in_parameters_override_dedicated_fields(self):
         payload = build_create_connection_payload(
             "postgresql",
             host="original-host",
             parameters={"host": "override-host"},
         )
         assert payload["host"] == "override-host"
+        assert "parameters" not in payload
+
+    def test_snowflake_passphrase_remains_top_level(self):
+        payload = build_create_connection_payload(
+            "snowflake",
+            parameters={
+                "passphrase": "key-password",
+                "role": "ANALYST",
+            },
+        )
+        assert payload["passphrase"] == "key-password"
+        assert payload["parameters"] == {"role": "ANALYST"}
 
     def test_tuning_params(self):
         payload = build_create_connection_payload(
@@ -390,10 +412,9 @@ class TestBuildCreateConnectionPayload:
             role_arn="arn:aws:iam::123:role/MyRole",
             parameters={"some_extra": "value"},
         )
-        # The catch-all --parameters merge happens after IAM nesting, so
-        # both end up represented (catch-all is top-level, IAM is nested).
+        # IAM and type-specific values share the API's parameters object.
         assert payload["parameters"]["authentication_type"] == "IAM_ROLE"
-        assert payload["some_extra"] == "value"
+        assert payload["parameters"]["some_extra"] == "value"
 
     def test_iam_role_without_role_arn_rejected(self):
         with pytest.raises(ValueError, match="--role-arn is required"):
@@ -446,6 +467,55 @@ class TestBuildUpdateConnectionPayload:
     def test_iam_role_without_role_arn_rejected_on_update(self):
         with pytest.raises(ValueError, match="--role-arn is required"):
             build_update_connection_payload(authentication_type="IAM_ROLE")
+
+    def test_extra_parameters_are_nested(self):
+        payload = build_update_connection_payload(
+            host="new-host", parameters={"role": "READER"}
+        )
+        assert payload == {
+            "host": "new-host",
+            "parameters": {"role": "READER"},
+        }
+
+    def test_schema_fields_in_extra_parameters_remain_top_level(self):
+        payload = build_update_connection_payload(
+            parameters={"passphrase": "key-password", "warehouse": "WH"}
+        )
+        assert payload == {
+            "passphrase": "key-password",
+            "parameters": {"warehouse": "WH"},
+        }
+
+
+class TestCompleteConnectionUpdatePayload:
+    def test_adds_required_identity_and_preserves_parameters(self):
+        existing = {
+            "name": "warehouse",
+            "type": "snowflake",
+            "parameters": {"warehouse": "COMPUTE_WH", "role": "OLD"},
+        }
+
+        payload = complete_connection_update_payload(
+            existing,
+            {"host": "new-host", "parameters": {"role": "NEW"}},
+        )
+
+        assert payload == {
+            "name": "warehouse",
+            "type": "snowflake",
+            "host": "new-host",
+            "parameters": {"warehouse": "COMPUTE_WH", "role": "NEW"},
+        }
+
+    def test_preserves_secrets_manager_configuration(self):
+        existing = {
+            "name": "warehouse",
+            "type": "postgresql",
+            "secrets_manager": {"login_url": "https://secrets.example.com"},
+        }
+        payload = complete_connection_update_payload(existing, {"name": "renamed"})
+        assert payload["secrets_manager"] == existing["secrets_manager"]
+        assert payload["name"] == "renamed"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -690,6 +760,34 @@ class TestConnectionsCreateCLI:
         assert result.exit_code == 0
         assert "created successfully" in result.output
 
+    @patch("qualytics.cli.connections.create_connection")
+    @patch("qualytics.cli.connections.get_client")
+    def test_create_resolves_passphrase_from_parameters(
+        self, mock_gc, mock_create, cli_runner, monkeypatch
+    ):
+        monkeypatch.setenv("KEY_PASSPHRASE", "secret123")
+        mock_gc.return_value = _mock_client()
+        mock_create.return_value = {"id": 2, "name": "sf", "type": "snowflake"}
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "connections",
+                "create",
+                "--type",
+                "snowflake",
+                "--name",
+                "sf",
+                "--parameters",
+                '{"passphrase":"${KEY_PASSPHRASE}","warehouse":"WH"}',
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = mock_create.call_args.args[1]
+        assert payload["passphrase"] == "secret123"
+        assert payload["parameters"] == {"warehouse": "WH"}
+
     @patch("qualytics.cli.connections.get_client")
     def test_create_invalid_parameters_json(self, mock_gc, cli_runner):
         mock_gc.return_value = _mock_client()
@@ -758,9 +856,14 @@ class TestConnectionsCreateCLI:
 
 class TestConnectionsUpdateCLI:
     @patch("qualytics.cli.connections.update_connection")
+    @patch("qualytics.cli.connections.get_connection_api")
     @patch("qualytics.cli.connections.get_client")
-    def test_update_basic(self, mock_gc, mock_update, cli_runner):
+    def test_update_basic(self, mock_gc, mock_get, mock_update, cli_runner):
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = {
+            "name": "old-name",
+            "type": "postgresql",
+        }
         mock_update.return_value = {"id": 1, "name": "updated-name"}
         result = cli_runner.invoke(
             app, ["connections", "update", "--id", "1", "--name", "updated-name"]
@@ -770,25 +873,28 @@ class TestConnectionsUpdateCLI:
         mock_update.assert_called_once()
 
     @patch("qualytics.cli.connections.update_connection")
+    @patch("qualytics.cli.connections.get_connection_api")
     @patch("qualytics.cli.connections.get_client")
-    def test_update_partial(self, mock_gc, mock_update, cli_runner):
-        """Only changed fields are sent."""
+    def test_update_partial(self, mock_gc, mock_get, mock_update, cli_runner):
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = {"name": "existing", "type": "postgresql"}
         mock_update.return_value = {"id": 1, "host": "new-host"}
         result = cli_runner.invoke(
             app, ["connections", "update", "--id", "1", "--host", "new-host"]
         )
         assert result.exit_code == 0
-        # Verify only the changed field was sent
         call_args = mock_update.call_args
         payload = call_args[0][2]  # third positional arg
         assert payload.get("host") == "new-host"
-        assert "name" not in payload
+        assert payload["name"] == "existing"
+        assert payload["type"] == "postgresql"
 
     @patch("qualytics.cli.connections.update_connection")
+    @patch("qualytics.cli.connections.get_connection_api")
     @patch("qualytics.cli.connections.get_client")
-    def test_update_iam_role(self, mock_gc, mock_update, cli_runner):
+    def test_update_iam_role(self, mock_gc, mock_get, mock_update, cli_runner):
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = {"name": "existing", "type": "s3"}
         mock_update.return_value = {"id": 1, "authentication_type": "IAM_ROLE"}
         result = cli_runner.invoke(
             app,
@@ -816,9 +922,11 @@ class TestConnectionsUpdateCLI:
         assert "No fields to update" in result.output
 
     @patch("qualytics.cli.connections.update_connection")
+    @patch("qualytics.cli.connections.get_connection_api")
     @patch("qualytics.cli.connections.get_client")
-    def test_update_redacts_output(self, mock_gc, mock_update, cli_runner):
+    def test_update_redacts_output(self, mock_gc, mock_get, mock_update, cli_runner):
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = {"name": "conn", "type": "postgresql"}
         mock_update.return_value = {
             "id": 1,
             "name": "conn",
@@ -832,9 +940,17 @@ class TestConnectionsUpdateCLI:
         assert "new-secret" not in result.output
 
     @patch("qualytics.cli.connections.update_connection")
+    @patch("qualytics.cli.connections.get_connection_api")
     @patch("qualytics.cli.connections.get_client")
-    def test_update_with_parameters_json(self, mock_gc, mock_update, cli_runner):
+    def test_update_with_parameters_json(
+        self, mock_gc, mock_get, mock_update, cli_runner
+    ):
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = {
+            "name": "conn",
+            "type": "snowflake",
+            "parameters": {"warehouse": "WH"},
+        }
         mock_update.return_value = {"id": 1, "role": "READER"}
         result = cli_runner.invoke(
             app,
@@ -850,7 +966,7 @@ class TestConnectionsUpdateCLI:
         assert result.exit_code == 0
         call_args = mock_update.call_args
         payload = call_args[0][2]
-        assert payload["role"] == "READER"
+        assert payload["parameters"] == {"warehouse": "WH", "role": "READER"}
 
 
 class TestConnectionsGetCLI:
@@ -994,9 +1110,11 @@ class TestConnectionsTestCLI:
         mock_test.assert_called_once_with(mock_gc.return_value, 10, payload=None)
 
     @patch("qualytics.cli.connections.test_connection")
+    @patch("qualytics.cli.connections.get_connection_api")
     @patch("qualytics.cli.connections.get_client")
-    def test_with_override_credentials(self, mock_gc, mock_test, cli_runner):
+    def test_with_override_credentials(self, mock_gc, mock_get, mock_test, cli_runner):
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = {"name": "warehouse", "type": "postgresql"}
         mock_test.return_value = {"connected": True}
         result = cli_runner.invoke(
             app,
@@ -1015,6 +1133,8 @@ class TestConnectionsTestCLI:
         call_kwargs = mock_test.call_args.kwargs
         assert call_kwargs["payload"]["host"] == "new-host"
         assert call_kwargs["payload"]["password"] == "new-pass"
+        assert call_kwargs["payload"]["name"] == "warehouse"
+        assert call_kwargs["payload"]["type"] == "postgresql"
 
     @patch("qualytics.cli.connections.test_connection")
     @patch("qualytics.cli.connections.get_client")
@@ -1030,10 +1150,14 @@ class TestConnectionsTestCLI:
         assert "Connection refused" in result.output
 
     @patch("qualytics.cli.connections.test_connection")
+    @patch("qualytics.cli.connections.get_connection_api")
     @patch("qualytics.cli.connections.get_client")
-    def test_with_env_var_overrides(self, mock_gc, mock_test, cli_runner, monkeypatch):
+    def test_with_env_var_overrides(
+        self, mock_gc, mock_get, mock_test, cli_runner, monkeypatch
+    ):
         monkeypatch.setenv("TEST_OVERRIDE_PASS", "env-resolved-pass")
         mock_gc.return_value = _mock_client()
+        mock_get.return_value = {"name": "warehouse", "type": "postgresql"}
         mock_test.return_value = {"connected": True}
         result = cli_runner.invoke(
             app,

@@ -4,6 +4,43 @@ from ..api.client import QualyticsClient
 from ..api.connections import list_connections
 
 
+_CONNECTION_TOP_LEVEL_FIELDS = frozenset(
+    {
+        "name",
+        "type",
+        "secrets_manager",
+        "host",
+        "port",
+        "username",
+        "password",
+        "passphrase",
+        "uri",
+        "access_key",
+        "secret_key",
+        "catalog",
+        "catalog_type",
+        "jdbc_fetch_size",
+        "max_parallelization",
+    }
+)
+
+
+def _split_extra_parameters(parameters: dict | None) -> tuple[dict, dict]:
+    """Separate connection-schema fields from driver-specific parameters."""
+    top_level: dict = {}
+    nested: dict = {}
+    for key, value in (parameters or {}).items():
+        if key == "parameters":
+            if not isinstance(value, dict):
+                raise ValueError("The nested 'parameters' value must be a JSON object")
+            nested.update(value)
+        elif key in _CONNECTION_TOP_LEVEL_FIELDS:
+            top_level[key] = value
+        else:
+            nested[key] = value
+    return top_level, nested
+
+
 def get_connection_by(
     client: QualyticsClient,
     connection_id: int | None = None,
@@ -82,8 +119,9 @@ def build_create_connection_payload(
     """Build a payload for creating a connection.
 
     The *connection_type* determines which fields are relevant.
-    A ``--parameters`` JSON catch-all is merged last so it can supply
-    any type-specific fields not covered by dedicated flags.
+    Driver-specific values from ``--parameters`` are nested under the API's
+    ``parameters`` object. Connection-schema fields such as ``passphrase``
+    remain top-level.
     """
     payload: dict = {"type": connection_type}
 
@@ -123,19 +161,18 @@ def build_create_connection_payload(
     # ``map_to="parameters"`` for them), not at the top level.
     _require_role_arn_for_iam_role(authentication_type, role_arn)
     iam_params = _iam_role_params(authentication_type, role_arn, external_id)
-    if iam_params:
-        payload["parameters"] = {**(payload.get("parameters") or {}), **iam_params}
-
-    # Merge the catch-all parameters dict last (overrides dedicated flags).
-    # Top-level merge is preserved for legacy callers that used --parameters
-    # to set fields like Snowflake's role/warehouse.
-    if parameters is not None:
-        payload.update(parameters)
+    top_level_parameters, extra_parameters = _split_extra_parameters(parameters)
+    nested_parameters = {**iam_params, **extra_parameters}
+    if nested_parameters:
+        payload["parameters"] = nested_parameters
+    payload.update(top_level_parameters)
 
     return payload
 
 
-def build_update_connection_payload(**changes) -> dict:
+def build_update_connection_payload(
+    *, parameters: dict | None = None, **changes
+) -> dict:
     """Build a partial-update payload for a connection.
 
     Only non-None values are included. IAM Role fields (``authentication_type``,
@@ -161,6 +198,37 @@ def build_update_connection_payload(**changes) -> dict:
     if iam_params:
         payload["parameters"] = iam_params
 
+    top_level_parameters, extra_parameters = _split_extra_parameters(parameters)
+    if extra_parameters:
+        payload["parameters"] = {
+            **payload.get("parameters", {}),
+            **extra_parameters,
+        }
+    payload.update(top_level_parameters)
+
+    return payload
+
+
+def complete_connection_update_payload(existing: dict, changes: dict) -> dict:
+    """Add fields required by the controlplane's connection update schema."""
+    payload = {
+        "name": existing["name"],
+        "type": existing["type"],
+    }
+
+    for key in ("secrets_manager", "parameters"):
+        if existing.get(key) is not None:
+            payload[key] = existing[key]
+
+    if changes.get("parameters") is not None:
+        payload["parameters"] = {
+            **(existing.get("parameters") or {}),
+            **changes["parameters"],
+        }
+
+    payload.update(
+        {key: value for key, value in changes.items() if key != "parameters"}
+    )
     return payload
 
 
