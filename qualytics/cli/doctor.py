@@ -10,6 +10,7 @@ import requests
 import typer
 from rich import print
 
+from ..api.compatibility import REQUIRED_API_OPERATIONS, find_incompatible_operations
 from ..config import CONFIG_PATH, __version__, load_config
 from ..utils import validate_and_format_url
 from . import BRAND, print_banner
@@ -137,6 +138,7 @@ def doctor() -> None:
     # ── 6. API connectivity ───────────────────────────────────────────
     base_url = config.get("url", "")
     ssl_verify = config.get("ssl_verify", True)
+    api_reachable = False
 
     if base_url:
         status_url = validate_and_format_url(base_url) + "status"
@@ -148,6 +150,7 @@ def doctor() -> None:
                 verify=ssl_verify,
                 timeout=10,
             )
+            api_reachable = True
             elapsed_ms = int((time.monotonic() - start) * 1000)
             display_url = status_url
 
@@ -191,7 +194,61 @@ def doctor() -> None:
         )
         failed += 1
 
-    # ── 7. SSL certificate ────────────────────────────────────────────
+    # ── 7. API compatibility ─────────────────────────────────────────
+    if base_url and api_reachable:
+        openapi_url = validate_and_format_url(base_url) + "openapi.json"
+        try:
+            response = requests.get(
+                openapi_url,
+                headers={"Authorization": f"Bearer {token}"},
+                verify=ssl_verify,
+                timeout=10,
+            )
+            if not response.ok:
+                print(
+                    f"  {_check_mark(False, warn=True)} "
+                    "[bold]API compatibility[/bold] "
+                    f"[yellow]Could not inspect OpenAPI (HTTP {response.status_code})[/yellow]"
+                )
+                warned += 1
+            else:
+                issues = find_incompatible_operations(response.json())
+                if issues:
+                    print(
+                        f"  {_check_mark(False, warn=True)} "
+                        "[bold]API compatibility[/bold] "
+                        f"[yellow]{len(issues)} required method/path "
+                        "operation(s) are incompatible[/yellow]"
+                    )
+                    for issue in issues[:5]:
+                        print(f"      [yellow]- {issue}[/yellow]")
+                    if len(issues) > 5:
+                        print(
+                            f"      [yellow]- and {len(issues) - 5} more; "
+                            "upgrade the CLI or controlplane[/yellow]"
+                        )
+                    warned += 1
+                else:
+                    print(
+                        f"  {_check_mark(True)} [bold]API compatibility[/bold] "
+                        f"{len(REQUIRED_API_OPERATIONS)} required method/path "
+                        "operations supported"
+                    )
+                    passed += 1
+        except (TypeError, ValueError):
+            print(
+                f"  {_check_mark(False, warn=True)} [bold]API compatibility[/bold] "
+                "[yellow]Controlplane returned an invalid OpenAPI schema[/yellow]"
+            )
+            warned += 1
+        except requests.exceptions.RequestException:
+            print(
+                f"  {_check_mark(False, warn=True)} [bold]API compatibility[/bold] "
+                "[yellow]Could not load the controlplane OpenAPI schema[/yellow]"
+            )
+            warned += 1
+
+    # ── 8. SSL certificate ────────────────────────────────────────────
     if not ssl_verify:
         print(
             f"  {_check_mark(False, warn=True)} [bold]SSL certificate[/bold] "

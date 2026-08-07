@@ -1,5 +1,7 @@
 """Smoke tests for the qualytics CLI."""
 
+import pytest
+
 from qualytics.qualytics import app
 from qualytics.config import __version__
 
@@ -417,6 +419,15 @@ def test_checks_activate_visible(cli_runner):
 from unittest.mock import patch, MagicMock
 import time
 
+from qualytics.api.compatibility import REQUIRED_API_OPERATIONS
+
+
+def _doctor_openapi_schema() -> dict:
+    paths: dict[str, dict] = {}
+    for method, path in REQUIRED_API_OPERATIONS:
+        paths.setdefault(path, {})[method.lower()] = {}
+    return {"openapi": "3.1.0", "paths": paths}
+
 
 class TestDoctorCommand:
     """Tests for the qualytics doctor diagnostic command."""
@@ -468,22 +479,124 @@ class TestDoctorCommand:
         monkeypatch.setattr("qualytics.cli.doctor.CONFIG_PATH", str(config_file))
         monkeypatch.setattr("qualytics.cli.doctor.load_config", lambda: config_data)
 
-        # Mock the requests.get call for API connectivity + SSL check
-        mock_resp = MagicMock()
-        mock_resp.ok = True
-        mock_resp.status_code = 200
+        status_response = MagicMock(ok=True, status_code=200)
+        openapi_response = MagicMock(ok=True, status_code=200)
+        openapi_response.json.return_value = _doctor_openapi_schema()
+
+        def get_response(url, **kwargs):
+            if url.endswith("/openapi.json"):
+                return openapi_response
+            return status_response
 
         with patch(
-            "qualytics.cli.doctor.requests.get", return_value=mock_resp
+            "qualytics.cli.doctor.requests.get", side_effect=get_response
         ) as mock_get:
             result = cli_runner.invoke(app, ["doctor"])
 
         output = _strip_ansi(result.output)
         assert result.exit_code == 0
         assert "All checks passed" in output
+        assert (
+            f"{len(REQUIRED_API_OPERATIONS)} required method/path operations supported"
+            in output
+        )
         assert {call.args[0] for call in mock_get.call_args_list} == {
-            "https://test.qualytics.io/api/status"
+            "https://test.qualytics.io/api/status",
+            "https://test.qualytics.io/api/openapi.json",
         }
+
+    def test_doctor_warns_when_api_operation_is_incompatible(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        import jwt as pyjwt
+        import yaml
+
+        future_exp = int(time.time()) + 30 * 86400
+        token = pyjwt.encode(
+            {"exp": future_exp},
+            "test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
+        config_data = {
+            "url": "https://test.qualytics.io/api/",
+            "token": token,
+            "ssl_verify": True,
+        }
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.safe_dump(config_data))
+
+        monkeypatch.setattr("qualytics.cli.doctor.CONFIG_PATH", str(config_file))
+        monkeypatch.setattr("qualytics.cli.doctor.load_config", lambda: config_data)
+
+        status_response = MagicMock(ok=True, status_code=200)
+        openapi_response = MagicMock(ok=True, status_code=200)
+        schema = _doctor_openapi_schema()
+        schema["paths"].pop("/api/operations/run")
+        openapi_response.json.return_value = schema
+
+        def get_response(url, **kwargs):
+            if url.endswith("/openapi.json"):
+                return openapi_response
+            return status_response
+
+        with patch("qualytics.cli.doctor.requests.get", side_effect=get_response):
+            result = cli_runner.invoke(app, ["doctor"])
+
+        output = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "API compatibility" in output
+        assert "POST /api/operations/run" in output
+        assert "1 warning" in output
+
+    @pytest.mark.parametrize(
+        ("failure", "expected_message"),
+        [
+            ("unavailable", "Could not inspect OpenAPI (HTTP 404)"),
+            ("invalid", "invalid OpenAPI schema"),
+        ],
+    )
+    def test_doctor_openapi_failures_are_warning_only(
+        self, cli_runner, tmp_path, monkeypatch, failure, expected_message
+    ):
+        import jwt as pyjwt
+        import yaml
+
+        future_exp = int(time.time()) + 30 * 86400
+        token = pyjwt.encode(
+            {"exp": future_exp},
+            "test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
+        config_data = {
+            "url": "https://test.qualytics.io/api/",
+            "token": token,
+            "ssl_verify": True,
+        }
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.safe_dump(config_data))
+
+        monkeypatch.setattr("qualytics.cli.doctor.CONFIG_PATH", str(config_file))
+        monkeypatch.setattr("qualytics.cli.doctor.load_config", lambda: config_data)
+
+        status_response = MagicMock(ok=True, status_code=200)
+        if failure == "unavailable":
+            openapi_response = MagicMock(ok=False, status_code=404)
+        else:
+            openapi_response = MagicMock(ok=True, status_code=200)
+            openapi_response.json.return_value = {}
+
+        def get_response(url, **kwargs):
+            if url.endswith("/openapi.json"):
+                return openapi_response
+            return status_response
+
+        with patch("qualytics.cli.doctor.requests.get", side_effect=get_response):
+            result = cli_runner.invoke(app, ["doctor"])
+
+        output = _strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert expected_message in output
+        assert "1 warning" in output
 
     def test_doctor_expired_token(self, cli_runner, tmp_path, monkeypatch):
         """doctor detects an expired token."""

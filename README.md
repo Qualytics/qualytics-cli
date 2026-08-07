@@ -29,7 +29,7 @@ uv pip install qualytics-cli
 # 1. Authenticate via browser (recommended)
 uv run qualytics auth login --url "https://your-instance.qualytics.io/"
 
-# 2. Check connectivity
+# 2. Check connectivity and API compatibility
 qualytics doctor
 
 # 3. Export your datastore configuration to YAML
@@ -56,7 +56,7 @@ qualytics config import --input ./qualytics-config --dry-run
 | `tags` | Manage tags (list, create, delete) |
 | `schedule` | Schedule recurring operations |
 | `mcp` | Start the MCP server for LLM integration |
-| `doctor` | Check CLI health and connectivity |
+| `doctor` | Check CLI health, connectivity, and API compatibility |
 
 Run `qualytics <command> --help` for full details on any command.
 
