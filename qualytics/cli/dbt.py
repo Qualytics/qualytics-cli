@@ -314,13 +314,15 @@ def dbt_import(
 
     console.print(summary_table)
 
+    # Failures are reported, not raised — matching `checks import`, which prints
+    # per-check errors and still exits 0. Keeping the two bulk importers
+    # behaviourally identical matters more than this command's CI ergonomics.
     if total_failed:
         print(
             "[dim]Container-not-found errors usually mean the datastore has not been "
             "catalogued, or dbt model names differ from the warehouse tables "
             "(try --container-map or --container-case).[/dim]"
         )
-        raise typer.Exit(code=1)
 
     if stats["manual"] and not dry_run:
         print(

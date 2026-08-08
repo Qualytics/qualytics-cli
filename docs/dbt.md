@@ -185,4 +185,4 @@ Native dbt, `dbt_utils`, and `dbt_expectations` generic tests are mapped in `qua
 - run: qualytics dbt import --manifest target/manifest.json --datastore-id ${{ vars.DS_ID }} --dry-run
 ```
 
-`import` exits non-zero when any check fails to import, so a broken container mapping fails the build.
+`import` reports per-check failures and still exits 0, matching `checks import`. A pipeline that should fail on a broken container mapping needs to assert on the output itself, or run `plan` first and check the unresolved-container count.

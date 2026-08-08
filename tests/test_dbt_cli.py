@@ -232,7 +232,8 @@ class TestDbtImport:
         assert res.exit_code == 0
         assert importer.call_count == 2
 
-    def test_failures_exit_nonzero_with_guidance(self, cli_runner, manifest_file):
+    def test_failures_are_reported_without_failing(self, cli_runner, manifest_file):
+        """Matches `checks import`: per-check errors are printed, exit stays 0."""
         res, _ = self._run(
             cli_runner,
             manifest_file,
@@ -243,7 +244,8 @@ class TestDbtImport:
                 "errors": ["Container 'stg_orders' not found in datastore 1"],
             },
         )
-        assert res.exit_code == 1
+        assert res.exit_code == 0
+        assert "not found in datastore 1" in res.output
         assert "catalogued" in res.output
 
     def test_emit_yaml_writes_files(self, cli_runner, manifest_file, tmp_path):
