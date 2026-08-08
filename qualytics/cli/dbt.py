@@ -89,7 +89,7 @@ def _print_summary(converted) -> dict:
 
     table = Table(title="dbt → Qualytics coverage")
     table.add_column("Tier", style="bold")
-    table.add_column("Tests", justify="right")
+    table.add_column("Checks", justify="right")
     table.add_column("Lands as")
     table.add_row("direct", str(stats["direct"]), "[green]Active[/green]")
     table.add_row("normalize", str(stats["normalize"]), "[cyan]Draft[/cyan]")
@@ -97,8 +97,16 @@ def _print_summary(converted) -> dict:
     table.add_row("[bold]total[/bold]", f"[bold]{stats['total']}[/bold]", "")
     console.print(table)
 
+    # A few dbt tests assert two things (a length range) and become two checks,
+    # so check count can exceed test count. Say so rather than conflating them.
+    split_note = (
+        f" ([bold]{stats['dbt_tests']}[/bold] dbt tests — some assert two things "
+        "and become two checks)"
+        if stats["total"] != stats["dbt_tests"]
+        else ""
+    )
     print(
-        f"\nAll [bold]{stats['total']}[/bold] dbt tests convert. "
+        f"\nAll dbt tests convert into [bold]{stats['total']}[/bold] checks{split_note}. "
         f"[bold]{stats['automatic']}[/bold] ({stats['automatic_pct']}%) map to a rule "
         f"automatically; [bold]{stats['manual']}[/bold] need an expression authored by hand."
     )

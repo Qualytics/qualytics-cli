@@ -6,12 +6,14 @@ for ``import_checks_to_datastore``.
 
 Design invariants:
 
-* **One dbt test node → exactly one check.** The UID is derived from the dbt
-  node's ``unique_id``, which dbt guarantees unique. Never use
-  ``generate_check_uid`` here: its ``container__rule__fields`` scheme collides
-  for the cases dbt produces constantly (several singular tests on one model, two
-  ``expression_is_true`` on one column), and the importer silently *updates* on a
-  UID collision rather than erroring — so a collision loses a test with no output.
+* **Every UID is distinct.** The UID is derived from the dbt node's
+  ``unique_id``, which dbt guarantees unique, plus a rule-type suffix for the few
+  tests that split into two checks (a length range is a minLength *and* a
+  maxLength). Never use ``generate_check_uid`` here: its
+  ``container__rule__fields`` scheme collides for the cases dbt produces
+  constantly (several singular tests on one model, two ``expression_is_true`` on
+  one column), and the importer silently *updates* on a UID collision rather than
+  erroring — so a collision loses a check with no output.
 * **Nothing is dropped.** A dbt test that cannot be mapped deterministically still
   emits a check, as ``satisfiesExpression`` in ``Draft`` with the dbt source in the
   description. Migration tiers grade effort, not feasibility.
@@ -73,11 +75,24 @@ def _p_value_from_max(kw: dict) -> dict:
     return {"value": kw.get("max_value"), "inclusive": True}
 
 
-def _p_max_length(kw: dict) -> dict:
+# Length builders return None when their bound is absent, so a one-sided dbt
+# test emits only the half it actually specifies.
+
+
+def _p_min_length(kw: dict) -> dict | None:
+    value = kw.get("min_value")
+    return {"value": value} if value is not None else None
+
+
+def _p_max_length(kw: dict) -> dict | None:
     value = kw.get("max_value")
-    if value is None:
-        value = kw.get("value")
-    return {"value": value}
+    return {"value": value} if value is not None else None
+
+
+def _p_exact_length(kw: dict) -> dict | None:
+    """`lengths_to_equal` pins both ends to the same value."""
+    value = kw.get("value")
+    return {"value": value} if value is not None else None
 
 
 def _p_expression(kw: dict) -> dict:
@@ -117,10 +132,29 @@ def _p_is_type(kw: dict) -> dict:
     return {"field_type": _DBT_TYPE_TO_FIELD_TYPE.get(key, "Unknown")}
 
 
-class Mapping:
-    """A dbt test → Qualytics rule mapping."""
+class Split:
+    """One of several checks produced from a single dbt test.
 
-    __slots__ = ("rule_type", "tier", "props", "note")
+    ``props`` returns None when this half of the test is not specified, so the
+    split is skipped rather than emitting a check with a null bound.
+    """
+
+    __slots__ = ("rule_type", "props")
+
+    def __init__(self, rule_type: str, props: Callable[[dict], dict | None]):
+        self.rule_type = rule_type
+        self.props = props
+
+
+class Mapping:
+    """A dbt test → Qualytics rule mapping.
+
+    ``splits`` covers dbt tests that assert two things at once (a length range is
+    a minLength *and* a maxLength). Each split becomes its own check with a
+    UID suffixed by its rule type, keeping every UID distinct.
+    """
+
+    __slots__ = ("rule_type", "tier", "props", "note", "splits")
 
     def __init__(
         self,
@@ -128,11 +162,13 @@ class Mapping:
         tier: int,
         props: Callable[[dict], dict] | None = None,
         note: str | None = None,
+        splits: list[Split] | None = None,
     ):
         self.rule_type = rule_type
         self.tier = tier
         self.props = props
         self.note = note
+        self.splits = splits
 
 
 # ── The crosswalk ─────────────────────────────────────────────────────────
@@ -187,13 +223,17 @@ DBT_RULE_MAP: dict[str, Mapping] = {
         "between", TIER_DIRECT, _p_between
     ),
     "dbt_expectations.expect_column_value_lengths_to_be_between": Mapping(
-        "maxLength",
-        TIER_NORMALIZE,
-        _p_max_length,
-        note="dbt checks min and max length — add a matching minLength check",
+        "minLength",
+        TIER_DIRECT,
+        splits=[Split("minLength", _p_min_length), Split("maxLength", _p_max_length)],
     ),
     "dbt_expectations.expect_column_value_lengths_to_equal": Mapping(
-        "maxLength", TIER_NORMALIZE, _p_max_length
+        "minLength",
+        TIER_DIRECT,
+        splits=[
+            Split("minLength", _p_exact_length),
+            Split("maxLength", _p_exact_length),
+        ],
     ),
     "dbt_expectations.expect_column_values_to_be_of_type": Mapping(
         "isType", TIER_NORMALIZE, _p_is_type, note="verify the mapped field type"
@@ -250,13 +290,17 @@ def _slugify(text: str) -> str:
     return text.strip("_")
 
 
-def dbt_check_uid(unique_id: str) -> str:
+def dbt_check_uid(unique_id: str, suffix: str | None = None) -> str:
     """Stable UID from a dbt node's unique_id.
 
-    dbt guarantees ``unique_id`` is unique per node, which is what keeps one dbt
-    test mapped to exactly one Qualytics check across re-runs.
+    dbt guarantees ``unique_id`` is unique per node. ``suffix`` distinguishes the
+    checks of a split mapping (one dbt test asserting two things), keeping every
+    emitted UID distinct.
     """
-    return UID_PREFIX + _slugify(unique_id)
+    uid = UID_PREFIX + _slugify(unique_id)
+    if suffix:
+        uid += "__" + _slugify(suffix)
+    return uid
 
 
 def _ref_model_name(to_expr: str) -> str | None:
@@ -359,6 +403,7 @@ def _build_check(
     tags: list[str] | None = None,
     extra_metadata: dict | None = None,
     include_status: bool = True,
+    uid_suffix: str | None = None,
 ) -> dict:
     check: dict[str, Any] = {
         "rule_type": rule_type,
@@ -369,7 +414,7 @@ def _build_check(
         "properties": properties or {},
         "tags": tags if tags is not None else ["dbt"],
         "additional_metadata": {
-            "_qualytics_check_uid": dbt_check_uid(unique_id),
+            "_qualytics_check_uid": dbt_check_uid(unique_id, uid_suffix),
             "dbt_unique_id": unique_id,
             **(extra_metadata or {}),
         },
@@ -426,15 +471,14 @@ def convert_manifest(
                 node, unique_id, container, default_coverage, tags, include_status
             )
 
-        if converted:
-            out.append(converted)
+        out.extend(converted)
 
     return out
 
 
 def _convert_generic(
     node, unique_id, meta, models, container, coverage, tags, include_status
-) -> ConvertedCheck:
+) -> list[ConvertedCheck]:
     namespace = meta.get("namespace")
     name = meta.get("name") or ""
     key = f"{namespace}.{name}" if namespace else name
@@ -445,27 +489,65 @@ def _convert_generic(
     column = node.get("column_name") or kwargs.get("column_name")
     fields = [column] if column else []
 
+    def _unmapped(reason: str) -> list[ConvertedCheck]:
+        """Fallback so a test is never dropped, only downgraded to manual."""
+        return [
+            ConvertedCheck(
+                _build_check(
+                    rule_type="satisfiesExpression",
+                    container=container,
+                    fields=fields,
+                    description=f"[dbt] {key} — {reason}, author the expression by hand",
+                    unique_id=unique_id,
+                    tier=TIER_MANUAL,
+                    properties={"expression": ""},
+                    coverage=coverage,
+                    tags=tags,
+                    extra_metadata={"dbt_test": key},
+                    include_status=include_status,
+                ),
+                TIER_MANUAL,
+                key,
+                container,
+                reason,
+            )
+        ]
+
     if mapping is None:
         # Unrecognized generic test — still migrates, as a Draft for a human.
-        return ConvertedCheck(
-            _build_check(
-                rule_type="satisfiesExpression",
-                container=container,
-                fields=fields,
-                description=f"[dbt] {key} — unrecognized dbt test, author the expression by hand",
-                unique_id=unique_id,
-                tier=TIER_MANUAL,
-                properties={"expression": ""},
-                coverage=coverage,
-                tags=tags,
-                extra_metadata={"dbt_test": key},
-                include_status=include_status,
-            ),
-            TIER_MANUAL,
-            key,
-            container,
-            "unrecognized dbt test",
-        )
+        return _unmapped("unrecognized dbt test")
+
+    # A dbt test that asserts two things becomes two checks, each with its own
+    # UID suffix. A half whose bound is absent is skipped, not emitted null.
+    if mapping.splits:
+        out = []
+        for split in mapping.splits:
+            props = split.props(kwargs)
+            if props is None:
+                continue
+            out.append(
+                ConvertedCheck(
+                    _build_check(
+                        rule_type=split.rule_type,
+                        container=container,
+                        fields=fields,
+                        description=f"[dbt] {key} → {split.rule_type}",
+                        unique_id=unique_id,
+                        tier=mapping.tier,
+                        properties=props,
+                        coverage=coverage,
+                        tags=tags,
+                        extra_metadata={"dbt_test": key},
+                        include_status=include_status,
+                        uid_suffix=split.rule_type,
+                    ),
+                    mapping.tier,
+                    key,
+                    container,
+                    mapping.note,
+                )
+            )
+        return out or _unmapped("no bounds specified")
 
     properties = mapping.props(kwargs) if mapping.props else {}
 
@@ -487,30 +569,32 @@ def _convert_generic(
     if mapping.note:
         description += f" — {mapping.note}"
 
-    return ConvertedCheck(
-        _build_check(
-            rule_type=mapping.rule_type,
-            container=container,
-            fields=fields,
-            description=description,
-            unique_id=unique_id,
-            tier=mapping.tier,
-            properties=properties,
-            coverage=coverage,
-            tags=tags,
-            extra_metadata={"dbt_test": key},
-            include_status=include_status,
-        ),
-        mapping.tier,
-        key,
-        container,
-        mapping.note,
-    )
+    return [
+        ConvertedCheck(
+            _build_check(
+                rule_type=mapping.rule_type,
+                container=container,
+                fields=fields,
+                description=description,
+                unique_id=unique_id,
+                tier=mapping.tier,
+                properties=properties,
+                coverage=coverage,
+                tags=tags,
+                extra_metadata={"dbt_test": key},
+                include_status=include_status,
+            ),
+            mapping.tier,
+            key,
+            container,
+            mapping.note,
+        )
+    ]
 
 
 def _convert_singular(
     node, unique_id, container, coverage, tags, include_status
-) -> ConvertedCheck:
+) -> list[ConvertedCheck]:
     """Singular (bespoke SQL) test → satisfiesExpression in Draft.
 
     dbt compiles these to SQL that selects failing rows, which is not a row
@@ -526,34 +610,41 @@ def _convert_singular(
         "that is true for valid rows."
     )
 
-    return ConvertedCheck(
-        _build_check(
-            rule_type="satisfiesExpression",
-            container=container,
-            fields=[],
-            description=description,
-            unique_id=unique_id,
-            tier=TIER_MANUAL,
-            properties={"expression": ""},
-            coverage=coverage,
-            tags=tags,
-            extra_metadata={"dbt_test": name, "dbt_compiled_sql": sql}
-            if sql
-            else {"dbt_test": name},
-            include_status=include_status,
-        ),
-        TIER_MANUAL,
-        name,
-        container,
-        "singular SQL test",
-    )
+    return [
+        ConvertedCheck(
+            _build_check(
+                rule_type="satisfiesExpression",
+                container=container,
+                fields=[],
+                description=description,
+                unique_id=unique_id,
+                tier=TIER_MANUAL,
+                properties={"expression": ""},
+                coverage=coverage,
+                tags=tags,
+                extra_metadata={"dbt_test": name, "dbt_compiled_sql": sql}
+                if sql
+                else {"dbt_test": name},
+                include_status=include_status,
+            ),
+            TIER_MANUAL,
+            name,
+            container,
+            "singular SQL test",
+        )
+    ]
 
 
 # ── Reporting ─────────────────────────────────────────────────────────────
 
 
 def summarize(converted: list[ConvertedCheck]) -> dict:
-    """Coverage breakdown for `dbt plan`."""
+    """Coverage breakdown for `dbt plan`.
+
+    ``total`` counts emitted checks and ``dbt_tests`` counts source test nodes.
+    They differ when a split mapping turns one dbt test into two checks, so the
+    two are reported separately rather than conflated.
+    """
     total = len(converted)
     by_tier = {t: 0 for t in (TIER_DIRECT, TIER_NORMALIZE, TIER_MANUAL)}
     for c in converted:
@@ -562,9 +653,11 @@ def summarize(converted: list[ConvertedCheck]) -> dict:
     automatic = by_tier[TIER_DIRECT] + by_tier[TIER_NORMALIZE]
     containers = sorted({c.container for c in converted if c.container})
     missing_container = [c for c in converted if not c.container]
+    dbt_tests = {c.check["additional_metadata"]["dbt_unique_id"] for c in converted}
 
     return {
         "total": total,
+        "dbt_tests": len(dbt_tests),
         "direct": by_tier[TIER_DIRECT],
         "normalize": by_tier[TIER_NORMALIZE],
         "manual": by_tier[TIER_MANUAL],

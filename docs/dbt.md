@@ -73,6 +73,17 @@ Every dbt test converts. Tiers grade **effort**, not feasibility.
 
 Nothing is skipped. An unrecognized generic test or a singular SQL test still produces a check, as a `satisfiesExpression` in `Draft` with the dbt source recorded in `additional_metadata`, so a reviewer adapts it rather than going back to the dbt project to find it.
 
+### Tests that become two checks
+
+A few dbt tests assert two things at once, and split:
+
+| dbt test | Becomes |
+|----------|---------|
+| `expect_column_value_lengths_to_be_between` | `minLength` + `maxLength` |
+| `expect_column_value_lengths_to_equal` | `minLength` + `maxLength` (same value) |
+
+Each half gets its own check with the UID suffixed by its rule type (`…__minlength`, `…__maxlength`), so both upsert independently. A one-sided dbt test emits only the half it specifies — `min_value` alone produces just a `minLength`. Because of this, `plan` reports check count and dbt test count separately when they differ.
+
 ## Idempotency
 
 Each check's `_qualytics_check_uid` is derived from the dbt node's `unique_id`:
@@ -123,6 +134,7 @@ Native dbt, `dbt_utils`, and `dbt_expectations` generic tests are mapped in `qua
 | `dbt_expectations.expect_column_values_to_match_regex` | `matchesPattern` | direct |
 | `dbt_expectations.expect_table_row_count_to_be_between` | `volumetric` | normalize |
 | `dbt_expectations.expect_row_values_to_have_recent_data` | `freshness` | normalize |
+| `dbt_expectations.expect_column_value_lengths_to_be_between` | `minLength` + `maxLength` | direct |
 | singular (bespoke SQL) tests | `satisfiesExpression` | manual |
 | anything unrecognized | `satisfiesExpression` | manual |
 

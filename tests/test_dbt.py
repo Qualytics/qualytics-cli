@@ -134,6 +134,15 @@ def manifest():
             namespace="mycompany",
             column="currency_code",
         ),
+        # Splits into minLength + maxLength.
+        _generic_test(
+            revenue,
+            "fct_revenue",
+            "expect_column_value_lengths_to_be_between",
+            namespace="dbt_expectations",
+            column="sku",
+            kwargs={"min_value": 8, "max_value": 12},
+        ),
         # Two singular tests on the SAME model — the collision case.
         _singular_test(revenue, "fct_revenue", "assert_revenue_reconciles"),
         _singular_test(revenue, "fct_revenue", "assert_no_orphan_refunds"),
@@ -170,11 +179,15 @@ class TestCheckUID:
         uids = {c.check["additional_metadata"][_UID_KEY] for c in singular}
         assert len(uids) == 2
 
-    def test_one_dbt_test_yields_exactly_one_check(self, manifest):
+    def test_every_dbt_test_yields_at_least_one_check(self, manifest):
+        """Split mappings emit two; nothing may emit zero."""
         test_nodes = [
             n for n in manifest["nodes"].values() if n.get("resource_type") == "test"
         ]
-        assert len(convert_manifest(manifest)) == len(test_nodes)
+        converted = convert_manifest(manifest)
+        sources = {c.check["additional_metadata"]["dbt_unique_id"] for c in converted}
+        assert len(sources) == len(test_nodes)
+        assert len(converted) >= len(test_nodes)
 
     def test_conversion_is_deterministic(self, manifest):
         assert to_checks(convert_manifest(manifest)) == to_checks(
@@ -258,6 +271,96 @@ class TestRuleMapping:
     def test_every_mapping_has_a_valid_tier(self):
         for key, mapping in DBT_RULE_MAP.items():
             assert mapping.tier in (TIER_DIRECT, TIER_NORMALIZE, TIER_MANUAL), key
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 2b. Split mappings — one dbt test asserting two things
+# ══════════════════════════════════════════════════════════════════════════
+
+
+LENGTHS_BETWEEN = "dbt_expectations.expect_column_value_lengths_to_be_between"
+LENGTHS_EQUAL = "dbt_expectations.expect_column_value_lengths_to_equal"
+
+
+def _lengths_manifest(kwargs, test_name="expect_column_value_lengths_to_be_between"):
+    model = f"model.{PKG}.dim_product"
+    uid, node = _generic_test(
+        model,
+        "dim_product",
+        test_name,
+        namespace="dbt_expectations",
+        column="sku",
+        kwargs=kwargs,
+    )
+    return {"nodes": {model: _model("dim_product"), uid: node}}
+
+
+class TestSplitMappings:
+    def test_lengths_between_emits_min_and_max(self, manifest):
+        checks = [
+            c for c in convert_manifest(manifest) if c.dbt_test == LENGTHS_BETWEEN
+        ]
+        assert len(checks) == 2
+        assert {c.check["rule_type"] for c in checks} == {"minLength", "maxLength"}
+
+    def test_split_properties_carry_the_right_bound(self, manifest):
+        checks = {
+            c.check["rule_type"]: c.check["properties"]
+            for c in convert_manifest(manifest)
+            if c.dbt_test == LENGTHS_BETWEEN
+        }
+        assert checks["minLength"] == {"value": 8}
+        assert checks["maxLength"] == {"value": 12}
+
+    def test_split_uids_are_suffixed_and_distinct(self, manifest):
+        checks = [
+            c for c in convert_manifest(manifest) if c.dbt_test == LENGTHS_BETWEEN
+        ]
+        uids = [c.check["additional_metadata"][_UID_KEY] for c in checks]
+        assert len(set(uids)) == 2
+        assert any(u.endswith("__minlength") for u in uids)
+        assert any(u.endswith("__maxlength") for u in uids)
+
+    def test_split_halves_share_dbt_provenance(self, manifest):
+        checks = [
+            c for c in convert_manifest(manifest) if c.dbt_test == LENGTHS_BETWEEN
+        ]
+        sources = {c.check["additional_metadata"]["dbt_unique_id"] for c in checks}
+        assert len(sources) == 1
+
+    def test_split_is_direct_not_draft(self, manifest):
+        for c in convert_manifest(manifest):
+            if c.dbt_test == LENGTHS_BETWEEN:
+                assert c.tier == TIER_DIRECT
+                assert c.check["status"] == "Active"
+
+    def test_min_only_emits_one_check(self):
+        converted = convert_manifest(_lengths_manifest({"min_value": 8}))
+        assert len(converted) == 1
+        assert converted[0].check["rule_type"] == "minLength"
+        assert converted[0].check["properties"] == {"value": 8}
+
+    def test_max_only_emits_one_check(self):
+        converted = convert_manifest(_lengths_manifest({"max_value": 12}))
+        assert len(converted) == 1
+        assert converted[0].check["rule_type"] == "maxLength"
+
+    def test_no_bounds_falls_back_to_manual(self):
+        """Never emit zero checks — downgrade to a Draft instead."""
+        converted = convert_manifest(_lengths_manifest({}))
+        assert len(converted) == 1
+        assert converted[0].check["rule_type"] == "satisfiesExpression"
+        assert converted[0].tier == TIER_MANUAL
+
+    def test_lengths_to_equal_pins_both_ends(self):
+        converted = convert_manifest(
+            _lengths_manifest(
+                {"value": 10}, test_name="expect_column_value_lengths_to_equal"
+            )
+        )
+        assert len(converted) == 2
+        props = {c.check["rule_type"]: c.check["properties"] for c in converted}
+        assert props == {"minLength": {"value": 10}, "maxLength": {"value": 10}}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -380,9 +483,14 @@ class TestImportInterop:
 class TestSummarize:
     def test_counts_add_up(self, manifest):
         s = summarize(convert_manifest(manifest))
-        assert s["total"] == 10
         assert s["direct"] + s["normalize"] + s["manual"] == s["total"]
         assert s["automatic"] == s["direct"] + s["normalize"]
+
+    def test_checks_and_dbt_tests_are_counted_separately(self, manifest):
+        """11 test nodes, one of which splits into minLength + maxLength."""
+        s = summarize(convert_manifest(manifest))
+        assert s["dbt_tests"] == 11
+        assert s["total"] == 12
 
     def test_percentage(self, manifest):
         s = summarize(convert_manifest(manifest))
