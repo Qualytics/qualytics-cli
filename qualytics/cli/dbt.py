@@ -69,12 +69,32 @@ def _parse_container_map(pairs: list[str]) -> dict[str, str]:
     return mapping
 
 
-def _convert(manifest, container_map, container_case, preserve_status):
+_VALID_STATUS = ("Active", "Draft")
+
+
+def _resolve_status(status: str | None, preserve_status: bool) -> str | None:
+    """Validate --status and reject the combination that contradicts itself."""
+    if status is None:
+        return None
+    if preserve_status:
+        print("[red]--status and --preserve-status are mutually exclusive.[/red]")
+        raise typer.Exit(code=1)
+    match = next((s for s in _VALID_STATUS if s.lower() == status.lower()), None)
+    if match is None:
+        print(f"[red]--status must be Active or Draft, got: {status}[/red]")
+        raise typer.Exit(code=1)
+    return match
+
+
+def _convert(
+    manifest, container_map, container_case, preserve_status, status_override=None
+):
     converted = convert_manifest(
         manifest,
         container_map=_parse_container_map(container_map),
         container_case=container_case,
         include_status=not preserve_status,
+        status_override=status_override,
     )
     if not converted:
         print(
@@ -84,16 +104,22 @@ def _convert(manifest, container_map, container_case, preserve_status):
     return converted
 
 
-def _print_summary(converted) -> dict:
+def _print_summary(converted, status_override: str | None = None) -> dict:
     stats = summarize(converted)
+
+    # The "Lands as" column must reflect what will actually happen, so an
+    # override replaces the tier-derived values rather than sitting beside them.
+    def _lands(default: str, color: str) -> str:
+        shown = status_override or default
+        return f"[{color}]{shown}[/{color}]"
 
     table = Table(title="dbt → Qualytics coverage")
     table.add_column("Tier", style="bold")
     table.add_column("Checks", justify="right")
     table.add_column("Lands as")
-    table.add_row("direct", str(stats["direct"]), "[green]Active[/green]")
-    table.add_row("normalize", str(stats["normalize"]), "[cyan]Draft[/cyan]")
-    table.add_row("manual", str(stats["manual"]), "[yellow]Draft[/yellow]")
+    table.add_row("direct", str(stats["direct"]), _lands("Active", "green"))
+    table.add_row("normalize", str(stats["normalize"]), _lands("Draft", "cyan"))
+    table.add_row("manual", str(stats["manual"]), _lands("Draft", "yellow"))
     table.add_row("[bold]total[/bold]", f"[bold]{stats['total']}[/bold]", "")
     console.print(table)
 
@@ -110,10 +136,14 @@ def _print_summary(converted) -> dict:
         f"[bold]{stats['automatic']}[/bold] ({stats['automatic_pct']}%) map to a rule "
         f"automatically; [bold]{stats['manual']}[/bold] need an expression authored by hand."
     )
-    print(
-        f"[dim]Tiers grade effort, not feasibility. "
-        f"{stats['normalize'] + stats['manual']} land as Draft for review before they fire.[/dim]"
-    )
+    if status_override:
+        print(f"[dim]Tiers grade effort, not feasibility.[/dim]")
+    else:
+        print(
+            f"[dim]Tiers grade effort, not feasibility. "
+            f"{stats['normalize'] + stats['manual']} land as Draft for review "
+            "before they fire.[/dim]"
+        )
 
     if stats["unresolved_containers"]:
         print(
@@ -206,6 +236,11 @@ def dbt_import(
         "--preserve-status",
         help="Omit status so re-imports keep what was set in the product",
     ),
+    status: str = typer.Option(
+        None,
+        "--status",
+        help="Force every check to Active or Draft, overriding the tier default",
+    ),
     emit_yaml: str = typer.Option(
         None, "--emit-yaml", help="Also write the converted checks to this directory"
     ),
@@ -218,11 +253,30 @@ def dbt_import(
 
     The datastore must be catalogued first — checks reference containers and
     fields by name.
+
+    By default direct-tier checks land Active and the rest land Draft. That is a
+    recommendation, not a policy: --status overrides it in either direction.
     """
     manifest = _load_manifest(manifest_path)
-    converted = _convert(manifest, container_map, container_case, preserve_status)
+    status_override = _resolve_status(status, preserve_status)
+    converted = _convert(
+        manifest, container_map, container_case, preserve_status, status_override
+    )
 
-    stats = _print_summary(converted)
+    stats = _print_summary(converted, status_override)
+
+    if status_override:
+        print(
+            f"\n[cyan]--status {status_override}: forcing all {stats['total']} "
+            "checks, overriding the tier default.[/cyan]"
+        )
+        incomplete = stats["normalize"] + stats["manual"]
+        if status_override == "Active" and incomplete:
+            print(
+                f"[yellow]{incomplete} of them were tiered normalize/manual — those "
+                "carry incomplete properties (empty expressions, unset windows and "
+                "intervals) and may not evaluate meaningfully until edited.[/yellow]"
+            )
 
     if emit_yaml:
         _write_yaml(converted, emit_yaml)

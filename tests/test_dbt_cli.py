@@ -175,6 +175,33 @@ class TestDbtImport:
         statuses = {c["status"] for c in importer.call_args[0][2]}
         assert statuses == {"Active", "Draft"}
 
+    def test_status_draft_forces_all_draft(self, cli_runner, manifest_file):
+        res, importer = self._run(cli_runner, manifest_file, ["--status", "Draft"])
+        assert res.exit_code == 0
+        assert {c["status"] for c in importer.call_args[0][2]} == {"Draft"}
+
+    def test_status_active_forces_all_active_and_warns(self, cli_runner, manifest_file):
+        res, importer = self._run(cli_runner, manifest_file, ["--status", "Active"])
+        assert res.exit_code == 0
+        assert {c["status"] for c in importer.call_args[0][2]} == {"Active"}
+        assert "incomplete properties" in res.output
+
+    def test_status_is_case_insensitive(self, cli_runner, manifest_file):
+        _, importer = self._run(cli_runner, manifest_file, ["--status", "draft"])
+        assert {c["status"] for c in importer.call_args[0][2]} == {"Draft"}
+
+    def test_invalid_status_errors(self, cli_runner, manifest_file):
+        res, _ = self._run(cli_runner, manifest_file, ["--status", "Paused"])
+        assert res.exit_code == 1
+        assert "Active or Draft" in res.output
+
+    def test_status_conflicts_with_preserve_status(self, cli_runner, manifest_file):
+        res, _ = self._run(
+            cli_runner, manifest_file, ["--status", "Draft", "--preserve-status"]
+        )
+        assert res.exit_code == 1
+        assert "mutually exclusive" in res.output
+
     def test_container_map_applied(self, cli_runner, manifest_file):
         _, importer = self._run(
             cli_runner, manifest_file, ["--container-map", "stg_orders=ORDERS"]

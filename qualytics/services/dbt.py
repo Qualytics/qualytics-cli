@@ -432,6 +432,7 @@ def convert_manifest(
     container_map: dict[str, str] | None = None,
     container_case: str | None = None,
     include_status: bool = True,
+    status_override: str | None = None,
     default_coverage: float = 1.0,
     tags: list[str] | None = None,
 ) -> list[ConvertedCheck]:
@@ -439,6 +440,10 @@ def convert_manifest(
 
     ``container_map`` overrides the resolved container name per dbt model name,
     for the cases where the warehouse table does not match dbt's alias.
+
+    ``status_override`` forces every check to one status, replacing the
+    tier-derived default. The migration is the caller's to manage: the tiers are
+    a recommendation, not a policy this function enforces.
     """
     container_map = container_map or {}
     models = index_models(manifest)
@@ -472,6 +477,10 @@ def convert_manifest(
             )
 
         out.extend(converted)
+
+    if status_override:
+        for c in out:
+            c.check["status"] = status_override
 
     return out
 

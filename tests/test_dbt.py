@@ -445,6 +445,28 @@ class TestStatus:
         for c in convert_manifest(manifest, include_status=False):
             assert "status" not in c.check
 
+    def test_status_override_forces_draft(self, manifest):
+        for c in convert_manifest(manifest, status_override="Draft"):
+            assert c.check["status"] == "Draft"
+
+    def test_status_override_forces_active(self, manifest):
+        """The tiers are a recommendation; the caller owns the migration."""
+        for c in convert_manifest(manifest, status_override="Active"):
+            assert c.check["status"] == "Active"
+
+    def test_status_override_does_not_change_tiers(self, manifest):
+        """Overriding status must not rewrite the reported crosswalk."""
+        default = summarize(convert_manifest(manifest))
+        forced = summarize(convert_manifest(manifest, status_override="Active"))
+        assert default["direct"] == forced["direct"]
+        assert default["manual"] == forced["manual"]
+
+    def test_status_override_wins_over_include_status(self, manifest):
+        converted = convert_manifest(
+            manifest, include_status=False, status_override="Draft"
+        )
+        assert all(c.check["status"] == "Draft" for c in converted)
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # 6. Interop with the existing import path

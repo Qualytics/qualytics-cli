@@ -59,7 +59,10 @@ qualytics dbt import --manifest target/manifest.json --datastore-id 42 \
 | `--container-map` | Override a container name: `model=container` (repeatable) |
 | `--container-case` | Force container name case: `upper` or `lower` |
 | `--preserve-status` | Omit `status` so re-imports keep what was set in the product |
+| `--status` | Force every check to `Active` or `Draft`, overriding the tier default |
 | `--emit-yaml` | Also write the converted checks to a directory |
+
+`--status` and `--preserve-status` are mutually exclusive.
 
 ## Migration tiers
 
@@ -72,6 +75,20 @@ Every dbt test converts. Tiers grade **effort**, not feasibility.
 | `manual` | Custom SQL — the expression must be authored | `Draft` |
 
 Nothing is skipped. An unrecognized generic test or a singular SQL test still produces a check, as a `satisfiesExpression` in `Draft` with the dbt source recorded in `additional_metadata`, so a reviewer adapts it rather than going back to the dbt project to find it.
+
+### Status is yours to set
+
+The tier → status mapping above is the **default, not a policy**. `--status` overrides it wholesale:
+
+```bash
+# review everything before anything fires
+qualytics dbt import -m target/manifest.json --datastore-id 42 --status Draft
+
+# activate everything, including checks that need editing
+qualytics dbt import -m target/manifest.json --datastore-id 42 --status Active
+```
+
+The default exists because `manual` checks carry an empty `expression`, and several `normalize` rules (`volumetric`, `freshness`, `distinctCount`, `metric`) are created with empty properties — dbt's kwargs don't carry a window, interval, or bound. Those checks are unlikely to evaluate meaningfully until edited. `--status Active` prints how many fall into that group and then does what you asked.
 
 ### Tests that become two checks
 
