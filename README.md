@@ -48,6 +48,7 @@ qualytics config import --input ./qualytics-config --dry-run
 | `datastores` | Create and manage datastores |
 | `containers` | Create and manage computed containers |
 | `checks` | Create and manage quality checks |
+| `dbt` | Migrate dbt tests to Qualytics quality checks |
 | `anomalies` | View and manage detected anomalies |
 | `operations` | Trigger sync, profile, and scan operations |
 | `config` | Export and import configuration as code |
@@ -70,6 +71,7 @@ Run `qualytics <command> --help` for full details on any command.
 | [Quality Checks](docs/checks.md) | Creating checks from YAML (single and bulk) |
 | [Operations](docs/operations.md) | Sync, profile, scan workflows |
 | [Export/Import](docs/export-import.md) | Config-as-code: export, import, CI/CD promotion |
+| [dbt Migration](docs/dbt.md) | Converting a dbt manifest into quality checks |
 | [Anomalies](docs/anomalies.md) | Viewing and managing anomalies |
 | [Computed Fields](docs/computed-fields.md) | User-defined computed fields in export/import |
 | [Computed Tables](docs/computed-tables.md) | Bulk import of computed tables from Excel/CSV |
