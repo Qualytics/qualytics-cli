@@ -20,7 +20,8 @@ Design invariants:
 """
 
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # ── Tiers ─────────────────────────────────────────────────────────────────
 # 1 = direct/deterministic, 2 = needs normalization, 3 = manual authoring.
