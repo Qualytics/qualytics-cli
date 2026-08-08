@@ -10,11 +10,14 @@ from rich.console import Console
 from rich.table import Table
 
 from ..api.client import get_client
+from ..api.fields import container_field_names
+from ..services.containers import get_table_ids
 from ..services.dbt import (
     TIER_DIRECT,
     TIER_MANUAL,
     TIER_NORMALIZE,
     convert_manifest,
+    resolve_check_fields,
     summarize,
     to_checks,
 )
@@ -154,6 +157,32 @@ def _print_summary(converted, status_override: str | None = None) -> dict:
     return stats
 
 
+def _field_catalogue(
+    client, datastore_id: int, containers: set[str]
+) -> dict[str, list[str]]:
+    """Catalogued field names for the containers these checks target.
+
+    Only the containers actually referenced are fetched. A container the
+    importer will reject anyway, or one whose fields cannot be read, is simply
+    left out — validation then passes those checks through rather than blocking
+    the import on a lookup problem.
+    """
+    table_ids = get_table_ids(client=client, datastore_id=datastore_id)
+    if not table_ids:
+        return {}
+
+    catalogue: dict[str, list[str]] = {}
+    for name in sorted(containers):
+        container_id = table_ids.get(name)
+        if container_id is None:
+            continue
+        try:
+            catalogue[name] = container_field_names(client, container_id)
+        except Exception as e:  # noqa: BLE001 - lookup failure must not block import
+            print(f"[dim]Could not read fields for '{name}': {e}[/dim]")
+    return catalogue
+
+
 def _write_yaml(converted, out_dir: str) -> None:
     """Write one YAML file per check, grouped by container.
 
@@ -241,6 +270,11 @@ def dbt_import(
         "--status",
         help="Force every check to Active or Draft, overriding the tier default",
     ),
+    validate_fields: bool = typer.Option(
+        True,
+        "--validate-fields/--no-validate-fields",
+        help="Check field names against the catalogue and correct their casing",
+    ),
     emit_yaml: str = typer.Option(
         None, "--emit-yaml", help="Also write the converted checks to this directory"
     ),
@@ -293,22 +327,41 @@ def dbt_import(
     summary_table.add_column("Updated", style="yellow")
     summary_table.add_column("Failed", style="red")
 
+    containers = {c["container"] for c in checks if c.get("container")}
+
     total_failed = 0
     for ds_id in datastore_id:
+        # Field names are catalogued per datastore, so this resolves per target.
+        payload = checks
+        rejected: list[dict] = []
+        if validate_fields:
+            payload, rejected, corrections = resolve_check_fields(
+                checks, _field_catalogue(client, ds_id, containers)
+            )
+            if corrections:
+                print(
+                    f"[cyan]Corrected {len(corrections)} field name(s) to catalogue "
+                    f"casing: {', '.join(corrections[:5])}"
+                    f"{'…' if len(corrections) > 5 else ''}[/cyan]"
+                )
+
         print(
-            f"\n[cyan]{'[DRY RUN] ' if dry_run else ''}Importing {len(checks)} checks "
+            f"\n[cyan]{'[DRY RUN] ' if dry_run else ''}Importing {len(payload)} checks "
             f"to datastore {ds_id}...[/cyan]"
         )
-        result = import_checks_to_datastore(client, ds_id, checks, dry_run=dry_run)
+        result = import_checks_to_datastore(client, ds_id, payload, dry_run=dry_run)
 
+        failed = result["failed"] + len(rejected)
         summary_table.add_row(
             str(ds_id),
             str(result["created"]),
             str(result["updated"]),
-            str(result["failed"]),
+            str(failed),
         )
-        total_failed += result["failed"]
+        total_failed += failed
 
+        for item in rejected:
+            print(f"  [red]{item['reason']}[/red]")
         for err in result["errors"]:
             print(f"  [red]{err}[/red]")
 
@@ -319,9 +372,10 @@ def dbt_import(
     # behaviourally identical matters more than this command's CI ergonomics.
     if total_failed:
         print(
-            "[dim]Container-not-found errors usually mean the datastore has not been "
-            "catalogued, or dbt model names differ from the warehouse tables "
-            "(try --container-map or --container-case).[/dim]"
+            "[dim]Container- and field-not-found errors usually mean the datastore "
+            "has not been catalogued, or dbt names differ from the warehouse "
+            "(try --container-map or --container-case). Field casing is corrected "
+            "automatically; --no-validate-fields skips the check entirely.[/dim]"
         )
 
     if stats["manual"] and not dry_run:

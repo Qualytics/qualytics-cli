@@ -12,6 +12,7 @@ from qualytics.services.dbt import (
     dbt_check_uid,
     dbt_metadata,
     index_models,
+    resolve_check_fields,
     summarize,
     row_filter,
     to_checks,
@@ -651,3 +652,79 @@ class TestSummarize:
         s = summarize(convert_manifest({"nodes": {}}))
         assert s["total"] == 0
         assert s["automatic_pct"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 8. Field validation against the catalogue
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _check(container="orders", fields=None):
+    return {
+        "rule_type": "notNull",
+        "container": container,
+        "fields": list(fields) if fields is not None else ["order_id"],
+        "properties": {},
+    }
+
+
+class TestResolveCheckFields:
+    def test_exact_match_passes_through(self):
+        ok, bad, fixed = resolve_check_fields(
+            [_check()], {"orders": ["order_id", "status"]}
+        )
+        assert len(ok) == 1 and not bad and not fixed
+        assert ok[0]["fields"] == ["order_id"]
+
+    def test_case_mismatch_is_corrected_to_catalogue_casing(self):
+        """Snowflake uppercases identifiers; the catalogue is ground truth."""
+        ok, bad, fixed = resolve_check_fields(
+            [_check(fields=["order_id"])], {"orders": ["ORDER_ID"]}
+        )
+        assert ok[0]["fields"] == ["ORDER_ID"]
+        assert fixed == ["orders.order_id → ORDER_ID"]
+        assert not bad
+
+    def test_unknown_field_is_rejected_with_a_reason(self):
+        ok, bad, _ = resolve_check_fields(
+            [_check(fields=["nope"])], {"orders": ["order_id"]}
+        )
+        assert not ok
+        assert len(bad) == 1
+        assert "nope" in bad[0]["reason"]
+        assert "orders" in bad[0]["reason"]
+
+    def test_partial_miss_rejects_the_whole_check(self):
+        ok, bad, _ = resolve_check_fields(
+            [_check(fields=["order_id", "ghost"])], {"orders": ["order_id"]}
+        )
+        assert not ok and len(bad) == 1
+        assert "ghost" in bad[0]["reason"]
+        assert "order_id" not in bad[0]["reason"].split(":")[-1]
+
+    def test_unknown_container_passes_through_untouched(self):
+        """The importer reports unknown containers; this must not pre-empt it."""
+        ok, bad, fixed = resolve_check_fields([_check(container="ghost")], {})
+        assert len(ok) == 1 and not bad and not fixed
+        assert ok[0]["fields"] == ["order_id"]
+
+    def test_container_level_check_with_no_fields_is_fine(self):
+        ok, bad, _ = resolve_check_fields([_check(fields=[])], {"orders": ["order_id"]})
+        assert len(ok) == 1 and not bad
+
+    def test_multi_field_check_resolves_each(self):
+        ok, _, fixed = resolve_check_fields(
+            [_check(fields=["a", "B"])], {"orders": ["A", "b"]}
+        )
+        assert ok[0]["fields"] == ["A", "b"]
+        assert len(fixed) == 2
+
+    def test_original_check_is_not_mutated(self):
+        original = _check(fields=["order_id"])
+        resolve_check_fields([original], {"orders": ["ORDER_ID"]})
+        assert original["fields"] == ["order_id"]
+
+    def test_empty_catalogue_is_a_no_op(self):
+        checks = [_check(), _check(container="other")]
+        ok, bad, fixed = resolve_check_fields(checks, {})
+        assert len(ok) == 2 and not bad and not fixed

@@ -60,6 +60,7 @@ qualytics dbt import --manifest target/manifest.json --datastore-id 42 \
 | `--container-case` | Force container name case: `upper` or `lower` |
 | `--preserve-status` | Omit `status` so re-imports keep what was set in the product |
 | `--status` | Force every check to `Active` or `Draft`, overriding the tier default |
+| `--no-validate-fields` | Skip checking field names against the catalogue |
 | `--emit-yaml` | Also write the converted checks to a directory |
 
 `--status` and `--preserve-status` are mutually exclusive.
@@ -142,6 +143,28 @@ By default `import` sets `status` from the tier, which means a re-import resets 
 
 - **Config-as-code** — treat the YAML as the source of truth. Activate by editing `status` in the emitted file, not in the UI.
 - **`--preserve-status`** — omit `status` entirely so the importer keeps whatever the check currently has.
+
+## Field validation
+
+Field names are checked against the container's catalogue before import, and this is on by default.
+
+It exists because the two halves of a check are validated very differently: the importer resolves container names to IDs and errors when one is missing, but passes `fields` straight through. A field name that doesn't exist in the warehouse therefore creates a check that never evaluates, with no error anywhere.
+
+Because the catalogue is ground truth, validation also **fixes casing** rather than guessing at it:
+
+```
+Corrected 3 field name(s) to catalogue casing: stg_orders.order_id → ORDER_ID, …
+```
+
+dbt writes `order_id`, Snowflake catalogues `ORDER_ID`. There is no `--field-case` flag because the right answer is knowable, not a preference.
+
+A field that matches nothing withholds its check and reports why:
+
+```
+Field(s) not found in container 'stg_orders': shipped_at
+```
+
+Only containers the checks actually reference are fetched. A container that can't be read, or one the importer will reject anyway, is skipped and its checks pass through unvalidated — a lookup problem must not block the import. `--no-validate-fields` turns the whole step off.
 
 ## Container name resolution
 

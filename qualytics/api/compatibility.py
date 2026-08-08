@@ -35,6 +35,7 @@ KNOWN_API_OPERATIONS = frozenset(
         ("PUT", "/api/containers/{container_id}"),
         ("DELETE", "/api/containers/{container_id}"),
         ("GET", "/api/containers/{container_id}/field-profiles"),
+        ("GET", "/api/containers/{container_id}/fields"),
         ("GET", "/api/datastores"),
         ("POST", "/api/datastores"),
         ("POST", "/api/datastores/connection"),

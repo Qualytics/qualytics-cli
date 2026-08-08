@@ -273,3 +273,83 @@ class TestDbtImport:
         self._run(cli_runner, manifest_file, ["--emit-yaml", str(out)])
         names = [n for _r, _d, ns in os.walk(out) for n in ns]
         assert len(names) == len(set(names)) == 2
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Field validation wiring
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestFieldValidation:
+    def _run(self, cli_runner, manifest_file, catalogue, extra=None):
+        """Run import with a stubbed field catalogue for container stg_orders."""
+        with (
+            patch("qualytics.cli.dbt.get_client", return_value=MagicMock()),
+            patch("qualytics.cli.dbt.get_table_ids", return_value={"stg_orders": 7}),
+            patch("qualytics.cli.dbt.container_field_names", return_value=catalogue),
+            patch(
+                "qualytics.cli.dbt.import_checks_to_datastore",
+                return_value={"created": 1, "updated": 0, "failed": 0, "errors": []},
+            ) as importer,
+        ):
+            res = cli_runner.invoke(
+                app,
+                ["dbt", "import", "--manifest", manifest_file, "--datastore-id", "1"]
+                + (extra or []),
+            )
+        return res, importer
+
+    def test_casing_is_corrected_from_the_catalogue(self, cli_runner, manifest_file):
+        res, importer = self._run(cli_runner, manifest_file, ["ORDER_ID"])
+        assert res.exit_code == 0
+        sent = importer.call_args[0][2]
+        assert ["ORDER_ID"] in [c["fields"] for c in sent if c["fields"]]
+        assert "order_id → ORDER_ID" in res.output
+
+    def test_unknown_field_is_rejected_and_counted(self, cli_runner, manifest_file):
+        res, importer = self._run(cli_runner, manifest_file, ["something_else"])
+        assert res.exit_code == 0
+        assert "not found in container 'stg_orders'" in res.output
+        # the notNull check is withheld; the singular test has no fields
+        sent = importer.call_args[0][2]
+        assert all(not c["fields"] for c in sent)
+
+    def test_rejected_checks_are_not_sent_to_the_importer(
+        self, cli_runner, manifest_file
+    ):
+        _, importer = self._run(cli_runner, manifest_file, ["nope"])
+        sent = importer.call_args[0][2]
+        assert len(sent) == 1  # only the fieldless singular check survives
+
+    def test_no_validate_fields_skips_lookup_entirely(self, cli_runner, manifest_file):
+        with (
+            patch("qualytics.cli.dbt.get_client", return_value=MagicMock()),
+            patch("qualytics.cli.dbt.get_table_ids") as table_ids,
+            patch(
+                "qualytics.cli.dbt.import_checks_to_datastore",
+                return_value={"created": 2, "updated": 0, "failed": 0, "errors": []},
+            ) as importer,
+        ):
+            res = cli_runner.invoke(
+                app,
+                [
+                    "dbt",
+                    "import",
+                    "--manifest",
+                    manifest_file,
+                    "--datastore-id",
+                    "1",
+                    "--no-validate-fields",
+                ],
+            )
+        assert res.exit_code == 0
+        table_ids.assert_not_called()
+        assert len(importer.call_args[0][2]) == 2
+
+    def test_exact_match_sends_fields_unchanged(self, cli_runner, manifest_file):
+        res, importer = self._run(cli_runner, manifest_file, ["order_id"])
+        assert res.exit_code == 0
+        assert "Corrected" not in res.output
+        assert ["order_id"] in [
+            c["fields"] for c in importer.call_args[0][2] if c["fields"]
+        ]
