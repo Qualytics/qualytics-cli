@@ -1,0 +1,211 @@
+# dbt Migration
+
+Convert an existing dbt test suite into Qualytics quality checks. Point the CLI at a compiled `manifest.json`; conversion happens in memory and the checks upsert into a datastore.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `dbt plan` | Preview what a manifest would migrate to (offline, no auth) |
+| `dbt import` | Convert a manifest and import the checks (upsert) |
+
+## Prerequisites
+
+1. A compiled dbt manifest — `dbt compile` writes `target/manifest.json`.
+2. **The target datastore must already be catalogued.** Checks reference containers and fields by name, resolved to IDs at import. Run `qualytics operations catalog --datastore-id N` first.
+
+Only `manifest.json` is needed. It carries no database credentials (those live in `profiles.yml`, which dbt never compiles into the manifest), but it does include compiled SQL and full schema lineage — treat it like source code.
+
+## Plan
+
+```bash
+qualytics dbt plan --manifest target/manifest.json
+qualytics dbt plan --manifest target/manifest.json --show-checks
+```
+
+```
+    dbt → Qualytics coverage
+┏━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┓
+┃ Tier      ┃ Tests ┃ Lands as ┃
+┡━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━┩
+│ direct    │    19 │ Active   │
+│ normalize │     6 │ Draft    │
+│ manual    │     3 │ Draft    │
+│ total     │    28 │          │
+└───────────┴───────┴──────────┘
+```
+
+`plan` never constructs an API client, so it works offline and in CI without credentials.
+
+## Import
+
+```bash
+# Preview
+qualytics dbt import --manifest target/manifest.json --datastore-id 42 --dry-run
+
+# Apply
+qualytics dbt import --manifest target/manifest.json --datastore-id 42
+
+# Also write the converted YAML for git / review
+qualytics dbt import --manifest target/manifest.json --datastore-id 42 \
+  --emit-yaml ./qualytics-config/checks/
+```
+
+| Option | Description |
+|--------|-------------|
+| `--datastore-id` | Target datastore (repeat for multiple) |
+| `--manifest`, `-m` | Path to `manifest.json` (default `target/manifest.json`) |
+| `--dry-run` | Preview creates/updates without writing |
+| `--container-map` | Override a container name: `model=container` (repeatable) |
+| `--container-case` | Force container name case: `upper` or `lower` |
+| `--preserve-status` | Omit `status` so re-imports keep what was set in the product |
+| `--status` | Force every check to `Active` or `Draft`, overriding the tier default |
+| `--no-validate-fields` | Skip checking field names against the catalogue |
+| `--emit-yaml` | Also write the converted checks to a directory |
+
+`--status` and `--preserve-status` are mutually exclusive.
+
+## Migration tiers
+
+Every dbt test converts. Tiers grade **effort**, not feasibility.
+
+| Tier | Meaning | Lands as |
+|------|---------|----------|
+| `direct` | Deterministic 1:1 mapping | `Active` |
+| `normalize` | Mapped, but a parameter needs a human eye | `Draft` |
+| `manual` | Custom SQL — the expression must be authored | `Draft` |
+
+Nothing is skipped. An unrecognized generic test or a singular SQL test still produces a check, as a `satisfiesExpression` in `Draft` with the dbt source recorded in `additional_metadata`, so a reviewer adapts it rather than going back to the dbt project to find it.
+
+### Status is yours to set
+
+The tier → status mapping above is the **default, not a policy**. `--status` overrides it wholesale:
+
+```bash
+# review everything before anything fires
+qualytics dbt import -m target/manifest.json --datastore-id 42 --status Draft
+
+# activate everything, including checks that need editing
+qualytics dbt import -m target/manifest.json --datastore-id 42 --status Active
+```
+
+The default exists because `manual` checks carry an empty `expression`, and several `normalize` rules (`volumetric`, `freshness`, `distinctCount`, `metric`) are created with empty properties — dbt's kwargs don't carry a window, interval, or bound. Those checks are unlikely to evaluate meaningfully until edited. `--status Active` prints how many fall into that group and then does what you asked.
+
+### Tests that become two checks
+
+A few dbt tests assert two things at once, and split:
+
+| dbt test | Becomes |
+|----------|---------|
+| `expect_column_value_lengths_to_be_between` | `minLength` + `maxLength` |
+| `expect_column_value_lengths_to_equal` | `minLength` + `maxLength` (same value) |
+
+Each half gets its own check with the UID suffixed by its rule type (`…__minlength`, `…__maxlength`), so both upsert independently. A one-sided dbt test emits only the half it specifies — `min_value` alone produces just a `minLength`. Because of this, `plan` reports check count and dbt test count separately when they differ.
+
+## What carries across
+
+**`where` becomes `filter`.** A dbt test scoped with `config.where` produces a check with the same SQL predicate in `filter`, which every Qualytics rule type supports. This is a correctness mapping, not a nicety — dropping it would run the check against exactly the rows dbt was told to exclude.
+
+**Everything else lands in metadata.** dbt facts with no direct Qualytics field are recorded on the check rather than discarded, so a reviewer completing a Draft never has to reopen the dbt project:
+
+```yaml
+filter: status != 'deleted'          # from config.where
+additional_metadata:
+  _qualytics_check_uid: dbt__test_jaffle_not_null_proportion_stg_orders_amount_abc
+  dbt_unique_id: test.jaffle.not_null_proportion_stg_orders_amount.abc
+  dbt_test: dbt_utils.not_null_proportion
+  dbt_package: jaffle
+  dbt_severity: warn                 # only when it differs from dbt's default
+  dbt_tags: [nightly]
+  dbt_limit: 500
+  dbt_kwargs: {at_least: 0.95}       # every kwarg the mapping did not consume
+  dbt_compiled_sql: ...              # singular tests
+```
+
+`dbt_kwargs` is the important one: when a rule maps but its parameters don't, the original thresholds stay visible on the check itself. `additional_metadata` is typed `dict[str, Any]` server-side, so lists and nested values are preserved rather than stringified.
+
+## Idempotency
+
+Each check's `_qualytics_check_uid` is derived from the dbt node's `unique_id`:
+
+```yaml
+additional_metadata:
+  _qualytics_check_uid: dbt__test_jaffle_not_null_stg_orders_order_id_a1b2c3
+  dbt_unique_id: test.jaffle.not_null_stg_orders_order_id.a1b2c3
+  dbt_test: not_null
+```
+
+Re-running after the dbt suite changes updates checks in place rather than duplicating them. This deliberately does **not** use the `container__rule__fields` scheme that `checks export` uses: several dbt tests routinely share a container/rule/field triple (multiple singular tests on one model, two `expression_is_true` on one column), and the importer upserts on UID collision — so a shared UID would silently discard a test.
+
+### Status on re-import
+
+By default `import` sets `status` from the tier, which means a re-import resets a check someone activated in the product back to `Draft`. Two ways to handle it:
+
+- **Config-as-code** — treat the YAML as the source of truth. Activate by editing `status` in the emitted file, not in the UI.
+- **`--preserve-status`** — omit `status` entirely so the importer keeps whatever the check currently has.
+
+## Field validation
+
+Field names are checked against the container's catalogue before import, and this is on by default.
+
+It exists because the two halves of a check are validated very differently: the importer resolves container names to IDs and errors when one is missing, but passes `fields` straight through. A field name that doesn't exist in the warehouse therefore creates a check that never evaluates, with no error anywhere.
+
+Because the catalogue is ground truth, validation also **fixes casing** rather than guessing at it:
+
+```
+Corrected 3 field name(s) to catalogue casing: stg_orders.order_id → ORDER_ID, …
+```
+
+dbt writes `order_id`, Snowflake catalogues `ORDER_ID`. There is no `--field-case` flag because the right answer is knowable, not a preference.
+
+A field that matches nothing withholds its check and reports why:
+
+```
+Field(s) not found in container 'stg_orders': shipped_at
+```
+
+Only containers the checks actually reference are fetched. A container that can't be read, or one the importer will reject anyway, is skipped and its checks pass through unvalidated — a lookup problem must not block the import. `--no-validate-fields` turns the whole step off.
+
+## Container name resolution
+
+Container names come from the dbt model's `alias` (falling back to `name`), because Qualytics catalogues containers from the warehouse rather than from dbt. When those differ:
+
+```bash
+# Snowflake uppercases identifiers
+qualytics dbt import -m target/manifest.json --datastore-id 42 --container-case upper
+
+# Explicit override
+qualytics dbt import -m target/manifest.json --datastore-id 42 \
+  --container-map stg_orders=ORDERS_RAW --container-map fct_sales=SALES_FACT
+```
+
+A `Container 'x' not found` error usually means the datastore has not been catalogued, or the warehouse table name differs from dbt's alias.
+
+## Supported dbt tests
+
+Native dbt, `dbt_utils`, and `dbt_expectations` generic tests are mapped in `qualytics/services/dbt.py` (`DBT_RULE_MAP`). Highlights:
+
+| dbt test | Qualytics rule | Tier |
+|----------|----------------|------|
+| `not_null` | `notNull` | direct |
+| `unique` | `unique` | direct |
+| `accepted_values` | `expectedValues` | direct |
+| `relationships` | `existsIn` | direct |
+| `dbt_utils.accepted_range` | `between` | direct |
+| `dbt_utils.expression_is_true` | `satisfiesExpression` | normalize |
+| `dbt_expectations.expect_column_values_to_match_regex` | `matchesPattern` | direct |
+| `dbt_expectations.expect_table_row_count_to_be_between` | `volumetric` | normalize |
+| `dbt_expectations.expect_row_values_to_have_recent_data` | `freshness` | normalize |
+| `dbt_expectations.expect_column_value_lengths_to_be_between` | `minLength` + `maxLength` | direct |
+| singular (bespoke SQL) tests | `satisfiesExpression` | manual |
+| anything unrecognized | `satisfiesExpression` | manual |
+
+## CI
+
+```yaml
+- run: dbt compile
+- run: qualytics dbt plan --manifest target/manifest.json
+- run: qualytics dbt import --manifest target/manifest.json --datastore-id ${{ vars.DS_ID }} --dry-run
+```
+
+`import` reports per-check failures and still exits 0, matching `checks import`. A pipeline that should fail on a broken container mapping needs to assert on the output itself, or run `plan` first and check the unresolved-container count.

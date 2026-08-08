@@ -15,6 +15,7 @@ from .cli.datastores import datastores_app
 from .cli.connections import connections_app
 from .cli.containers import containers_app
 from .cli.anomalies import anomalies_app
+from .cli.dbt import dbt_app
 from .cli.auth import auth_app
 from .cli.export_import import export_import_app
 from .cli.mcp_cmd import mcp_app
@@ -40,6 +41,7 @@ app.add_typer(datastores_app, name="datastores")
 app.add_typer(connections_app, name="connections")
 app.add_typer(containers_app, name="containers")
 app.add_typer(anomalies_app, name="anomalies")
+app.add_typer(dbt_app, name="dbt")
 app.add_typer(auth_app, name="auth")
 app.add_typer(export_import_app, name="config")
 app.add_typer(mcp_app, name="mcp")
