@@ -390,6 +390,62 @@ class ConvertedCheck:
         self.note = note
 
 
+# kwargs already expressed elsewhere in the check, so recording them again in
+# metadata would be noise rather than information.
+_REDUNDANT_KWARGS = frozenset({"column_name"})
+
+
+def row_filter(node: dict) -> str | None:
+    """dbt's ``where`` config → Qualytics ``filter``.
+
+    Both are a SQL predicate scoping which rows the assertion applies to.
+    Dropping it would run the check against precisely the rows dbt was told to
+    exclude, so this is a correctness mapping, not an enhancement.
+    """
+    where = (node.get("config") or {}).get("where")
+    return str(where) if where else None
+
+
+def dbt_metadata(node: dict, key: str, kwargs: dict | None = None) -> dict:
+    """dbt facts with no direct Qualytics field, recorded rather than dropped.
+
+    A reviewer completing a Draft check should not have to go back to the dbt
+    project to find the threshold or interval the test was written with, so
+    everything unconsumed lands here. ``additional_metadata`` is typed
+    ``dict[str, Any]`` server-side, so structured values need no encoding.
+    """
+    meta: dict[str, Any] = {"dbt_test": key}
+
+    package = node.get("package_name")
+    if package:
+        meta["dbt_package"] = package
+
+    config = node.get("config") or {}
+
+    # Only record severity when it departs from dbt's default.
+    severity = config.get("severity")
+    if severity and str(severity).lower() != "error":
+        meta["dbt_severity"] = str(severity)
+
+    for cfg in ("limit", "store_failures", "error_if", "warn_if"):
+        if config.get(cfg) is not None:
+            meta[f"dbt_{cfg}"] = config[cfg]
+
+    tags = config.get("tags") or node.get("tags")
+    if tags:
+        meta["dbt_tags"] = (
+            list(tags) if isinstance(tags, (list, tuple)) else [str(tags)]
+        )
+
+    # Every kwarg the mapping did not turn into a property or field. Keeps the
+    # thresholds of a partially-mapped rule visible on the check itself.
+    leftover = {k: v for k, v in (kwargs or {}).items() if k not in _REDUNDANT_KWARGS}
+    if leftover:
+        meta["dbt_kwargs"] = leftover
+
+    return meta
+
+
 def _build_check(
     *,
     rule_type: str,
@@ -404,6 +460,7 @@ def _build_check(
     extra_metadata: dict | None = None,
     include_status: bool = True,
     uid_suffix: str | None = None,
+    check_filter: str | None = None,
 ) -> dict:
     check: dict[str, Any] = {
         "rule_type": rule_type,
@@ -411,6 +468,7 @@ def _build_check(
         "container": container,
         "fields": fields,
         "coverage": coverage,
+        "filter": check_filter,
         "properties": properties or {},
         "tags": tags if tags is not None else ["dbt"],
         "additional_metadata": {
@@ -512,8 +570,9 @@ def _convert_generic(
                     properties={"expression": ""},
                     coverage=coverage,
                     tags=tags,
-                    extra_metadata={"dbt_test": key},
+                    extra_metadata=dbt_metadata(node, key, kwargs),
                     include_status=include_status,
+                    check_filter=row_filter(node),
                 ),
                 TIER_MANUAL,
                 key,
@@ -546,9 +605,10 @@ def _convert_generic(
                         properties=props,
                         coverage=coverage,
                         tags=tags,
-                        extra_metadata={"dbt_test": key},
+                        extra_metadata=dbt_metadata(node, key, kwargs),
                         include_status=include_status,
                         uid_suffix=split.rule_type,
+                        check_filter=row_filter(node),
                     ),
                     mapping.tier,
                     key,
@@ -590,8 +650,9 @@ def _convert_generic(
                 properties=properties,
                 coverage=coverage,
                 tags=tags,
-                extra_metadata={"dbt_test": key},
+                extra_metadata=dbt_metadata(node, key, kwargs),
                 include_status=include_status,
+                check_filter=row_filter(node),
             ),
             mapping.tier,
             key,
@@ -619,6 +680,10 @@ def _convert_singular(
         "that is true for valid rows."
     )
 
+    metadata = dbt_metadata(node, name)
+    if sql:
+        metadata["dbt_compiled_sql"] = sql
+
     return [
         ConvertedCheck(
             _build_check(
@@ -631,10 +696,9 @@ def _convert_singular(
                 properties={"expression": ""},
                 coverage=coverage,
                 tags=tags,
-                extra_metadata={"dbt_test": name, "dbt_compiled_sql": sql}
-                if sql
-                else {"dbt_test": name},
+                extra_metadata=metadata,
                 include_status=include_status,
+                check_filter=row_filter(node),
             ),
             TIER_MANUAL,
             name,

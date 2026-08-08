@@ -101,6 +101,28 @@ A few dbt tests assert two things at once, and split:
 
 Each half gets its own check with the UID suffixed by its rule type (`…__minlength`, `…__maxlength`), so both upsert independently. A one-sided dbt test emits only the half it specifies — `min_value` alone produces just a `minLength`. Because of this, `plan` reports check count and dbt test count separately when they differ.
 
+## What carries across
+
+**`where` becomes `filter`.** A dbt test scoped with `config.where` produces a check with the same SQL predicate in `filter`, which every Qualytics rule type supports. This is a correctness mapping, not a nicety — dropping it would run the check against exactly the rows dbt was told to exclude.
+
+**Everything else lands in metadata.** dbt facts with no direct Qualytics field are recorded on the check rather than discarded, so a reviewer completing a Draft never has to reopen the dbt project:
+
+```yaml
+filter: status != 'deleted'          # from config.where
+additional_metadata:
+  _qualytics_check_uid: dbt__test_jaffle_not_null_proportion_stg_orders_amount_abc
+  dbt_unique_id: test.jaffle.not_null_proportion_stg_orders_amount.abc
+  dbt_test: dbt_utils.not_null_proportion
+  dbt_package: jaffle
+  dbt_severity: warn                 # only when it differs from dbt's default
+  dbt_tags: [nightly]
+  dbt_limit: 500
+  dbt_kwargs: {at_least: 0.95}       # every kwarg the mapping did not consume
+  dbt_compiled_sql: ...              # singular tests
+```
+
+`dbt_kwargs` is the important one: when a rule maps but its parameters don't, the original thresholds stay visible on the check itself. `additional_metadata` is typed `dict[str, Any]` server-side, so lists and nested values are preserved rather than stringified.
+
 ## Idempotency
 
 Each check's `_qualytics_check_uid` is derived from the dbt node's `unique_id`:

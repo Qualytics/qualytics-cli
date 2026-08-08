@@ -10,8 +10,10 @@ from qualytics.services.dbt import (
     container_name_for,
     convert_manifest,
     dbt_check_uid,
+    dbt_metadata,
     index_models,
     summarize,
+    row_filter,
     to_checks,
 )
 from qualytics.services.quality_checks import _UID_KEY, _build_create_payload
@@ -386,6 +388,128 @@ class TestNothingDropped:
             meta = c.check["additional_metadata"]
             assert meta["dbt_unique_id"].startswith("test.")
             assert meta[_UID_KEY].startswith("dbt__")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3b. dbt `where` → Qualytics `filter`, and metadata capture
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _configured_manifest(config, *, kwargs=None, singular=False):
+    model = f"model.{PKG}.stg_orders"
+    if singular:
+        uid, node = _singular_test(model, "stg_orders", "assert_thing")
+    else:
+        uid, node = _generic_test(
+            model, "stg_orders", "not_null", column="order_id", kwargs=kwargs
+        )
+    node["config"] = config
+    return {"nodes": {model: _model("stg_orders"), uid: node}}
+
+
+class TestFilterMapping:
+    def test_where_becomes_filter(self):
+        """Dropping `where` would fire the check on rows dbt excluded."""
+        converted = convert_manifest(
+            _configured_manifest({"where": "status != 'deleted'"})
+        )
+        assert converted[0].check["filter"] == "status != 'deleted'"
+
+    def test_filter_key_present_even_when_unset(self, manifest):
+        """Matches the shape strip_for_export produces."""
+        for c in convert_manifest(manifest):
+            assert "filter" in c.check
+            assert c.check["filter"] is None
+
+    def test_where_applies_to_singular_tests(self):
+        converted = convert_manifest(
+            _configured_manifest({"where": "amount > 0"}, singular=True)
+        )
+        assert converted[0].check["filter"] == "amount > 0"
+
+    def test_where_applies_to_split_checks(self):
+        model = f"model.{PKG}.dim_product"
+        uid, node = _generic_test(
+            model,
+            "dim_product",
+            "expect_column_value_lengths_to_be_between",
+            namespace="dbt_expectations",
+            column="sku",
+            kwargs={"min_value": 8, "max_value": 12},
+        )
+        node["config"] = {"where": "sku is not null"}
+        converted = convert_manifest(
+            {"nodes": {model: _model("dim_product"), uid: node}}
+        )
+        assert len(converted) == 2
+        assert all(c.check["filter"] == "sku is not null" for c in converted)
+
+    def test_empty_where_stays_none(self):
+        converted = convert_manifest(_configured_manifest({"where": ""}))
+        assert converted[0].check["filter"] is None
+
+    def test_row_filter_helper(self):
+        assert row_filter({"config": {"where": "x = 1"}}) == "x = 1"
+        assert row_filter({"config": {}}) is None
+        assert row_filter({}) is None
+
+
+class TestMetadataCapture:
+    def test_unconsumed_kwargs_are_recorded(self):
+        """A reviewer must not have to reopen the dbt project for a threshold."""
+        converted = convert_manifest(
+            _configured_manifest({}, kwargs={"at_least": 0.95, "group_by": ["region"]})
+        )
+        kwargs = converted[0].check["additional_metadata"]["dbt_kwargs"]
+        assert kwargs == {"at_least": 0.95, "group_by": ["region"]}
+
+    def test_column_name_is_not_echoed_into_metadata(self):
+        converted = convert_manifest(_configured_manifest({}))
+        assert "dbt_kwargs" not in converted[0].check["additional_metadata"]
+
+    def test_package_recorded(self, manifest):
+        node = next(
+            n for n in manifest["nodes"].values() if n.get("resource_type") == "test"
+        )
+        node["package_name"] = "acme_analytics"
+        converted = convert_manifest(manifest)
+        assert any(
+            c.check["additional_metadata"].get("dbt_package") == "acme_analytics"
+            for c in converted
+        )
+
+    def test_non_default_severity_recorded(self):
+        converted = convert_manifest(_configured_manifest({"severity": "warn"}))
+        assert converted[0].check["additional_metadata"]["dbt_severity"] == "warn"
+
+    def test_default_severity_omitted(self):
+        converted = convert_manifest(_configured_manifest({"severity": "error"}))
+        assert "dbt_severity" not in converted[0].check["additional_metadata"]
+
+    def test_tags_recorded(self):
+        converted = convert_manifest(_configured_manifest({"tags": ["nightly", "pii"]}))
+        assert converted[0].check["additional_metadata"]["dbt_tags"] == [
+            "nightly",
+            "pii",
+        ]
+
+    def test_extra_config_recorded(self):
+        converted = convert_manifest(
+            _configured_manifest({"limit": 500, "store_failures": True})
+        )
+        meta = converted[0].check["additional_metadata"]
+        assert meta["dbt_limit"] == 500
+        assert meta["dbt_store_failures"] is True
+
+    def test_metadata_helper_on_bare_node(self):
+        assert dbt_metadata({}, "not_null") == {"dbt_test": "not_null"}
+
+    def test_uid_and_provenance_survive_metadata_merge(self, manifest):
+        for c in convert_manifest(manifest):
+            meta = c.check["additional_metadata"]
+            assert meta[_UID_KEY].startswith("dbt__")
+            assert meta["dbt_unique_id"].startswith("test.")
+            assert meta["dbt_test"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
