@@ -220,7 +220,12 @@ class TestRuleMapping:
         """dbt says min_value/max_value; Qualytics `between` says min/max."""
         c = _by_dbt_test(convert_manifest(manifest), "dbt_utils.accepted_range")
         assert c.check["rule_type"] == "between"
-        assert c.check["properties"] == {"min": 0, "max": 5000}
+        assert c.check["properties"] == {
+            "min": 0,
+            "inclusive_min": True,
+            "max": 5000,
+            "inclusive_max": True,
+        }
 
     def test_regex_maps_to_pattern(self, manifest):
         c = _by_dbt_test(
@@ -728,3 +733,144 @@ class TestResolveCheckFields:
         checks = [_check(), _check(container="other")]
         ok, bad, fixed = resolve_check_fields(checks, {})
         assert len(ok) == 2 and not bad and not fixed
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 9. Rule contract — fields / filter / coverage per rule type
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _one(
+    test_name, *, namespace="dbt_expectations", column=None, kwargs=None, config=None
+):
+    model = f"model.{PKG}.orders"
+    uid, node = _generic_test(
+        model, "orders", test_name, namespace=namespace, column=column, kwargs=kwargs
+    )
+    if config:
+        node["config"] = config
+    converted = convert_manifest({"nodes": {model: _model("orders"), uid: node}})
+    return converted
+
+
+class TestRuleContract:
+    def test_container_level_rule_takes_no_filter(self):
+        """volumetric is filterable: False — a where clause must not be attached."""
+        c = _one(
+            "expect_table_row_count_to_be_between",
+            kwargs={"min_value": 10},
+            config={"where": "x = 1"},
+        )[0]
+        assert c.check["rule_type"] == "volumetric"
+        assert c.check["filter"] is None
+
+    def test_filterable_rule_keeps_its_filter(self):
+        c = _one(
+            "expect_column_values_to_not_be_null", column="a", config={"where": "x = 1"}
+        )[0]
+        assert c.check["filter"] == "x = 1"
+
+    def test_rules_without_coverage_support_send_none(self):
+        for name, kwargs in [
+            ("expect_table_row_count_to_be_between", {"min_value": 10}),
+            (
+                "expect_row_values_to_have_recent_data",
+                {"datepart": "day", "interval": 1},
+            ),
+        ]:
+            c = _one(name, kwargs=kwargs)[0]
+            assert c.check["coverage"] is None, name
+
+    def test_coverage_supporting_rule_keeps_it(self):
+        c = _one("expect_column_values_to_not_be_null", column="a")[0]
+        assert c.check["coverage"] == 1.0
+
+    def test_container_level_rule_has_empty_fields(self):
+        c = _one(
+            "expect_table_row_count_to_be_between", column="a", kwargs={"min_value": 10}
+        )[0]
+        assert c.check["fields"] == []
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 10. Properties built from dbt kwargs
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestKwargProperties:
+    def test_distinct_count_less_than(self):
+        c = _one(
+            "expect_column_distinct_count_to_be_less_than",
+            column="a",
+            kwargs={"value": 5},
+        )[0]
+        assert c.check["rule_type"] == "distinctCount"
+        assert c.check["properties"] == {"comparison": "less than", "value": 5}
+        assert c.tier == TIER_DIRECT
+
+    def test_distinct_count_equal(self):
+        c = _one(
+            "expect_column_distinct_count_to_equal", column="a", kwargs={"value": 3}
+        )[0]
+        assert c.check["properties"] == {"comparison": "equal to", "value": 3}
+
+    def test_not_constant_is_distinct_count_gt_one(self):
+        c = _one("not_constant", namespace="dbt_utils", column="a")[0]
+        assert c.check["properties"] == {"comparison": "greater than", "value": 1}
+        assert c.tier == TIER_DIRECT
+
+    def test_freshness_converts_datepart_to_milliseconds(self):
+        c = _one(
+            "expect_row_values_to_have_recent_data",
+            kwargs={"datepart": "day", "interval": 2},
+        )[0]
+        assert c.check["rule_type"] == "freshness"
+        assert c.check["properties"] == {"value": 172_800_000}
+        assert c.tier == TIER_DIRECT
+
+    def test_freshness_handles_hours_and_plurals(self):
+        c = _one(
+            "expect_row_values_to_have_recent_data",
+            kwargs={"datepart": "hours", "interval": 6},
+        )[0]
+        assert c.check["properties"] == {"value": 21_600_000}
+
+    def test_freshness_without_interval_stays_empty(self):
+        c = _one("expect_row_values_to_have_recent_data", kwargs={"datepart": "day"})[0]
+        assert c.check["properties"] == {}
+
+    def test_volumetric_gets_comparison_and_window(self):
+        c = _one(
+            "expect_table_row_count_to_be_between",
+            kwargs={"min_value": 1000, "max_value": 50000},
+        )[0]
+        props = c.check["properties"]
+        assert props["comparison"] == "Absolute Value"
+        assert props["window_size"] == 1
+        assert props["min"] == 1000 and props["max"] == 50000
+        assert c.tier == TIER_NORMALIZE, "window is assumed, so it stays reviewable"
+
+    def test_expected_schema_lists_the_column(self):
+        c = _one("expect_column_to_exist", column="sku")[0]
+        assert c.check["rule_type"] == "expectedSchema"
+        assert c.check["properties"] == {"list": ["sku"], "allow_other_fields": True}
+
+    def test_metric_gets_a_comparison(self):
+        c = _one(
+            "expect_column_mean_to_be_between",
+            column="amount",
+            kwargs={"min_value": 1, "max_value": 9},
+        )[0]
+        assert c.check["properties"]["comparison"] == "Absolute Value"
+        assert c.check["properties"]["min"] == 1
+
+    def test_relationships_carries_the_referenced_field(self, manifest):
+        c = _by_dbt_test(convert_manifest(manifest), "relationships")
+        assert c.check["properties"]["field_name"] == "customer_id"
+        assert c.check["properties"]["ref_container_name"] == "stg_customers"
+
+    def test_one_sided_range_does_not_fabricate_the_other_bound(self):
+        c = _one(
+            "expect_column_values_to_be_between", column="a", kwargs={"min_value": 0}
+        )[0]
+        assert c.check["properties"] == {"min": 0, "inclusive_min": True}

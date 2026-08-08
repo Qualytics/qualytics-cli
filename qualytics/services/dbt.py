@@ -58,12 +58,20 @@ def _p_pattern(kw: dict) -> dict:
 
 
 def _p_between(kw: dict) -> dict:
-    """dbt min_value/max_value → Qualytics min/max."""
+    """dbt min_value/max_value → Qualytics min/max.
+
+    `between` wants min/inclusive_min/max/inclusive_max, so each bound's
+    inclusivity is stated rather than left to a server default — dbt ranges are
+    inclusive. A one-sided dbt range yields a one-sided check rather than a
+    fabricated opposite bound.
+    """
     props: dict[str, Any] = {}
     if kw.get("min_value") is not None:
         props["min"] = kw["min_value"]
+        props["inclusive_min"] = True
     if kw.get("max_value") is not None:
         props["max"] = kw["max_value"]
+        props["inclusive_max"] = True
     return props
 
 
@@ -73,6 +81,95 @@ def _p_value_from_min(kw: dict) -> dict:
 
 def _p_value_from_max(kw: dict) -> dict:
     return {"value": kw.get("max_value"), "inclusive": True}
+
+
+# ComparisonType, from controlplane app/types/comparison_types.py.
+_LT = "less than"
+_EQ = "equal to"
+_GT = "greater than"
+
+# Metric/Volumetric comparison, from their respective enums.
+_ABSOLUTE_VALUE = "Absolute Value"
+
+
+def _p_distinct_count(comparison: str):
+    """distinctCount requires both `comparison` and `value`."""
+
+    def build(kw: dict) -> dict:
+        value = kw.get("value")
+        if value is None:
+            value = kw.get("max_value")
+        return {"comparison": comparison, "value": value}
+
+    return build
+
+
+def _p_not_constant(kw: dict) -> dict:
+    """`not_constant` asserts more than one distinct value."""
+    return {"comparison": _GT, "value": 1}
+
+
+def _p_exists_in(kw: dict) -> dict:
+    """existsIn needs the referenced field; the container is resolved later."""
+    field = kw.get("field")
+    return {"field_name": field} if field else {}
+
+
+def _p_expected_schema(kw: dict) -> dict:
+    """`expect_column_to_exist` asserts one column is present, others allowed."""
+    column = kw.get("column_name")
+    return {
+        "list": [column] if column else [],
+        "allow_other_fields": True,
+    }
+
+
+# dbt datepart → milliseconds, for freshness. controlplane documents freshness
+# `value` as the maximum allowed age in MILLISECONDS.
+_DATEPART_MS = {
+    "second": 1_000,
+    "minute": 60_000,
+    "hour": 3_600_000,
+    "day": 86_400_000,
+    "week": 604_800_000,
+    "month": 2_592_000_000,  # 30 days
+    "year": 31_536_000_000,  # 365 days
+}
+
+
+def _p_freshness(kw: dict) -> dict:
+    """dbt datepart+interval → freshness max age in milliseconds."""
+    datepart = str(kw.get("datepart") or "day").strip().lower().rstrip("s")
+    interval = kw.get("interval")
+    unit = _DATEPART_MS.get(datepart)
+    if unit is None or interval is None:
+        return {}
+    return {"value": int(interval) * unit}
+
+
+def _p_volumetric(kw: dict) -> dict:
+    """dbt's absolute row-count range → volumetric with an absolute comparison.
+
+    volumetric is drift-oriented and requires a `window_size` for its moving
+    average; dbt has no equivalent concept, so an absolute-value comparison over
+    a single-day window is the closest faithful reading. It stays Draft so the
+    window is confirmed rather than assumed.
+    """
+    return {
+        "comparison": _ABSOLUTE_VALUE,
+        "window_size": 1,
+        "min": kw.get("min_value"),
+        "max": kw.get("max_value"),
+    }
+
+
+def _p_metric(kw: dict) -> dict:
+    """metric requires `comparison`; dbt supplies the absolute bounds."""
+    return {
+        "comparison": _ABSOLUTE_VALUE,
+        "min": kw.get("min_value"),
+        "max": kw.get("max_value"),
+    }
 
 
 # Length builders return None when their bound is absent, so a one-sided dbt
@@ -182,7 +279,7 @@ DBT_RULE_MAP: dict[str, Mapping] = {
     "unique": Mapping("unique", TIER_DIRECT),
     "accepted_values": Mapping("expectedValues", TIER_DIRECT, _p_expected_values),
     "relationships": Mapping(
-        "existsIn", TIER_DIRECT, note="reference resolved from dbt ref()"
+        "existsIn", TIER_DIRECT, _p_exists_in, note="reference resolved from dbt ref()"
     ),
     # ---- dbt_utils ----
     "dbt_utils.unique_combination_of_columns": Mapping("unique", TIER_DIRECT),
@@ -196,10 +293,12 @@ DBT_RULE_MAP: dict[str, Mapping] = {
         _p_expression,
         note="verify expression is valid Spark SQL",
     ),
-    "dbt_utils.not_constant": Mapping(
-        "distinctCount", TIER_NORMALIZE, note="expects distinct count > 1"
+    "dbt_utils.not_constant": Mapping("distinctCount", TIER_DIRECT, _p_not_constant),
+    "dbt_utils.cardinality_equality": Mapping(
+        "distinctCount",
+        TIER_NORMALIZE,
+        note="dbt compares two columns' cardinality — set the expected count",
     ),
-    "dbt_utils.cardinality_equality": Mapping("distinctCount", TIER_NORMALIZE),
     # ---- dbt_expectations ----
     "dbt_expectations.expect_column_values_to_not_be_null": Mapping(
         "notNull", TIER_DIRECT
@@ -248,37 +347,88 @@ DBT_RULE_MAP: dict[str, Mapping] = {
         "minValue", TIER_NORMALIZE, _p_value_from_min
     ),
     "dbt_expectations.expect_column_mean_to_be_between": Mapping(
-        "metric", TIER_NORMALIZE, note="configure the metric aggregation"
+        "metric",
+        TIER_NORMALIZE,
+        _p_metric,
+        note="metric records the field value — confirm it aggregates as a mean",
     ),
     "dbt_expectations.expect_column_sum_to_be_between": Mapping(
         "sum", TIER_NORMALIZE, _p_value_from_min
     ),
     "dbt_expectations.expect_column_distinct_count_to_be_less_than": Mapping(
-        "distinctCount", TIER_NORMALIZE
+        "distinctCount", TIER_DIRECT, _p_distinct_count(_LT)
     ),
     "dbt_expectations.expect_column_distinct_count_to_equal": Mapping(
-        "distinctCount", TIER_NORMALIZE
+        "distinctCount", TIER_DIRECT, _p_distinct_count(_EQ)
     ),
     "dbt_expectations.expect_table_row_count_to_be_between": Mapping(
-        "volumetric", TIER_NORMALIZE, note="set the volumetric window"
+        "volumetric",
+        TIER_NORMALIZE,
+        _p_volumetric,
+        note="confirm the moving-average window; dbt has no equivalent",
     ),
     "dbt_expectations.expect_row_values_to_have_recent_data": Mapping(
-        "freshness", TIER_NORMALIZE, note="set the freshness interval"
+        "freshness", TIER_DIRECT, _p_freshness
     ),
     "dbt_expectations.expect_table_column_count_to_equal": Mapping(
         "fieldCount", TIER_DIRECT, lambda kw: {"value": kw.get("value")}
     ),
-    "dbt_expectations.expect_column_to_exist": Mapping("expectedSchema", TIER_DIRECT),
+    "dbt_expectations.expect_column_to_exist": Mapping(
+        "expectedSchema", TIER_DIRECT, _p_expected_schema
+    ),
 }
 
 # Rules that carry a cross-container reference. The portable YAML uses
 # ref_container_name / ref_datastore_name; the importer resolves them to IDs.
 _CROSS_REF_RULES = frozenset({"existsIn", "notExistsIn", "isReplicaOf", "dataDiff"})
 
-# Rules that operate on the container, not a field.
-_CONTAINER_LEVEL_RULES = frozenset(
-    {"volumetric", "fieldCount", "expectedSchema", "freshness"}
-)
+
+class Contract:
+    """Per-rule capabilities, from controlplane's quality_check_specs().
+
+    Not every rule accepts every top-level field: `volumetric` and `freshness`
+    are container-level and reject a filter, and several rules do not support
+    coverage. Emitting those anyway produces a payload the API has no meaning
+    for, so the contract is encoded rather than assumed uniform.
+    """
+
+    __slots__ = ("fields", "filterable", "coverage")
+
+    def __init__(self, fields: str, filterable: bool, coverage: bool):
+        self.fields = fields  # multi | single | calculated | none
+        self.filterable = filterable
+        self.coverage = coverage
+
+
+RULE_CONTRACT: dict[str, Contract] = {
+    "notNull": Contract("multi", True, True),
+    "unique": Contract("multi", True, True),
+    "expectedValues": Contract("single", True, True),
+    "existsIn": Contract("single", True, True),
+    "between": Contract("single", True, True),
+    "greaterThan": Contract("single", True, True),
+    "lessThan": Contract("single", True, True),
+    "satisfiesExpression": Contract("calculated", True, True),
+    "distinctCount": Contract("single", True, False),
+    "matchesPattern": Contract("single", True, True),
+    "maxLength": Contract("single", True, True),
+    "minLength": Contract("single", True, True),
+    "isType": Contract("single", True, True),
+    "maxValue": Contract("single", True, True),
+    "minValue": Contract("single", True, True),
+    "metric": Contract("single", True, False),
+    "sum": Contract("single", True, True),
+    "volumetric": Contract("none", False, False),
+    "freshness": Contract("none", False, False),
+    "fieldCount": Contract("none", False, False),
+    "expectedSchema": Contract("none", False, False),
+}
+
+_DEFAULT_CONTRACT = Contract("single", True, True)
+
+
+def contract_for(rule_type: str) -> Contract:
+    return RULE_CONTRACT.get(rule_type, _DEFAULT_CONTRACT)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -462,13 +612,19 @@ def _build_check(
     uid_suffix: str | None = None,
     check_filter: str | None = None,
 ) -> dict:
+    # The rule's contract decides which top-level fields are meaningful. A
+    # container-level rule takes no fields and rejects a filter; several rules
+    # do not support coverage. Emitting them regardless would be noise the API
+    # has to ignore, or reject.
+    contract = contract_for(rule_type)
+
     check: dict[str, Any] = {
         "rule_type": rule_type,
         "description": description,
         "container": container,
-        "fields": fields,
-        "coverage": coverage,
-        "filter": check_filter,
+        "fields": [] if contract.fields == "none" else fields,
+        "coverage": coverage if contract.coverage else None,
+        "filter": check_filter if contract.filterable else None,
         "properties": properties or {},
         "tags": tags if tags is not None else ["dbt"],
         "additional_metadata": {
@@ -631,8 +787,8 @@ def _convert_generic(
             properties = dict(properties)
             properties["ref_container_name"] = container_name_for(ref)
 
-    if mapping.rule_type in _CONTAINER_LEVEL_RULES:
-        fields = []
+    # Container-level rules take no fields; _build_check enforces that from the
+    # rule contract rather than a second list kept in sync here.
 
     description = f"[dbt] {key}"
     if mapping.note:
