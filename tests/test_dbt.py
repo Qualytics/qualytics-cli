@@ -874,3 +874,92 @@ class TestKwargProperties:
             "expect_column_values_to_be_between", column="a", kwargs={"min_value": 0}
         )[0]
         assert c.check["properties"] == {"min": 0, "inclusive_min": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 11. Review findings — semantics that must not silently change
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestSumSemantics:
+    """dataplane evaluates `sum` as hasSum(field, _ == value): equality, not a range."""
+
+    def test_sum_range_does_not_become_equality(self):
+        c = _one(
+            "expect_column_sum_to_be_between",
+            column="amount",
+            kwargs={"min_value": 100, "max_value": 500},
+        )[0]
+        assert c.check["rule_type"] != "sum", "sum == 100 would flag valid data"
+        assert c.tier == TIER_MANUAL
+        assert c.check["additional_metadata"]["dbt_kwargs"]["max_value"] == 500
+
+    def test_degenerate_range_converts_to_sum(self):
+        c = _one(
+            "expect_column_sum_to_be_between",
+            column="amount",
+            kwargs={"min_value": 100, "max_value": 100},
+        )[0]
+        assert c.check["rule_type"] == "sum"
+        assert c.check["properties"] == {"value": 100}
+
+    def test_one_sided_sum_is_not_converted(self):
+        c = _one(
+            "expect_column_sum_to_be_between",
+            column="amount",
+            kwargs={"min_value": 100},
+        )[0]
+        assert c.check["rule_type"] == "satisfiesExpression"
+
+    def test_unconvertible_test_is_still_emitted(self):
+        """Falling back must never mean dropping the test."""
+        converted = _one(
+            "expect_column_sum_to_be_between",
+            column="amount",
+            kwargs={"min_value": 1, "max_value": 2},
+        )
+        assert len(converted) == 1
+        assert converted[0].check["additional_metadata"]["dbt_unique_id"]
+
+
+class TestCrossReferenceResolution:
+    """A referenced container must resolve exactly like the check's own."""
+
+    def _rel_manifest(self):
+        orders = f"model.{PKG}.stg_orders"
+        customers = f"model.{PKG}.stg_customers"
+        uid, node = _generic_test(
+            orders,
+            "stg_orders",
+            "relationships",
+            column="customer_id",
+            kwargs={"to": "ref('stg_customers')", "field": "customer_id"},
+            extra_deps=[customers],
+        )
+        return {
+            "nodes": {
+                orders: _model("stg_orders"),
+                customers: _model("stg_customers"),
+                uid: node,
+            }
+        }
+
+    def test_container_case_applies_to_the_reference(self):
+        c = convert_manifest(self._rel_manifest(), container_case="upper")[0]
+        assert c.check["container"] == "STG_ORDERS"
+        assert c.check["properties"]["ref_container_name"] == "STG_CUSTOMERS"
+
+    def test_container_map_applies_to_the_reference(self):
+        c = convert_manifest(
+            self._rel_manifest(), container_map={"stg_customers": "CUSTOMERS_RAW"}
+        )[0]
+        assert c.check["properties"]["ref_container_name"] == "CUSTOMERS_RAW"
+
+    def test_both_sides_resolve_independently(self):
+        c = convert_manifest(
+            self._rel_manifest(),
+            container_map={"stg_orders": "ORDERS_A"},
+            container_case="upper",
+        )[0]
+        assert c.check["container"] == "ORDERS_A"
+        assert c.check["properties"]["ref_container_name"] == "STG_CUSTOMERS"

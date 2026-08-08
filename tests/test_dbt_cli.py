@@ -353,3 +353,95 @@ class TestFieldValidation:
         assert ["order_id"] in [
             c["fields"] for c in importer.call_args[0][2] if c["fields"]
         ]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# --emit-yaml must stay inside the directory the caller chose
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestEmitYamlContainment:
+    def _manifest_with_alias(self, tmp_path, alias):
+        model = "model.jaffle.stg_orders"
+        manifest = {
+            "nodes": {
+                model: {
+                    "resource_type": "model",
+                    "name": "stg_orders",
+                    "alias": alias,
+                },
+                "test.jaffle.not_null_stg_orders_order_id.abc": {
+                    "resource_type": "test",
+                    "name": "nn",
+                    "column_name": "order_id",
+                    "attached_node": model,
+                    "depends_on": {"nodes": [model]},
+                    "test_metadata": {
+                        "namespace": None,
+                        "name": "not_null",
+                        "kwargs": {"column_name": "order_id"},
+                    },
+                },
+            }
+        }
+        path = tmp_path / "manifest.json"
+        path.write_text(json.dumps(manifest))
+        return str(path)
+
+    def _emit(self, cli_runner, manifest_file, out_dir):
+        with (
+            patch("qualytics.cli.dbt.get_client", return_value=MagicMock()),
+            patch(
+                "qualytics.cli.dbt.import_checks_to_datastore",
+                return_value={"created": 1, "updated": 0, "failed": 0, "errors": []},
+            ),
+        ):
+            return cli_runner.invoke(
+                app,
+                [
+                    "dbt",
+                    "import",
+                    "--manifest",
+                    manifest_file,
+                    "--datastore-id",
+                    "1",
+                    "--emit-yaml",
+                    str(out_dir),
+                    "--no-validate-fields",
+                ],
+            )
+
+    def _written(self, out_dir):
+        return [os.path.join(r, n) for r, _d, ns in os.walk(out_dir) for n in ns]
+
+    def test_traversal_alias_stays_inside_output_dir(self, cli_runner, tmp_path):
+        """A manifest is often someone else's file; its alias is untrusted."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        out_dir = tmp_path / "checks"
+        mf = self._manifest_with_alias(tmp_path, "../outside/pwned")
+
+        res = self._emit(cli_runner, mf, out_dir)
+        assert res.exit_code == 0
+        assert not self._written(outside), "wrote outside the chosen directory"
+        assert len(self._written(out_dir)) == 1
+
+    def test_absolute_alias_stays_inside_output_dir(self, cli_runner, tmp_path):
+        outside = tmp_path / "abs"
+        outside.mkdir()
+        out_dir = tmp_path / "checks"
+        mf = self._manifest_with_alias(tmp_path, f"{outside}/pwned")
+
+        res = self._emit(cli_runner, mf, out_dir)
+        assert res.exit_code == 0
+        assert not self._written(outside)
+        assert len(self._written(out_dir)) == 1
+
+    def test_normal_alias_still_groups_by_container(self, cli_runner, tmp_path):
+        out_dir = tmp_path / "checks"
+        mf = self._manifest_with_alias(tmp_path, "stg_orders")
+        res = self._emit(cli_runner, mf, out_dir)
+        assert res.exit_code == 0
+        written = self._written(out_dir)
+        assert len(written) == 1
+        assert os.path.basename(os.path.dirname(written[0])) == "stg_orders"

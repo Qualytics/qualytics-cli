@@ -84,6 +84,21 @@ def _p_value_from_max(kw: dict) -> dict:
     return {"value": kw.get("max_value"), "inclusive": True}
 
 
+def _p_sum(kw: dict) -> dict | None:
+    """`sum` asserts equality, not a range.
+
+    dataplane evaluates it as ``hasSum(field, _ == value)``. Emitting a dbt
+    range's lower bound would assert ``sum == min`` and report valid data as
+    anomalous, so only a degenerate range (min == max) converts. Anything wider
+    returns None and falls through to manual authoring with the bounds preserved
+    in metadata.
+    """
+    low, high = kw.get("min_value"), kw.get("max_value")
+    if low is not None and low == high:
+        return {"value": low}
+    return None
+
+
 # ComparisonType, from controlplane app/types/comparison_types.py.
 _LT = "less than"
 _EQ = "equal to"
@@ -354,7 +369,7 @@ DBT_RULE_MAP: dict[str, Mapping] = {
         note="metric records the field value — confirm it aggregates as a mean",
     ),
     "dbt_expectations.expect_column_sum_to_be_between": Mapping(
-        "sum", TIER_NORMALIZE, _p_value_from_min
+        "sum", TIER_NORMALIZE, _p_sum, note="sum asserts equality, not a range"
     ),
     "dbt_expectations.expect_column_distinct_count_to_be_less_than": Mapping(
         "distinctCount", TIER_DIRECT, _p_distinct_count(_LT)
@@ -664,15 +679,24 @@ def convert_manifest(
     models = index_models(manifest)
     out: list[ConvertedCheck] = []
 
+    def resolve_container(model: dict | None) -> str:
+        """Single resolution path for every container name a check refers to.
+
+        A cross-reference target (``existsIn``) has to resolve identically to the
+        check's own container; resolving them separately let --container-map and
+        --container-case apply to one and not the other.
+        """
+        name = (model or {}).get("name") or ""
+        return container_map.get(name) or container_name_for(
+            model or {}, case=container_case
+        )
+
     for unique_id, node in sorted((manifest.get("nodes") or {}).items()):
         if node.get("resource_type") != "test":
             continue
 
         model = _attached_model(node, models)
-        model_name = (model or {}).get("name") or ""
-        container = container_map.get(model_name) or container_name_for(
-            model or {}, case=container_case
-        )
+        container = resolve_container(model)
 
         meta = node.get("test_metadata")
         if meta:
@@ -685,6 +709,7 @@ def convert_manifest(
                 default_coverage,
                 tags,
                 include_status,
+                resolve_container,
             )
         else:
             converted = _convert_singular(
@@ -701,7 +726,15 @@ def convert_manifest(
 
 
 def _convert_generic(
-    node, unique_id, meta, models, container, coverage, tags, include_status
+    node,
+    unique_id,
+    meta,
+    models,
+    container,
+    coverage,
+    tags,
+    include_status,
+    resolve_container,
 ) -> list[ConvertedCheck]:
     namespace = meta.get("namespace")
     name = meta.get("name") or ""
@@ -777,6 +810,12 @@ def _convert_generic(
 
     properties = mapping.props(kwargs) if mapping.props else {}
 
+    # A builder returns None when the rule cannot express what the dbt test
+    # asserts. Converting anyway would change the assertion's meaning, so the
+    # test degrades to manual authoring instead — with its kwargs preserved.
+    if properties is None:
+        return _unmapped(f"{mapping.rule_type} cannot express this dbt assertion")
+
     # Composite unique: dbt passes the column set in kwargs, not column_name.
     if key == "dbt_utils.unique_combination_of_columns":
         combo = kwargs.get("combination_of_columns") or []
@@ -786,7 +825,10 @@ def _convert_generic(
         ref = _referenced_model(node, models, kwargs)
         if ref is not None:
             properties = dict(properties)
-            properties["ref_container_name"] = container_name_for(ref)
+            # The referenced container must go through the same resolution as the
+            # primary one, or --container-map/--container-case would resolve the
+            # source and leave the target as a name the importer cannot find.
+            properties["ref_container_name"] = resolve_container(ref)
 
     # Container-level rules take no fields; _build_check enforces that from the
     # rule contract rather than a second list kept in sync here.

@@ -183,14 +183,34 @@ def _field_catalogue(
     return catalogue
 
 
+def _safe_dir_name(name: str) -> str:
+    """Reduce a manifest-derived container name to a single path segment.
+
+    A container name comes from a dbt alias, which is attacker-controlled when
+    the manifest is someone else's — an alias of `../..` or an absolute path
+    would otherwise be joined straight onto the output directory and used to
+    create or truncate files outside it.
+    """
+    candidate = os.path.basename(str(name).replace("\\", "/").strip().rstrip("/"))
+    if candidate in ("", ".", "..") or os.path.isabs(candidate):
+        return "_unresolved"
+    return candidate
+
+
 def _write_yaml(converted, out_dir: str) -> None:
     """Write one YAML file per check, grouped by container.
 
     Filenames use the dbt-derived UID rather than rule+fields, for the same reason
     the UID itself does: several dbt tests can share a container/rule/field triple.
+    The UID is slugified, so only the directory segment needs sanitizing.
     """
+    root = os.path.realpath(out_dir)
     for c in converted:
-        container_dir = os.path.join(out_dir, c.container or "_unresolved")
+        container_dir = os.path.join(root, _safe_dir_name(c.container or ""))
+        # Belt and braces: never write outside the directory the caller chose.
+        if os.path.commonpath([root, os.path.realpath(container_dir)]) != root:
+            print(f"[red]Refusing to write outside {out_dir}: {c.container}[/red]")
+            continue
         os.makedirs(container_dir, exist_ok=True)
         uid = c.check["additional_metadata"]["_qualytics_check_uid"]
         path = os.path.join(container_dir, f"{uid}.yaml")
