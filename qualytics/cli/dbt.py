@@ -29,11 +29,26 @@ add_suggestion_callback(dbt_app, "dbt")
 
 console = Console()
 
+# Tier colors mirror the dbt-crosswalk UI tokens (src/styles/tokens.css):
+# --migrate / --review / --manual. Keep the two in sync.
 _TIER_LABEL = {
-    TIER_DIRECT: ("direct", "green"),
-    TIER_NORMALIZE: ("normalize", "cyan"),
-    TIER_MANUAL: ("manual", "yellow"),
+    TIER_DIRECT: ("direct", "#86AA5B"),
+    TIER_NORMALIZE: ("normalize", "#5B86AA"),
+    TIER_MANUAL: ("manual", "#FF9933"),
 }
+
+STATUS_COLORS = {"Active": "#5B86AA", "Draft": "#8B7355"}
+
+_TIER_LEGEND = (
+    (TIER_DIRECT, "maps 1:1 to a Qualytics rule"),
+    (TIER_NORMALIZE, "mapped, but a parameter needs review"),
+    (TIER_MANUAL, "custom SQL — the expression must be authored by hand"),
+)
+
+
+def _tier_cell(tier: str) -> str:
+    label, color = _TIER_LABEL[tier]
+    return f"[{color}]{label}[/{color}]"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -110,43 +125,48 @@ def _convert(
 def _print_summary(converted, status_override: str | None = None) -> dict:
     stats = summarize(converted)
 
-    # The "Lands as" column must reflect what will actually happen, so an
+    # The "Status" column must reflect what will actually happen, so an
     # override replaces the tier-derived values rather than sitting beside them.
-    def _lands(default: str, color: str) -> str:
+    def _status_cell(default: str) -> str:
         shown = status_override or default
+        color = STATUS_COLORS.get(shown, "white")
         return f"[{color}]{shown}[/{color}]"
 
-    table = Table(title="dbt → Qualytics coverage")
-    table.add_column("Tier", style="bold")
+    table = Table(title="dbt → Qualytics")
+    table.add_column("Tier")
     table.add_column("Checks", justify="right")
-    table.add_column("Lands as")
-    table.add_row("direct", str(stats["direct"]), _lands("Active", "green"))
-    table.add_row("normalize", str(stats["normalize"]), _lands("Draft", "cyan"))
-    table.add_row("manual", str(stats["manual"]), _lands("Draft", "yellow"))
+    table.add_column("Status")
+    table.add_row(_tier_cell(TIER_DIRECT), str(stats["direct"]), _status_cell("Active"))
+    table.add_row(
+        _tier_cell(TIER_NORMALIZE), str(stats["normalize"]), _status_cell("Draft")
+    )
+    table.add_row(_tier_cell(TIER_MANUAL), str(stats["manual"]), _status_cell("Draft"))
+    table.add_section()
     table.add_row("[bold]total[/bold]", f"[bold]{stats['total']}[/bold]", "")
+    console.print()
     console.print(table)
 
-    # A few dbt tests assert two things (a length range) and become two checks,
-    # so check count can exceed test count. Say so rather than conflating them.
-    split_note = (
-        f" ([bold]{stats['dbt_tests']}[/bold] dbt tests — some assert two things "
-        "and become two checks)"
-        if stats["total"] != stats["dbt_tests"]
-        else ""
+    for tier, meaning in _TIER_LEGEND:
+        label, color = _TIER_LABEL[tier]
+        print(f"[{color}]{label:<11}[/{color}][dim]{meaning}[/dim]")
+
+    print("\n[bold]Summary[/bold]")
+    print(
+        f"• All [bold]{stats['dbt_tests']}[/bold] dbt tests converts to "
+        f"[bold]{stats['total']}[/bold] Qualytics checks."
     )
     print(
-        f"\nAll dbt tests convert into [bold]{stats['total']}[/bold] checks{split_note}. "
-        f"[bold]{stats['automatic']}[/bold] ({stats['automatic_pct']}%) map to a rule "
-        f"automatically; [bold]{stats['manual']}[/bold] need an expression authored by hand."
+        f"• [bold]{stats['automatic']}[/bold] ({stats['automatic_pct']}%) map to a rule "
+        "automatically."
     )
-    if status_override:
-        print(f"[dim]Tiers grade effort, not feasibility.[/dim]")
-    else:
-        print(
-            f"[dim]Tiers grade effort, not feasibility. "
-            f"{stats['normalize'] + stats['manual']} land as Draft for review "
-            "before they fire.[/dim]"
-        )
+    print(
+        f"• [bold]{stats['manual']}[/bold] ({stats['manual_pct']}%) need an expression "
+        "authored by hand."
+    )
+    # A few dbt tests assert two things (a length range) and become two checks,
+    # so check count can exceed test count. Say so rather than conflating them.
+    if stats["total"] > stats["dbt_tests"]:
+        print("\n[dim]Some dbt tests translate to more than one Qualytics check.[/dim]")
 
     if stats["unresolved_containers"]:
         print(

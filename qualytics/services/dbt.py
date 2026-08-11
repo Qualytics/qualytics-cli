@@ -935,6 +935,7 @@ def summarize(converted: list[ConvertedCheck]) -> dict:
         "manual": by_tier[TIER_MANUAL],
         "automatic": automatic,
         "automatic_pct": round(automatic / total * 100) if total else 0,
+        "manual_pct": round(by_tier[TIER_MANUAL] / total * 100) if total else 0,
         "containers": containers,
         "unresolved_containers": len(missing_container),
     }

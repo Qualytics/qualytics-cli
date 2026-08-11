@@ -24,15 +24,16 @@ qualytics dbt plan --manifest target/manifest.json --show-checks
 ```
 
 ```
-    dbt → Qualytics coverage
-┏━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┓
-┃ Tier      ┃ Tests ┃ Lands as ┃
-┡━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━┩
-│ direct    │    19 │ Active   │
-│ normalize │     6 │ Draft    │
-│ manual    │     3 │ Draft    │
-│ total     │    28 │          │
-└───────────┴───────┴──────────┘
+    dbt → Qualytics
+┏━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
+┃ Tier      ┃ Tests ┃ Status ┃
+┡━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
+│ direct    │    19 │ Active │
+│ normalize │     6 │ Draft  │
+│ manual    │     3 │ Draft  │
+├───────────┼───────┼────────┤
+│ total     │    28 │        │
+└───────────┴───────┴────────┘
 ```
 
 `plan` never constructs an API client, so it works offline and in CI without credentials.
@@ -69,8 +70,8 @@ qualytics dbt import --manifest target/manifest.json --datastore-id 42 \
 
 Every dbt test converts. Tiers grade **effort**, not feasibility.
 
-| Tier | Meaning | Lands as |
-|------|---------|----------|
+| Tier | Meaning | Status |
+|------|---------|--------|
 | `direct` | Deterministic 1:1 mapping | `Active` |
 | `normalize` | Mapped, but a parameter needs a human eye | `Draft` |
 | `manual` | Custom SQL — the expression must be authored | `Draft` |
