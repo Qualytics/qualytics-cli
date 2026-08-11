@@ -76,3 +76,15 @@ qualytics connections create --type postgresql --name prod-pg \
 ### Banner suppression
 
 Set `QUALYTICS_NO_BANNER=1` or `CI=true` to suppress the startup banner (useful in scripts and CI/CD).
+
+### API path override
+
+The CLI assumes the API is served under `/api` on your instance (true for all deployments). When targeting an API served from a different path — such as a local controlplane running bare on `http://localhost:8000` — set `QUALYTICS_API_PATH` to the actual prefix, or to an empty string for a root-served API:
+
+```bash
+# Local controlplane with no /api prefix
+QUALYTICS_API_PATH= qualytics doctor
+
+# Persist it for every invocation
+echo 'QUALYTICS_API_PATH=' >> ~/.qualytics/.env
+```
