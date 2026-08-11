@@ -173,3 +173,6 @@ cython_debug/
 #.idea/
 test_example/**
 .mcp.json
+
+# Local, non-committed test assets and artifacts (mock manifests, scratch files)
+sandbox/
