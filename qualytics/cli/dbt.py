@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 
 import typer
 import yaml
@@ -49,6 +50,11 @@ _TIER_LEGEND = (
 def _tier_cell(tier: str) -> str:
     label, color = _TIER_LABEL[tier]
     return f"[{color}]{label}[/{color}]"
+
+
+def _humanize_rule(rule_type: str) -> str:
+    """Display form of a camelCase rule type: satisfiesExpression → Satisfies Expression."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", rule_type).title()
 
 
 def _tier_bar(stats: dict) -> str:
@@ -296,7 +302,7 @@ def dbt_plan(
                 f"[{color}]{label}[/{color}]",
                 c.dbt_test,
                 c.container or "[red]unresolved[/red]",
-                c.check["rule_type"],
+                _humanize_rule(c.check["rule_type"]),
             )
         console.print(detail)
 

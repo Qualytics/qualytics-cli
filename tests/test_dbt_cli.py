@@ -79,7 +79,8 @@ class TestDbtPlan:
             app, ["dbt", "plan", "--manifest", manifest_file, "--show-checks"]
         )
         assert result.exit_code == 0
-        assert "notNull" in result.output
+        # Rule types are shown in their human form, not the API's camelCase.
+        assert "Not Null" in result.output
 
     def test_missing_manifest_errors(self, cli_runner, tmp_path):
         result = cli_runner.invoke(
