@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from itertools import groupby
 
 import typer
 import yaml
@@ -57,24 +58,41 @@ def _humanize_rule(rule_type: str) -> str:
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", rule_type).title()
 
 
+# The crosswalk spectrum wraps its ticks inside a fixed-width container; the
+# terminal wall wraps at this many pills per row, bounded by the terminal.
+_BAR_WRAP = 60
+_BAR_MAX_ROWS = 8
+
+
 def _tier_bar(stats: dict) -> str:
     """The dbt-crosswalk tick wall as terminal pills: one pill per check,
-    tinted by tier, shrunk proportionally when it would not fit on one line.
-    A tier with at least one check always keeps at least one pill."""
+    tinted by tier, wrapping at a fixed width like the crosswalk's spectrum.
+    Only past _BAR_MAX_ROWS does the wall scale down proportionally, and a
+    tier with at least one check always keeps at least one pill."""
     counts = [
         (tier, stats[label]) for tier, (label, _) in _TIER_LABEL.items() if stats[label]
     ]
     total = sum(count for _, count in counts)
     if not total:
         return ""
-    # The left-half-block glyph fills half its cell, so every pill carries a
-    # built-in half-cell gap — wider than a hairline, tighter than a space.
-    scale = min(1.0, max(20, console.width - 2) / total)
-    segments = []
+    width = max(20, min(_BAR_WRAP, console.width - 2))
+    scale = min(1.0, width * _BAR_MAX_ROWS / total)
+    pills: list[str] = []
     for tier, count in counts:
         _, color = _TIER_LABEL[tier]
-        segments.append(f"[{color}]{'▌' * max(1, round(count * scale))}[/{color}]")
-    return "".join(segments)
+        pills.extend([color] * max(1, round(count * scale)))
+    # The quadrant glyph inks only the lower-left quarter of its cell, so every
+    # pill carries a built-in half-cell gap to the right AND above — wrapped
+    # rows stay a thin half-line apart without spending a blank line on it.
+    lines = []
+    for start in range(0, len(pills), width):
+        lines.append(
+            "".join(
+                f"[{color}]{'▖' * sum(1 for _ in run)}[/{color}]"
+                for color, run in groupby(pills[start : start + width])
+            )
+        )
+    return "\n".join(lines)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -193,7 +211,10 @@ def _print_summary(converted, status_override: str | None = None) -> dict:
     # A few dbt tests assert two things (a length range) and become two checks,
     # so check count can exceed test count. Say so rather than conflating them.
     if stats["total"] > stats["dbt_tests"]:
-        print("\n[dim]Some dbt tests translate to more than one Qualytics check.[/dim]")
+        print(
+            "\n[dim]Note: some dbt tests translate to more than one "
+            "Qualytics check.[/dim]"
+        )
 
     if stats["unresolved_containers"]:
         print(
