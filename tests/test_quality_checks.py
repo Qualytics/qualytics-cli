@@ -898,6 +898,37 @@ class TestImportChecksToDatastore:
     @patch("qualytics.services.quality_checks.create_quality_check")
     @patch("qualytics.services.quality_checks.list_all_quality_checks")
     @patch("qualytics.services.quality_checks.get_table_ids")
+    def test_failures_pair_each_source_with_a_clean_reason(
+        self, mock_tables, mock_list, mock_create
+    ):
+        """`failures` mirrors `errors` structured as {source, reason}, so
+        callers can log which check failed and why without parsing strings."""
+        client = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        mock_list.return_value = []
+        mock_create.side_effect = Exception("Server error")
+
+        missing = _make_portable_check("notNull", "products", ["sku"])
+        missing["_source_file"] = "test.jaffle.not_null_products_sku"
+        broken = _make_portable_check("notNull", "orders", ["order_id"])
+        broken["_source_file"] = "test.jaffle.not_null_orders_order_id"
+
+        result = import_checks_to_datastore(client, 42, [missing, broken])
+
+        assert result["failures"] == [
+            {
+                "source": "test.jaffle.not_null_products_sku",
+                "reason": "Container 'products' not found in datastore 42",
+            },
+            {
+                "source": "test.jaffle.not_null_orders_order_id",
+                "reason": "Server error",
+            },
+        ]
+
+    @patch("qualytics.services.quality_checks.create_quality_check")
+    @patch("qualytics.services.quality_checks.list_all_quality_checks")
+    @patch("qualytics.services.quality_checks.get_table_ids")
     def test_mixed_create_update_fail(self, mock_tables, mock_list, mock_create):
         """A batch with creates, updates, and failures."""
         client = _mock_client()
@@ -1459,6 +1490,95 @@ class TestChecksImportCLI:
         )
         assert result.exit_code == 0
         assert "not found" in result.output
+
+    @patch("qualytics.cli.checks.import_checks_to_datastore")
+    @patch("qualytics.cli.checks.load_checks_from_directory")
+    @patch("qualytics.cli.checks.get_client")
+    def test_import_failures_are_logged_to_file(
+        self, mock_gc, mock_load, mock_import, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_load.return_value = [
+            {
+                "rule_type": "notNull",
+                "container": "orders",
+                "fields": ["order_id"],
+                "_source_file": "orders/notNull_order_id.yaml",
+            }
+        ]
+        mock_import.return_value = {
+            "created": 0,
+            "updated": 0,
+            "failed": 1,
+            "errors": ["Container 'orders' not found in datastore 42"],
+            "failures": [
+                {
+                    "source": "orders/notNull_order_id.yaml",
+                    "reason": "Container 'orders' not found in datastore 42",
+                }
+            ],
+        }
+
+        input_dir = tmp_path / "checks"
+        input_dir.mkdir()
+        log = tmp_path / "failures.log"
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "import",
+                "--datastore-id",
+                "42",
+                "--input",
+                str(input_dir),
+                "--failures-log",
+                str(log),
+            ],
+        )
+        assert result.exit_code == 0
+        content = log.read_text()
+        assert "[datastore 42] orders/notNull_order_id.yaml" in content
+        assert "check: notNull on orders (order_id)" in content
+        assert "reason: Container 'orders' not found in datastore 42" in content
+        assert str(log) in result.output.replace("\n", "")
+
+    @patch("qualytics.cli.checks.import_checks_to_datastore")
+    @patch("qualytics.cli.checks.load_checks_from_directory")
+    @patch("qualytics.cli.checks.get_client")
+    def test_import_dry_run_does_not_write_the_log(
+        self, mock_gc, mock_load, mock_import, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_load.return_value = [{"rule_type": "notNull", "container": "orders"}]
+        mock_import.return_value = {
+            "created": 0,
+            "updated": 0,
+            "failed": 1,
+            "errors": ["Container 'orders' not found in datastore 42"],
+            "failures": [{"source": "unknown", "reason": "Container not found"}],
+        }
+
+        input_dir = tmp_path / "checks"
+        input_dir.mkdir()
+        log = tmp_path / "failures.log"
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "import",
+                "--datastore-id",
+                "42",
+                "--input",
+                str(input_dir),
+                "--dry-run",
+                "--failures-log",
+                str(log),
+            ],
+        )
+        assert result.exit_code == 0
+        assert not log.exists()
 
 
 # ══════════════════════════════════════════════════════════════════════════

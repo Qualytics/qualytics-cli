@@ -37,6 +37,7 @@ from ..services.quality_checks import (
     _build_create_payload,
 )
 from ..services.containers import get_table_ids
+from ..utils.failure_log import failure_entry, write_failures_log
 
 from . import add_suggestion_callback
 
@@ -438,8 +439,17 @@ def checks_import(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview what would be created/updated"
     ),
+    failures_log: str = typer.Option(
+        "checks-import-failures.log",
+        "--failures-log",
+        help="Write checks that failed to import (which file, why) to this file",
+    ),
 ):
-    """Import quality checks from a directory to one or more datastores (upsert)."""
+    """Import quality checks from a directory to one or more datastores (upsert).
+
+    Checks that fail to import are written to --failures-log, one entry per
+    check with the source YAML file and the reason it failed.
+    """
     client = get_client()
 
     if not os.path.isdir(input_dir):
@@ -463,6 +473,9 @@ def checks_import(
     summary_table.add_column("Updated", style="yellow")
     summary_table.add_column("Failed", style="red")
 
+    by_source = {check.get("_source_file"): check for check in checks}
+    failure_entries: list[str] = []
+
     for ds_id in datastore_id:
         print(
             f"\n[cyan]{'[DRY RUN] ' if dry_run else ''}Importing to datastore {ds_id}...[/cyan]"
@@ -479,7 +492,29 @@ def checks_import(
         for err in result["errors"]:
             print(f"  [red]{err}[/red]")
 
+        # The on-screen lines scroll away; the file is the record.
+        for failure in result.get("failures", []):
+            source = failure.get("source", "unknown")
+            failure_entries.append(
+                failure_entry(
+                    ds_id, source, by_source.get(source), failure.get("reason", "")
+                )
+            )
+
     console.print(summary_table)
+
+    # A dry run promises no changes, so the log is only written on real runs.
+    if failure_entries and not dry_run:
+        write_failures_log(
+            failures_log,
+            "checks import failures",
+            f"input: {input_dir}",
+            failure_entries,
+        )
+        print(
+            f"\n[yellow]{len(failure_entries)} failed check(s) logged to "
+            f"{failures_log}[/yellow]"
+        )
 
 
 # ── Templates (kept from existing implementation) ─────────────────────────

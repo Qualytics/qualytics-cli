@@ -140,10 +140,79 @@ class TestDbtImport:
         ):
             res = cli_runner.invoke(
                 app,
-                ["dbt", "import", "--manifest", manifest_file, "--datastore-id", "1"]
+                # The failures log lands next to the manifest (inside tmp_path)
+                # so no test run litters the working directory. Callers can
+                # still override it via `extra` — the last occurrence wins.
+                [
+                    "dbt",
+                    "import",
+                    "--manifest",
+                    manifest_file,
+                    "--datastore-id",
+                    "1",
+                    "--failures-log",
+                    manifest_file + ".failures.log",
+                ]
                 + (extra or []),
             )
         return res, importer
+
+    def test_failed_checks_are_logged_with_test_and_reason(
+        self, cli_runner, manifest_file, tmp_path
+    ):
+        log = tmp_path / "failures.log"
+        payload = {
+            "created": 1,
+            "updated": 0,
+            "failed": 1,
+            "errors": [
+                "Container 'stg_orders' not found in datastore 1 "
+                "(test.jaffle.assert_totals.def)"
+            ],
+            "failures": [
+                {
+                    "source": "test.jaffle.assert_totals.def",
+                    "reason": "Container 'stg_orders' not found in datastore 1",
+                }
+            ],
+        }
+        res, _ = self._run(
+            cli_runner,
+            manifest_file,
+            extra=["--failures-log", str(log)],
+            result_payload=payload,
+        )
+        assert res.exit_code == 0
+        content = log.read_text()
+        assert "[datastore 1] test.jaffle.assert_totals.def" in content
+        assert "check: satisfiesExpression on stg_orders" in content
+        assert "reason: Container 'stg_orders' not found in datastore 1" in content
+        # the path is announced so the user knows where to look
+        assert str(log) in res.output.replace("\n", "")
+
+    def test_no_log_file_when_nothing_fails(self, cli_runner, manifest_file, tmp_path):
+        log = tmp_path / "failures.log"
+        res, _ = self._run(cli_runner, manifest_file, extra=["--failures-log", str(log)])
+        assert res.exit_code == 0
+        assert not log.exists()
+
+    def test_dry_run_does_not_write_the_log(self, cli_runner, manifest_file, tmp_path):
+        log = tmp_path / "failures.log"
+        payload = {
+            "created": 0,
+            "updated": 0,
+            "failed": 1,
+            "errors": ["Container 'stg_orders' not found in datastore 1 (x)"],
+            "failures": [{"source": "x", "reason": "Container not found"}],
+        }
+        res, _ = self._run(
+            cli_runner,
+            manifest_file,
+            extra=["--dry-run", "--failures-log", str(log)],
+            result_payload=payload,
+        )
+        assert res.exit_code == 0
+        assert not log.exists()
 
     def test_converts_and_imports(self, cli_runner, manifest_file):
         res, importer = self._run(cli_runner, manifest_file)
@@ -295,7 +364,16 @@ class TestFieldValidation:
         ):
             res = cli_runner.invoke(
                 app,
-                ["dbt", "import", "--manifest", manifest_file, "--datastore-id", "1"]
+                [
+                    "dbt",
+                    "import",
+                    "--manifest",
+                    manifest_file,
+                    "--datastore-id",
+                    "1",
+                    "--failures-log",
+                    manifest_file + ".failures.log",
+                ]
                 + (extra or []),
             )
         return res, importer
@@ -346,6 +424,15 @@ class TestFieldValidation:
         assert res.exit_code == 0
         table_ids.assert_not_called()
         assert len(importer.call_args[0][2]) == 2
+
+    def test_rejected_checks_land_in_the_failures_log(
+        self, cli_runner, manifest_file
+    ):
+        res, _ = self._run(cli_runner, manifest_file, ["nope"])
+        assert res.exit_code == 0
+        content = open(manifest_file + ".failures.log").read()
+        assert "test.jaffle.not_null_stg_orders_order_id.abc" in content
+        assert "not found in container 'stg_orders'" in content
 
     def test_exact_match_sends_fields_unchanged(self, cli_runner, manifest_file):
         res, importer = self._run(cli_runner, manifest_file, ["order_id"])

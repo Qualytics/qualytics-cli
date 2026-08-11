@@ -24,6 +24,7 @@ from ..services.dbt import (
     to_checks,
 )
 from ..services.quality_checks import import_checks_to_datastore
+from ..utils.failure_log import failure_entry, write_failures_log
 from . import add_suggestion_callback
 
 dbt_app = typer.Typer(name="dbt", help="Migrate dbt tests to Qualytics quality checks")
@@ -370,6 +371,11 @@ def dbt_import(
     emit_yaml: str = typer.Option(
         None, "--emit-yaml", help="Also write the converted checks to this directory"
     ),
+    failures_log: str = typer.Option(
+        "dbt-import-failures.log",
+        "--failures-log",
+        help="Write checks that failed to import (which test, why) to this file",
+    ),
 ):
     """Convert a dbt manifest and import the checks (upsert) into a datastore.
 
@@ -382,6 +388,9 @@ def dbt_import(
 
     By default direct-tier checks land Active and the rest land Draft. That is a
     recommendation, not a policy: --status overrides it in either direction.
+
+    Checks that fail to import are written to --failures-log, one entry per
+    check with the originating dbt test and the reason it failed.
     """
     manifest = _load_manifest(manifest_path)
     status_override = _resolve_status(status, preserve_status)
@@ -414,6 +423,7 @@ def dbt_import(
     # the marker never lands in the written files.
     for check in checks:
         check["_source_file"] = check["additional_metadata"]["dbt_unique_id"]
+    by_source = {check["_source_file"]: check for check in checks}
 
     if dry_run:
         print("\n[bold yellow]DRY RUN — no changes will be made.[/bold yellow]")
@@ -427,6 +437,7 @@ def dbt_import(
     containers = {c["container"] for c in checks if c.get("container")}
 
     total_failed = 0
+    failure_entries: list[str] = []
     for ds_id in datastore_id:
         # Field names are catalogued per datastore, so this resolves per target.
         payload = checks
@@ -462,7 +473,35 @@ def dbt_import(
         for err in result["errors"]:
             print(f"  [red]{err}[/red]")
 
+        # Field-validation rejections and importer failures both land in the
+        # log; the on-screen lines scroll away, the file is the record.
+        for item in rejected:
+            source = item["check"].get("_source_file", "unknown")
+            failure_entries.append(
+                failure_entry(ds_id, source, item["check"], item["reason"])
+            )
+        for failure in result.get("failures", []):
+            source = failure.get("source", "unknown")
+            failure_entries.append(
+                failure_entry(
+                    ds_id, source, by_source.get(source), failure.get("reason", "")
+                )
+            )
+
     console.print(summary_table)
+
+    # A dry run promises no changes, so the log is only written on real runs.
+    if failure_entries and not dry_run:
+        write_failures_log(
+            failures_log,
+            "dbt import failures",
+            f"manifest: {manifest_path}",
+            failure_entries,
+        )
+        print(
+            f"\n[yellow]{len(failure_entries)} failed check(s) logged to "
+            f"{failures_log}[/yellow]"
+        )
 
     # Failures are reported, not raised — matching `checks import`, which prints
     # per-check errors and still exits 0. Keeping the two bulk importers
