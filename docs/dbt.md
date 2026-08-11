@@ -24,16 +24,28 @@ qualytics dbt plan --manifest target/manifest.json --show-checks
 ```
 
 ```
-    dbt → Qualytics
-┏━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
-┃ Tier      ┃ Tests ┃ Status ┃
-┡━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
-│ direct    │    19 │ Active │
-│ normalize │     6 │ Draft  │
-│ manual    │     3 │ Draft  │
-├───────────┼───────┼────────┤
-│ total     │    28 │        │
-└───────────┴───────┴────────┘
+Plan
+
+• All 26 dbt tests converts to 28 Qualytics checks.
+• 25 (89%) map to a rule automatically.
+• 3 (11%) need an expression authored by hand.
+
+▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌▌
+
+┏━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃ Tier      ┃ Checks ┃ Status ┃
+┡━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│ direct    │     19 │ Active │
+│ normalize │      6 │ Draft  │
+│ manual    │      3 │ Draft  │
+├───────────┼────────┼────────┤
+│ total     │     28 │        │
+└───────────┴────────┴────────┘
+direct     maps 1:1 to a Qualytics rule
+normalize  mapped, but a parameter needs review
+manual     custom SQL — the expression must be authored by hand
+
+Some dbt tests translate to more than one Qualytics check.
 ```
 
 `plan` never constructs an API client, so it works offline and in CI without credentials.

@@ -51,6 +51,26 @@ def _tier_cell(tier: str) -> str:
     return f"[{color}]{label}[/{color}]"
 
 
+def _tier_bar(stats: dict) -> str:
+    """The dbt-crosswalk tick wall as terminal pills: one pill per check,
+    tinted by tier, shrunk proportionally when it would not fit on one line.
+    A tier with at least one check always keeps at least one pill."""
+    counts = [
+        (tier, stats[label]) for tier, (label, _) in _TIER_LABEL.items() if stats[label]
+    ]
+    total = sum(count for _, count in counts)
+    if not total:
+        return ""
+    # The left-half-block glyph fills half its cell, so every pill carries a
+    # built-in half-cell gap — wider than a hairline, tighter than a space.
+    scale = min(1.0, max(20, console.width - 2) / total)
+    segments = []
+    for tier, count in counts:
+        _, color = _TIER_LABEL[tier]
+        segments.append(f"[{color}]{'▌' * max(1, round(count * scale))}[/{color}]")
+    return "".join(segments)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 
@@ -132,7 +152,22 @@ def _print_summary(converted, status_override: str | None = None) -> dict:
         color = STATUS_COLORS.get(shown, "white")
         return f"[{color}]{shown}[/{color}]"
 
-    table = Table(title="dbt → Qualytics")
+    print("\n[bold]Plan[/bold]\n")
+    print(
+        f"• All [bold]{stats['dbt_tests']}[/bold] dbt tests converts to "
+        f"[bold]{stats['total']}[/bold] Qualytics checks."
+    )
+    print(
+        f"• [bold]{stats['automatic']}[/bold] ({stats['automatic_pct']}%) map to a rule "
+        "automatically."
+    )
+    print(
+        f"• [bold]{stats['manual']}[/bold] ({stats['manual_pct']}%) need an expression "
+        "authored by hand."
+    )
+    print(f"\n{_tier_bar(stats)}")
+
+    table = Table()
     table.add_column("Tier")
     table.add_column("Checks", justify="right")
     table.add_column("Status")
@@ -147,22 +182,8 @@ def _print_summary(converted, status_override: str | None = None) -> dict:
     console.print(table)
 
     for tier, meaning in _TIER_LEGEND:
-        label, color = _TIER_LABEL[tier]
-        print(f"[{color}]{label:<11}[/{color}][dim]{meaning}[/dim]")
-
-    print("\n[bold]Summary[/bold]")
-    print(
-        f"• All [bold]{stats['dbt_tests']}[/bold] dbt tests converts to "
-        f"[bold]{stats['total']}[/bold] Qualytics checks."
-    )
-    print(
-        f"• [bold]{stats['automatic']}[/bold] ({stats['automatic_pct']}%) map to a rule "
-        "automatically."
-    )
-    print(
-        f"• [bold]{stats['manual']}[/bold] ({stats['manual_pct']}%) need an expression "
-        "authored by hand."
-    )
+        label, _ = _TIER_LABEL[tier]
+        print(f"[dim]{label:<11}{meaning}[/dim]")
     # A few dbt tests assert two things (a length range) and become two checks,
     # so check count can exceed test count. Say so rather than conflating them.
     if stats["total"] > stats["dbt_tests"]:
