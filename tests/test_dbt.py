@@ -869,11 +869,47 @@ class TestKwargProperties:
         assert c.check["properties"]["field_name"] == "customer_id"
         assert c.check["properties"]["ref_container_name"] == "stg_customers"
 
-    def test_one_sided_range_does_not_fabricate_the_other_bound(self):
+    def test_min_only_range_narrows_to_greater_than(self):
+        # The API's `between` requires both bounds, so a one-sided range
+        # narrows to the single-bound rule instead of fabricating a bound.
         c = _one(
             "expect_column_values_to_be_between", column="a", kwargs={"min_value": 0}
         )[0]
-        assert c.check["properties"] == {"min": 0, "inclusive_min": True}
+        assert c.check["rule_type"] == "greaterThan"
+        assert c.check["properties"] == {"value": 0, "inclusive": True}
+
+    def test_max_only_range_narrows_to_less_than(self):
+        c = _one(
+            "expect_column_values_to_be_between", column="a", kwargs={"max_value": 10}
+        )[0]
+        assert c.check["rule_type"] == "lessThan"
+        assert c.check["properties"] == {"value": 10, "inclusive": True}
+
+    def test_two_sided_range_stays_between(self):
+        c = _one(
+            "expect_column_values_to_be_between",
+            column="a",
+            kwargs={"min_value": 0, "max_value": 10},
+        )[0]
+        assert c.check["rule_type"] == "between"
+        assert c.check["properties"] == {
+            "min": 0,
+            "inclusive_min": True,
+            "max": 10,
+            "inclusive_max": True,
+        }
+
+    def test_unbounded_range_degrades_to_manual(self):
+        c = _one("expect_column_values_to_be_between", column="a", kwargs={})[0]
+        assert c.check["rule_type"] == "satisfiesExpression"
+        assert c.tier == TIER_MANUAL
+
+    def test_satisfies_expression_is_never_empty(self, manifest):
+        # The API rejects satisfiesExpression without an expression, even in
+        # Draft — manual-tier checks carry an inert placeholder instead.
+        for c in convert_manifest(manifest):
+            if c.check["rule_type"] == "satisfiesExpression":
+                assert c.check["properties"]["expression"]
 
 
 # ══════════════════════════════════════════════════════════════════════════

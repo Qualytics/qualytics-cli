@@ -375,8 +375,8 @@ def dbt_import(
         if status_override == "Active" and incomplete:
             print(
                 f"[yellow]{incomplete} of them were tiered normalize/manual — those "
-                "carry incomplete properties (empty expressions, unset windows and "
-                "intervals) and may not evaluate meaningfully until edited.[/yellow]"
+                "carry incomplete properties (placeholder expressions, unset windows "
+                "and intervals) and may not evaluate meaningfully until edited.[/yellow]"
             )
 
     if emit_yaml:
@@ -384,6 +384,11 @@ def dbt_import(
 
     client = get_client()
     checks = to_checks(converted)
+    # Import failures report a check's source; name the dbt test instead of the
+    # "unknown" fallback meant for YAML files. After --emit-yaml on purpose, so
+    # the marker never lands in the written files.
+    for check in checks:
+        check["_source_file"] = check["additional_metadata"]["dbt_unique_id"]
 
     if dry_run:
         print("\n[bold yellow]DRY RUN — no changes will be made.[/bold yellow]")
@@ -447,6 +452,6 @@ def dbt_import(
 
     if stats["manual"] and not dry_run:
         print(
-            f"\n[yellow]{stats['manual']} check(s) landed as Draft with an empty "
-            "expression — author those before they can fire.[/yellow]"
+            f"\n[yellow]{stats['manual']} check(s) landed as Draft with a placeholder "
+            "expression — author those before activating them.[/yellow]"
         )

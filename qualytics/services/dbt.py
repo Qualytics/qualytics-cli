@@ -58,13 +58,12 @@ def _p_pattern(kw: dict) -> dict:
     return {"pattern": kw.get("regex") or kw.get("pattern") or ""}
 
 
-def _p_between(kw: dict) -> dict:
+def _p_between(kw: dict) -> dict | None:
     """dbt min_value/max_value → Qualytics min/max.
 
     `between` wants min/inclusive_min/max/inclusive_max, so each bound's
     inclusivity is stated rather than left to a server default — dbt ranges are
-    inclusive. A one-sided dbt range yields a one-sided check rather than a
-    fabricated opposite bound.
+    inclusive. A range with no bounds at all asserts nothing and returns None.
     """
     props: dict[str, Any] = {}
     if kw.get("min_value") is not None:
@@ -73,7 +72,21 @@ def _p_between(kw: dict) -> dict:
     if kw.get("max_value") is not None:
         props["max"] = kw["max_value"]
         props["inclusive_max"] = True
-    return props
+    return props or None
+
+
+def _one_sided_between(props: dict) -> tuple[str, dict]:
+    """Narrow a one-sided range to the single-bound rule.
+
+    The API's `between` contract requires both bounds (min, inclusive_min, max,
+    inclusive_max), so a one-sided dbt range becomes greaterThan/lessThan with
+    the same inclusive semantics rather than fabricating the missing bound.
+    """
+    if "min" in props and "max" not in props:
+        return "greaterThan", {"value": props["min"], "inclusive": True}
+    if "max" in props and "min" not in props:
+        return "lessThan", {"value": props["max"], "inclusive": True}
+    return "between", props
 
 
 def _p_value_from_min(kw: dict) -> dict:
@@ -208,8 +221,14 @@ def _p_exact_length(kw: dict) -> dict | None:
     return {"value": value} if value is not None else None
 
 
+# The API requires a non-empty expression even for a Draft. The placeholder is
+# deliberately inert — true for every row — so a check that is activated before
+# being authored cannot flag valid data as anomalous.
+PLACEHOLDER_EXPRESSION = "1 = 1"
+
+
 def _p_expression(kw: dict) -> dict:
-    return {"expression": kw.get("expression") or ""}
+    return {"expression": kw.get("expression") or PLACEHOLDER_EXPRESSION}
 
 
 _DBT_TYPE_TO_FIELD_TYPE = {
@@ -757,7 +776,7 @@ def _convert_generic(
                     description=f"[dbt] {key} — {reason}, author the expression by hand",
                     unique_id=unique_id,
                     tier=TIER_MANUAL,
-                    properties={"expression": ""},
+                    properties={"expression": PLACEHOLDER_EXPRESSION},
                     coverage=coverage,
                     tags=tags,
                     extra_metadata=dbt_metadata(node, key, kwargs),
@@ -816,12 +835,16 @@ def _convert_generic(
     if properties is None:
         return _unmapped(f"{mapping.rule_type} cannot express this dbt assertion")
 
+    rule_type = mapping.rule_type
+    if rule_type == "between":
+        rule_type, properties = _one_sided_between(properties)
+
     # Composite unique: dbt passes the column set in kwargs, not column_name.
     if key == "dbt_utils.unique_combination_of_columns":
         combo = kwargs.get("combination_of_columns") or []
         fields = list(combo) or fields
 
-    if mapping.rule_type in _CROSS_REF_RULES:
+    if rule_type in _CROSS_REF_RULES:
         ref = _referenced_model(node, models, kwargs)
         if ref is not None:
             properties = dict(properties)
@@ -840,7 +863,7 @@ def _convert_generic(
     return [
         ConvertedCheck(
             _build_check(
-                rule_type=mapping.rule_type,
+                rule_type=rule_type,
                 container=container,
                 fields=fields,
                 description=description,
@@ -892,7 +915,7 @@ def _convert_singular(
                 description=description,
                 unique_id=unique_id,
                 tier=TIER_MANUAL,
-                properties={"expression": ""},
+                properties={"expression": PLACEHOLDER_EXPRESSION},
                 coverage=coverage,
                 tags=tags,
                 extra_metadata=metadata,
