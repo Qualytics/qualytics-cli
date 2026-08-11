@@ -189,10 +189,6 @@ class TestConnectionErrors:
 class TestValidateAndFormatUrl:
     """Tests for URL validation and formatting."""
 
-    @pytest.fixture(autouse=True)
-    def _clean_api_path(self, monkeypatch):
-        monkeypatch.delenv("QUALYTICS_API_PATH", raising=False)
-
     def test_https_url_preserved(self):
         assert (
             validate_and_format_url("https://example.com") == "https://example.com/api/"
