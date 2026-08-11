@@ -41,16 +41,14 @@ _TIER_LABEL = {
 
 STATUS_COLORS = {"Active": "#5B86AA", "Draft": "#8B7355"}
 
+# Where each tier lands by default; mirrors _STATUS_BY_TIER in services.dbt.
+_TIER_STATUS = {TIER_DIRECT: "Active", TIER_NORMALIZE: "Draft", TIER_MANUAL: "Draft"}
+
 _TIER_LEGEND = (
     (TIER_DIRECT, "maps 1:1 to a Qualytics rule"),
     (TIER_NORMALIZE, "mapped, but a parameter needs review"),
-    (TIER_MANUAL, "custom SQL — the expression must be authored by hand"),
+    (TIER_MANUAL, "custom SQL — author the expression by hand"),
 )
-
-
-def _tier_cell(tier: str) -> str:
-    label, color = _TIER_LABEL[tier]
-    return f"[{color}]{label}[/{color}]"
 
 
 def _humanize_rule(rule_type: str) -> str:
@@ -166,24 +164,28 @@ def _convert(
     return converted
 
 
-def _print_summary(converted, status_override: str | None = None) -> dict:
+def _project_name(manifest: dict) -> str | None:
+    return (manifest.get("metadata") or {}).get("project_name")
+
+
+def _print_summary(
+    converted, status_override: str | None = None, project: str | None = None
+) -> dict:
     stats = summarize(converted)
 
-    # The "Status" column must reflect what will actually happen, so an
-    # override replaces the tier-derived values rather than sitting beside them.
-    def _status_cell(default: str) -> str:
-        shown = status_override or default
-        color = STATUS_COLORS.get(shown, "white")
-        return f"[{color}]{shown}[/{color}]"
-
-    print("\n[bold]Plan[/bold]\n")
+    title = "[bold]Plan[/bold]"
+    if project:
+        title += f" [dim]· dbt project: {project}[/dim]"
+    title += f" [dim]· {stats['dbt_tests']} tests[/dim]"
+    print(f"\n{title}\n")
     print(
-        f"• All [bold]{stats['dbt_tests']}[/bold] dbt tests converts to "
+        f"• All [bold]{stats['dbt_tests']}[/bold] dbt tests convert to "
         f"[bold]{stats['total']}[/bold] Qualytics checks."
     )
     print(
         f"• [bold]{stats['automatic']}[/bold] ({stats['automatic_pct']}%) map to a rule "
-        "automatically."
+        f"automatically — [bold]{stats['direct']}[/bold] direct, "
+        f"[bold]{stats['normalize']}[/bold] to normalize."
     )
     print(
         f"• [bold]{stats['manual']}[/bold] ({stats['manual_pct']}%) need an expression "
@@ -191,23 +193,25 @@ def _print_summary(converted, status_override: str | None = None) -> dict:
     )
     print(f"\n{_tier_bar(stats)}")
 
-    table = Table()
-    table.add_column("Tier")
-    table.add_column("Checks", justify="right")
-    table.add_column("Status")
-    table.add_row(_tier_cell(TIER_DIRECT), str(stats["direct"]), _status_cell("Active"))
-    table.add_row(
-        _tier_cell(TIER_NORMALIZE), str(stats["normalize"]), _status_cell("Draft")
+    # One line per tier: swatch, name, count, landing status, meaning. The
+    # total is already in the bullets above, so it is not repeated here.
+    print()
+    count_width = max(
+        len("Checks"), *(len(str(stats[label])) for label, _ in _TIER_LABEL.values())
     )
-    table.add_row(_tier_cell(TIER_MANUAL), str(stats["manual"]), _status_cell("Draft"))
-    table.add_section()
-    table.add_row("[bold]total[/bold]", f"[bold]{stats['total']}[/bold]", "")
-    console.print()
-    console.print(table)
-
+    print(f"[bold]  {'Tier':<11}{'Checks':>{count_width}}  Status[/bold]")
     for tier, meaning in _TIER_LEGEND:
-        label, _ = _TIER_LABEL[tier]
-        print(f"[dim]{label:<11}{meaning}[/dim]")
+        label, color = _TIER_LABEL[tier]
+        # The status must reflect what will actually happen, so an override
+        # replaces the tier-derived default rather than sitting beside it.
+        status = status_override or _TIER_STATUS[tier]
+        status_color = STATUS_COLORS.get(status, "white")
+        print(
+            f"[{color}]■[/{color}] {label:<11}"
+            f"[bold]{stats[label]:>{count_width}}[/bold]  "
+            f"[{status_color}]{status:<6}[/{status_color}]  "
+            f"[dim]{meaning}[/dim]"
+        )
     # A few dbt tests assert two things (a length range) and become two checks,
     # so check count can exceed test count. Say so rather than conflating them.
     if stats["total"] > stats["dbt_tests"]:
@@ -309,7 +313,7 @@ def dbt_plan(
     manifest = _load_manifest(manifest_path)
     converted = _convert(manifest, container_map, container_case, False)
 
-    _print_summary(converted)
+    _print_summary(converted, project=_project_name(manifest))
 
     if show_checks:
         detail = Table(title="Crosswalk")
@@ -385,7 +389,7 @@ def dbt_import(
         manifest, container_map, container_case, preserve_status, status_override
     )
 
-    stats = _print_summary(converted, status_override)
+    stats = _print_summary(converted, status_override, project=_project_name(manifest))
 
     if status_override:
         print(
