@@ -192,7 +192,9 @@ class TestDbtImport:
 
     def test_no_log_file_when_nothing_fails(self, cli_runner, manifest_file, tmp_path):
         log = tmp_path / "failures.log"
-        res, _ = self._run(cli_runner, manifest_file, extra=["--failures-log", str(log)])
+        res, _ = self._run(
+            cli_runner, manifest_file, extra=["--failures-log", str(log)]
+        )
         assert res.exit_code == 0
         assert not log.exists()
 
@@ -425,9 +427,7 @@ class TestFieldValidation:
         table_ids.assert_not_called()
         assert len(importer.call_args[0][2]) == 2
 
-    def test_rejected_checks_land_in_the_failures_log(
-        self, cli_runner, manifest_file
-    ):
+    def test_rejected_checks_land_in_the_failures_log(self, cli_runner, manifest_file):
         res, _ = self._run(cli_runner, manifest_file, ["nope"])
         assert res.exit_code == 0
         content = open(manifest_file + ".failures.log").read()
