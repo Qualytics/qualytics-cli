@@ -1,5 +1,7 @@
 """Tests for dbt manifest → quality check conversion."""
 
+import json
+
 import pytest
 
 from qualytics.services.dbt import (
@@ -467,7 +469,10 @@ class TestMetadataCapture:
             _configured_manifest({}, kwargs={"at_least": 0.95, "group_by": ["region"]})
         )
         kwargs = converted[0].check["additional_metadata"]["dbt_kwargs"]
-        assert kwargs == {"at_least": 0.95, "group_by": ["region"]}
+        # JSON-encoded: the app coerces metadata values to strings, so a raw
+        # dict would display as "[object Object]".
+        assert isinstance(kwargs, str)
+        assert json.loads(kwargs) == {"at_least": 0.95, "group_by": ["region"]}
 
     def test_column_name_is_not_echoed_into_metadata(self):
         converted = convert_manifest(_configured_manifest({}))
@@ -494,10 +499,7 @@ class TestMetadataCapture:
 
     def test_tags_recorded(self):
         converted = convert_manifest(_configured_manifest({"tags": ["nightly", "pii"]}))
-        assert converted[0].check["additional_metadata"]["dbt_tags"] == [
-            "nightly",
-            "pii",
-        ]
+        assert converted[0].check["additional_metadata"]["dbt_tags"] == "nightly, pii"
 
     def test_extra_config_recorded(self):
         converted = convert_manifest(
@@ -928,7 +930,8 @@ class TestSumSemantics:
         )[0]
         assert c.check["rule_type"] != "sum", "sum == 100 would flag valid data"
         assert c.tier == TIER_MANUAL
-        assert c.check["additional_metadata"]["dbt_kwargs"]["max_value"] == 500
+        kwargs = json.loads(c.check["additional_metadata"]["dbt_kwargs"])
+        assert kwargs["max_value"] == 500
 
     def test_degenerate_range_converts_to_sum(self):
         c = _one(

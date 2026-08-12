@@ -19,6 +19,7 @@ Design invariants:
   description. Migration tiers grade effort, not feasibility.
 """
 
+import json
 import re
 from collections.abc import Callable
 from typing import Any
@@ -596,8 +597,9 @@ def dbt_metadata(node: dict, key: str, kwargs: dict | None = None) -> dict:
 
     A reviewer completing a Draft check should not have to go back to the dbt
     project to find the threshold or interval the test was written with, so
-    everything unconsumed lands here. ``additional_metadata`` is typed
-    ``dict[str, Any]`` server-side, so structured values need no encoding.
+    everything unconsumed lands here. The app renders each metadata value by
+    string coercion, so nested structures must be JSON-encoded or they show
+    up as ``[object Object]``.
     """
     meta: dict[str, Any] = {"dbt_test": key}
 
@@ -619,14 +621,16 @@ def dbt_metadata(node: dict, key: str, kwargs: dict | None = None) -> dict:
     tags = config.get("tags") or node.get("tags")
     if tags:
         meta["dbt_tags"] = (
-            list(tags) if isinstance(tags, (list, tuple)) else [str(tags)]
+            ", ".join(str(t) for t in tags)
+            if isinstance(tags, (list, tuple))
+            else str(tags)
         )
 
     # Every kwarg the mapping did not turn into a property or field. Keeps the
     # thresholds of a partially-mapped rule visible on the check itself.
     leftover = {k: v for k, v in (kwargs or {}).items() if k not in _REDUNDANT_KWARGS}
     if leftover:
-        meta["dbt_kwargs"] = leftover
+        meta["dbt_kwargs"] = json.dumps(leftover)
 
     return meta
 
