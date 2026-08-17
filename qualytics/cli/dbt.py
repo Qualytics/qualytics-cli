@@ -1,0 +1,521 @@
+"""CLI commands for migrating dbt tests to Qualytics."""
+
+import json
+import os
+import re
+from itertools import groupby
+
+import typer
+import yaml
+from rich import print
+from rich.console import Console
+from rich.table import Table
+
+from ..api.client import get_client
+from ..api.fields import container_field_names
+from ..services.containers import get_table_ids
+from ..services.dbt import (
+    TIER_DIRECT,
+    TIER_MANUAL,
+    TIER_NORMALIZE,
+    convert_manifest,
+    resolve_check_fields,
+    summarize,
+    to_checks,
+)
+from ..services.quality_checks import import_checks_to_datastore
+from ..utils.failure_log import failure_entry, write_failures_log
+from . import add_suggestion_callback
+
+dbt_app = typer.Typer(name="dbt", help="Migrate dbt tests to Qualytics quality checks")
+add_suggestion_callback(dbt_app, "dbt")
+
+console = Console()
+
+# Tier colors mirror the dbt-crosswalk UI tokens (src/styles/tokens.css):
+# --migrate / --review / --manual. Keep the two in sync.
+_TIER_LABEL = {
+    TIER_DIRECT: ("direct", "#86AA5B"),
+    TIER_NORMALIZE: ("normalize", "#5B86AA"),
+    TIER_MANUAL: ("manual", "#FF9933"),
+}
+
+STATUS_COLORS = {"Active": "#5B86AA", "Draft": "#8B7355"}
+
+# Where each tier lands by default; mirrors _STATUS_BY_TIER in services.dbt.
+_TIER_STATUS = {TIER_DIRECT: "Active", TIER_NORMALIZE: "Draft", TIER_MANUAL: "Draft"}
+
+_TIER_LEGEND = (
+    (TIER_DIRECT, "maps 1:1 to a Qualytics rule"),
+    (TIER_NORMALIZE, "mapped, but a parameter needs review"),
+    (TIER_MANUAL, "custom SQL — author the expression by hand"),
+)
+
+
+def _humanize_rule(rule_type: str) -> str:
+    """Display form of a camelCase rule type: satisfiesExpression → Satisfies Expression."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", rule_type).title()
+
+
+# The crosswalk spectrum wraps its ticks inside a fixed-width container; the
+# terminal wall wraps at this many pills per row, bounded by the terminal.
+_BAR_WRAP = 60
+_BAR_MAX_ROWS = 8
+
+
+def _tier_bar(stats: dict) -> str:
+    """The dbt-crosswalk tick wall as terminal pills: one pill per check,
+    tinted by tier, wrapping at a fixed width like the crosswalk's spectrum.
+    Only past _BAR_MAX_ROWS does the wall scale down proportionally, and a
+    tier with at least one check always keeps at least one pill."""
+    counts = [
+        (tier, stats[label]) for tier, (label, _) in _TIER_LABEL.items() if stats[label]
+    ]
+    total = sum(count for _, count in counts)
+    if not total:
+        return ""
+    width = max(20, min(_BAR_WRAP, console.width - 2))
+    scale = min(1.0, width * _BAR_MAX_ROWS / total)
+    pills: list[str] = []
+    for tier, count in counts:
+        _, color = _TIER_LABEL[tier]
+        pills.extend([color] * max(1, round(count * scale)))
+    # The quadrant glyph inks only the lower-left quarter of its cell, so every
+    # pill carries a built-in half-cell gap to the right AND above — wrapped
+    # rows stay a thin half-line apart without spending a blank line on it.
+    lines = []
+    for start in range(0, len(pills), width):
+        lines.append(
+            "".join(
+                f"[{color}]{'▖' * sum(1 for _ in run)}[/{color}]"
+                for color, run in groupby(pills[start : start + width])
+            )
+        )
+    return "\n".join(lines)
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────
+
+
+def _load_manifest(path: str) -> dict:
+    """Read and parse a dbt manifest.json, with actionable errors."""
+    if not os.path.isfile(path):
+        print(f"[red]Manifest not found: {path}[/red]")
+        print("[dim]dbt writes it to target/manifest.json after `dbt compile`.[/dim]")
+        raise typer.Exit(code=1)
+
+    try:
+        with open(path) as f:
+            manifest = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"[red]Could not parse {path} as JSON: {e}[/red]")
+        raise typer.Exit(code=1)
+
+    if not isinstance(manifest, dict) or "nodes" not in manifest:
+        print(f"[red]{path} has no 'nodes' — is this a dbt manifest.json?[/red]")
+        raise typer.Exit(code=1)
+
+    return manifest
+
+
+def _parse_container_map(pairs: list[str]) -> dict[str, str]:
+    """Parse repeated --container-map model=container into a dict."""
+    mapping = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            print(f"[red]--container-map expects model=container, got: {pair}[/red]")
+            raise typer.Exit(code=1)
+        model, container = pair.split("=", 1)
+        mapping[model.strip()] = container.strip()
+    return mapping
+
+
+_VALID_STATUS = ("Active", "Draft")
+
+
+def _resolve_status(status: str | None, preserve_status: bool) -> str | None:
+    """Validate --status and reject the combination that contradicts itself."""
+    if status is None:
+        return None
+    if preserve_status:
+        print("[red]--status and --preserve-status are mutually exclusive.[/red]")
+        raise typer.Exit(code=1)
+    match = next((s for s in _VALID_STATUS if s.lower() == status.lower()), None)
+    if match is None:
+        print(f"[red]--status must be Active or Draft, got: {status}[/red]")
+        raise typer.Exit(code=1)
+    return match
+
+
+def _convert(
+    manifest, container_map, container_case, preserve_status, status_override=None
+):
+    converted = convert_manifest(
+        manifest,
+        container_map=_parse_container_map(container_map),
+        container_case=container_case,
+        include_status=not preserve_status,
+        status_override=status_override,
+    )
+    if not converted:
+        print(
+            "[yellow]No test nodes found in the manifest — nothing to migrate.[/yellow]"
+        )
+        raise typer.Exit(code=0)
+    return converted
+
+
+def _project_name(manifest: dict) -> str | None:
+    return (manifest.get("metadata") or {}).get("project_name")
+
+
+def _print_summary(
+    converted, status_override: str | None = None, project: str | None = None
+) -> dict:
+    stats = summarize(converted)
+
+    title = "[bold]Plan[/bold]"
+    if project:
+        title += f" [dim]· dbt project: {project}[/dim]"
+    title += f" [dim]· {stats['dbt_tests']} tests[/dim]"
+    print(f"\n{title}\n")
+    print(
+        f"• All [bold]{stats['dbt_tests']}[/bold] dbt tests convert to "
+        f"[bold]{stats['total']}[/bold] Qualytics checks."
+    )
+    print(
+        f"• [bold]{stats['automatic']}[/bold] ({stats['automatic_pct']}%) map to a rule "
+        f"automatically — [bold]{stats['direct']}[/bold] direct, "
+        f"[bold]{stats['normalize']}[/bold] to normalize."
+    )
+    print(
+        f"• [bold]{stats['manual']}[/bold] ({stats['manual_pct']}%) need an expression "
+        "authored by hand."
+    )
+    print(f"\n{_tier_bar(stats)}")
+
+    # One line per tier: swatch, name, count, landing status, meaning. The
+    # total is already in the bullets above, so it is not repeated here.
+    print()
+    count_width = max(
+        len("Checks"), *(len(str(stats[label])) for label, _ in _TIER_LABEL.values())
+    )
+    print(f"[bold]  {'Tier':<11}{'Checks':>{count_width}}  Status[/bold]")
+    for tier, meaning in _TIER_LEGEND:
+        label, color = _TIER_LABEL[tier]
+        # The status must reflect what will actually happen, so an override
+        # replaces the tier-derived default rather than sitting beside it.
+        status = status_override or _TIER_STATUS[tier]
+        status_color = STATUS_COLORS.get(status, "white")
+        print(
+            f"[{color}]■[/{color}] {label:<11}"
+            f"[bold]{stats[label]:>{count_width}}[/bold]  "
+            f"[{status_color}]{status:<6}[/{status_color}]  "
+            f"[dim]{meaning}[/dim]"
+        )
+    # A few dbt tests assert two things (a length range) and become two checks,
+    # so check count can exceed test count. Say so rather than conflating them.
+    if stats["total"] > stats["dbt_tests"]:
+        print(
+            "\n[dim]Note: some dbt tests translate to more than one "
+            "Qualytics check.[/dim]"
+        )
+
+    if stats["unresolved_containers"]:
+        print(
+            f"\n[red]{stats['unresolved_containers']} test(s) have no resolvable container.[/red] "
+            "[dim]Use --container-map model=container.[/dim]"
+        )
+
+    return stats
+
+
+def _field_catalogue(
+    client, datastore_id: int, containers: set[str]
+) -> dict[str, list[str]]:
+    """Catalogued field names for the containers these checks target.
+
+    Only the containers actually referenced are fetched. A container the
+    importer will reject anyway, or one whose fields cannot be read, is simply
+    left out — validation then passes those checks through rather than blocking
+    the import on a lookup problem.
+    """
+    table_ids = get_table_ids(client=client, datastore_id=datastore_id)
+    if not table_ids:
+        return {}
+
+    catalogue: dict[str, list[str]] = {}
+    for name in sorted(containers):
+        container_id = table_ids.get(name)
+        if container_id is None:
+            continue
+        try:
+            catalogue[name] = container_field_names(client, container_id)
+        except Exception as e:  # noqa: BLE001 - lookup failure must not block import
+            print(f"[dim]Could not read fields for '{name}': {e}[/dim]")
+    return catalogue
+
+
+def _safe_dir_name(name: str) -> str:
+    """Reduce a manifest-derived container name to a single path segment.
+
+    A container name comes from a dbt alias, which is attacker-controlled when
+    the manifest is someone else's — an alias of `../..` or an absolute path
+    would otherwise be joined straight onto the output directory and used to
+    create or truncate files outside it.
+    """
+    candidate = os.path.basename(str(name).replace("\\", "/").strip().rstrip("/"))
+    if candidate in ("", ".", "..") or os.path.isabs(candidate):
+        return "_unresolved"
+    return candidate
+
+
+def _write_yaml(converted, out_dir: str) -> None:
+    """Write one YAML file per check, grouped by container.
+
+    Filenames use the dbt-derived UID rather than rule+fields, for the same reason
+    the UID itself does: several dbt tests can share a container/rule/field triple.
+    The UID is slugified, so only the directory segment needs sanitizing.
+    """
+    root = os.path.realpath(out_dir)
+    for c in converted:
+        container_dir = os.path.join(root, _safe_dir_name(c.container or ""))
+        # Belt and braces: never write outside the directory the caller chose.
+        if os.path.commonpath([root, os.path.realpath(container_dir)]) != root:
+            print(f"[red]Refusing to write outside {out_dir}: {c.container}[/red]")
+            continue
+        os.makedirs(container_dir, exist_ok=True)
+        uid = c.check["additional_metadata"]["_qualytics_check_uid"]
+        path = os.path.join(container_dir, f"{uid}.yaml")
+        with open(path, "w") as f:
+            yaml.safe_dump(c.check, f, sort_keys=False, default_flow_style=False)
+    print(f"[cyan]Wrote {len(converted)} check definitions to {out_dir}/[/cyan]")
+
+
+# ── plan ──────────────────────────────────────────────────────────────────
+
+
+@dbt_app.command("plan")
+def dbt_plan(
+    manifest_path: str = typer.Option(
+        "target/manifest.json", "--manifest", "-m", help="Path to dbt manifest.json"
+    ),
+    container_map: list[str] = typer.Option(
+        None, "--container-map", help="Override a container name: model=container"
+    ),
+    container_case: str = typer.Option(
+        None, "--container-case", help="Force container name case: upper or lower"
+    ),
+    show_checks: bool = typer.Option(
+        False, "--show-checks", help="List every dbt test and the rule it maps to"
+    ),
+):
+    """Preview what a dbt manifest would migrate to. Offline — no auth required."""
+    manifest = _load_manifest(manifest_path)
+    converted = _convert(manifest, container_map, container_case, False)
+
+    _print_summary(converted, project=_project_name(manifest))
+
+    if show_checks:
+        detail = Table(title="Crosswalk")
+        detail.add_column("Tier")
+        detail.add_column("dbt test", style="dim")
+        detail.add_column("Container")
+        detail.add_column("Qualytics rule")
+        for c in sorted(converted, key=lambda x: (x.tier, x.dbt_test)):
+            label, color = _TIER_LABEL[c.tier]
+            detail.add_row(
+                f"[{color}]{label}[/{color}]",
+                c.dbt_test,
+                c.container or "[red]unresolved[/red]",
+                _humanize_rule(c.check["rule_type"]),
+            )
+        console.print(detail)
+
+
+# ── import ────────────────────────────────────────────────────────────────
+
+
+@dbt_app.command("import")
+def dbt_import(
+    datastore_id: list[int] = typer.Option(
+        ..., "--datastore-id", help="Target datastore ID (repeat for multiple)"
+    ),
+    manifest_path: str = typer.Option(
+        "target/manifest.json", "--manifest", "-m", help="Path to dbt manifest.json"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview what would be created/updated"
+    ),
+    container_map: list[str] = typer.Option(
+        None, "--container-map", help="Override a container name: model=container"
+    ),
+    container_case: str = typer.Option(
+        None, "--container-case", help="Force container name case: upper or lower"
+    ),
+    preserve_status: bool = typer.Option(
+        False,
+        "--preserve-status",
+        help="Omit status so re-imports keep what was set in the product",
+    ),
+    status: str = typer.Option(
+        None,
+        "--status",
+        help="Force every check to Active or Draft, overriding the tier default",
+    ),
+    validate_fields: bool = typer.Option(
+        True,
+        "--validate-fields/--no-validate-fields",
+        help="Check field names against the catalogue and correct their casing",
+    ),
+    emit_yaml: str = typer.Option(
+        None, "--emit-yaml", help="Also write the converted checks to this directory"
+    ),
+    failures_log: str = typer.Option(
+        "dbt-import-failures.log",
+        "--failures-log",
+        help="Write checks that failed to import (which test, why) to this file",
+    ),
+):
+    """Convert a dbt manifest and import the checks (upsert) into a datastore.
+
+    Conversion happens in memory; checks upsert on a UID derived from each dbt
+    test's unique_id, so re-running after the dbt suite changes updates in place
+    rather than duplicating.
+
+    The datastore must be catalogued first — checks reference containers and
+    fields by name.
+
+    By default direct-tier checks land Active and the rest land Draft. That is a
+    recommendation, not a policy: --status overrides it in either direction.
+
+    Checks that fail to import are written to --failures-log, one entry per
+    check with the originating dbt test and the reason it failed.
+    """
+    manifest = _load_manifest(manifest_path)
+    status_override = _resolve_status(status, preserve_status)
+    converted = _convert(
+        manifest, container_map, container_case, preserve_status, status_override
+    )
+
+    stats = _print_summary(converted, status_override, project=_project_name(manifest))
+
+    if status_override:
+        print(
+            f"\n[cyan]--status {status_override}: forcing all {stats['total']} "
+            "checks, overriding the tier default.[/cyan]"
+        )
+        incomplete = stats["normalize"] + stats["manual"]
+        if status_override == "Active" and incomplete:
+            print(
+                f"[yellow]{incomplete} of them were tiered normalize/manual — those "
+                "carry incomplete properties (placeholder expressions, unset windows "
+                "and intervals) and may not evaluate meaningfully until edited.[/yellow]"
+            )
+
+    if emit_yaml:
+        _write_yaml(converted, emit_yaml)
+
+    client = get_client()
+    checks = to_checks(converted)
+    # Import failures report a check's source; name the dbt test instead of the
+    # "unknown" fallback meant for YAML files. After --emit-yaml on purpose, so
+    # the marker never lands in the written files.
+    for check in checks:
+        check["_source_file"] = check["additional_metadata"]["dbt_unique_id"]
+    by_source = {check["_source_file"]: check for check in checks}
+
+    if dry_run:
+        print("\n[bold yellow]DRY RUN — no changes will be made.[/bold yellow]")
+
+    summary_table = Table(title="Import Summary")
+    summary_table.add_column("Datastore ID", style="cyan")
+    summary_table.add_column("Created", style="green")
+    summary_table.add_column("Updated", style="yellow")
+    summary_table.add_column("Failed", style="red")
+
+    containers = {c["container"] for c in checks if c.get("container")}
+
+    total_failed = 0
+    failure_entries: list[str] = []
+    for ds_id in datastore_id:
+        # Field names are catalogued per datastore, so this resolves per target.
+        payload = checks
+        rejected: list[dict] = []
+        if validate_fields:
+            payload, rejected, corrections = resolve_check_fields(
+                checks, _field_catalogue(client, ds_id, containers)
+            )
+            if corrections:
+                print(
+                    f"[cyan]Corrected {len(corrections)} field name(s) to catalogue "
+                    f"casing: {', '.join(corrections[:5])}"
+                    f"{'…' if len(corrections) > 5 else ''}[/cyan]"
+                )
+
+        print(
+            f"\n[cyan]{'[DRY RUN] ' if dry_run else ''}Importing {len(payload)} checks "
+            f"to datastore {ds_id}...[/cyan]"
+        )
+        result = import_checks_to_datastore(client, ds_id, payload, dry_run=dry_run)
+
+        failed = result["failed"] + len(rejected)
+        summary_table.add_row(
+            str(ds_id),
+            str(result["created"]),
+            str(result["updated"]),
+            str(failed),
+        )
+        total_failed += failed
+
+        for item in rejected:
+            print(f"  [red]{item['reason']}[/red]")
+        for err in result["errors"]:
+            print(f"  [red]{err}[/red]")
+
+        # Field-validation rejections and importer failures both land in the
+        # log; the on-screen lines scroll away, the file is the record.
+        for item in rejected:
+            source = item["check"].get("_source_file", "unknown")
+            failure_entries.append(
+                failure_entry(ds_id, source, item["check"], item["reason"])
+            )
+        for failure in result.get("failures", []):
+            source = failure.get("source", "unknown")
+            failure_entries.append(
+                failure_entry(
+                    ds_id, source, by_source.get(source), failure.get("reason", "")
+                )
+            )
+
+    console.print(summary_table)
+
+    # A dry run promises no changes, so the log is only written on real runs.
+    if failure_entries and not dry_run:
+        write_failures_log(
+            failures_log,
+            "dbt import failures",
+            f"manifest: {manifest_path}",
+            failure_entries,
+        )
+        print(
+            f"\n[yellow]{len(failure_entries)} failed check(s) logged to "
+            f"{failures_log}[/yellow]"
+        )
+
+    # Failures are reported, not raised — matching `checks import`, which prints
+    # per-check errors and still exits 0. Keeping the two bulk importers
+    # behaviourally identical matters more than this command's CI ergonomics.
+    if total_failed:
+        print(
+            "[dim]Container- and field-not-found errors usually mean the datastore "
+            "has not been catalogued, or dbt names differ from the warehouse "
+            "(try --container-map or --container-case). Field casing is corrected "
+            "automatically; --no-validate-fields skips the check entirely.[/dim]"
+        )
+
+    if stats["manual"] and not dry_run:
+        print(
+            f"\n[yellow]{stats['manual']} check(s) landed as Draft with a placeholder "
+            "expression — author those before activating them.[/yellow]"
+        )

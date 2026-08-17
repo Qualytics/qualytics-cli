@@ -376,16 +376,26 @@ def import_checks_to_datastore(
 ) -> dict[str, int | list]:
     """Import checks to a single datastore with upsert logic.
 
-    Returns {created: N, updated: N, failed: N, errors: [...]}.
+    Returns {created: N, updated: N, failed: N, errors: [...], failures: [...]}.
+
+    ``errors`` is one human-readable line per failure, for printing.
+    ``failures`` carries the same information structured as
+    ``{"source": ..., "reason": ...}`` so callers can log or report which
+    check failed and why without parsing the strings back apart.
     """
     # Resolve container names → IDs
     table_ids = get_table_ids(client=client, datastore_id=datastore_id)
     if table_ids is None:
+        reason = f"Could not resolve containers for datastore {datastore_id}"
         return {
             "created": 0,
             "updated": 0,
             "failed": len(checks),
-            "errors": [f"Could not resolve containers for datastore {datastore_id}"],
+            "errors": [reason],
+            "failures": [
+                {"source": check.get("_source_file", "unknown"), "reason": reason}
+                for check in checks
+            ],
         }
 
     # Build UID lookup for upsert matching
@@ -395,6 +405,7 @@ def import_checks_to_datastore(
     updated = 0
     failed = 0
     errors: list[str] = []
+    failures: list[dict] = []
 
     # Build reverse lookup for validating container_id when provided directly
     id_to_name = {v: k for k, v in table_ids.items()}
@@ -406,18 +417,23 @@ def import_checks_to_datastore(
         container_id = check.get("container_id")
         if container_id is not None:
             if container_id not in id_to_name:
-                errors.append(
-                    f"Container ID {container_id} not found in datastore {datastore_id} ({source})"
+                reason = (
+                    f"Container ID {container_id} not found in datastore {datastore_id}"
                 )
+                errors.append(f"{reason} ({source})")
+                failures.append({"source": source, "reason": reason})
                 failed += 1
                 continue
         else:
             container_name = check.get("container", "")
             container_id = table_ids.get(container_name)
             if container_id is None:
-                errors.append(
-                    f"Container '{container_name}' not found in datastore {datastore_id} ({source})"
+                reason = (
+                    f"Container '{container_name}' not found in datastore "
+                    f"{datastore_id}"
                 )
+                errors.append(f"{reason} ({source})")
+                failures.append({"source": source, "reason": reason})
                 failed += 1
                 continue
 
@@ -452,6 +468,13 @@ def import_checks_to_datastore(
                     uid_lookup[uid] = result["id"]
         except Exception as e:
             errors.append(f"Failed on '{source}': {e}")
+            failures.append({"source": source, "reason": str(e)})
             failed += 1
 
-    return {"created": created, "updated": updated, "failed": failed, "errors": errors}
+    return {
+        "created": created,
+        "updated": updated,
+        "failed": failed,
+        "errors": errors,
+        "failures": failures,
+    }

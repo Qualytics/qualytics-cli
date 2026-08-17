@@ -239,6 +239,33 @@ class TestValidateAndFormatUrl:
             == "https://example.com/capi/api/"
         )
 
+    def test_empty_api_path_serves_from_root(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_API_PATH", "")
+        assert (
+            validate_and_format_url("http://localhost:8000") == "http://localhost:8000/"
+        )
+
+    def test_empty_api_path_normalizes_stored_api_url(self, monkeypatch):
+        # A stored, already-formatted URL must re-format to the root too.
+        monkeypatch.setenv("QUALYTICS_API_PATH", "")
+        assert (
+            validate_and_format_url("http://localhost:8000/api/")
+            == "http://localhost:8000/"
+        )
+
+    def test_custom_api_path(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_API_PATH", "/v2/api/")
+        assert (
+            validate_and_format_url("https://example.com")
+            == "https://example.com/v2/api/"
+        )
+
+    def test_unset_api_path_defaults_to_api(self, monkeypatch):
+        monkeypatch.delenv("QUALYTICS_API_PATH", raising=False)
+        assert (
+            validate_and_format_url("https://example.com") == "https://example.com/api/"
+        )
+
 
 class TestGetClient:
     """Tests for the get_client factory function."""
