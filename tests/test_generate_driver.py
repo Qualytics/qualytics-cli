@@ -1,10 +1,12 @@
 """Tests for qualytics.cli.generate_driver — YAML generation and helpers."""
 
+import re
+
 import pytest
 import yaml
 
 from qualytics.cli.generate_driver import (
-    VALID_DATE_ARITHMETIC_STYLE,
+    _SPARK_BUILTIN_DIALECTS,
     VALID_DATE_LITERAL_STYLE,
     VALID_ROW_COUNT,
     VALID_ROW_LIMIT_STYLE,
@@ -38,7 +40,6 @@ _MINIMAL_PROBES = {
     "connectionTest": "SELECT 1",
     "viewSampleFallback": "RAND",
     "rowCount": "COUNT_STAR",
-    "dateArithmeticStyle": "STANDARD",
     "getTablesUsesNullCatalog": False,
 }
 
@@ -64,15 +65,59 @@ class TestBuildYamlStructure:
         return content, parsed, detected, todos
 
     def test_top_level_keys(self):
-        """prefix, className, dialectClass stay at top level; config and sql are sections."""
+        """Only config, sql and dialectClass are accepted at the top level — the parser's
+        TopLevelKnownKeys. prefix/className are config fields, not top-level keys."""
         _, parsed, _, _ = self._parse()
-        assert "prefix" in parsed
-        assert "className" in parsed
-        assert "dialectClass" in parsed
+        assert set(parsed.keys()) <= {"config", "sql", "dialectClass"}
         assert "config" in parsed
         assert isinstance(parsed["config"], dict)
         assert "sql" in parsed
         assert isinstance(parsed["sql"], dict)
+
+    def test_identity_fields_live_under_config(self):
+        _, parsed, _, _ = self._parse()
+        assert parsed["config"]["prefix"] == "testdb"
+        assert parsed["config"]["className"] == "com.example.Driver"
+        assert "prefix" not in parsed
+        assert "className" not in parsed
+
+    def test_required_config_keys_always_emitted(self):
+        """These are `required(...)` in parseConfig — they must be emitted even when the
+        probed value equals the DriverConfig default, or the file fails to parse."""
+        _, parsed, _, _ = self._parse()
+        config = parsed["config"]
+        for key in (
+            "prefix",
+            "className",
+            "displayName",
+            "tableNameCasing",
+            "transactionIsolation",
+            "url",
+            "connectionSpec",
+        ):
+            assert key in config, f"required config key '{key}' was omitted"
+        # AS_IS / READ_UNCOMMITTED are the DriverConfig defaults but still required keys.
+        assert config["tableNameCasing"] == "AS_IS"
+        assert config["transactionIsolation"] == "READ_UNCOMMITTED"
+
+    def test_no_explicit_nulls_anywhere(self):
+        """`optional` rejects an explicit null ("omit the key to use the default"), and
+        `required` rejects a null value — so no emitted key may carry one."""
+
+        def walk(node, path=""):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    assert v is not None, f"explicit null at {path}{k}"
+                    walk(v, f"{path}{k}.")
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    assert v is not None, f"explicit null at {path}[{i}]"
+                    walk(v, f"{path}[{i}].")
+
+        # Minimal probes exercise every "undetected" branch, where nulls used to leak.
+        for probes in (_MINIMAL_PROBES, {"className": "com.example.D"}):
+            _, parsed, _, _ = self._parse(probes=probes)
+            walk(parsed)
 
     def test_dialect_class_at_top_level(self):
         _, parsed, _, _ = self._parse(dialect_class="com.example.Dialect$")
@@ -97,7 +142,27 @@ class TestBuildYamlStructure:
         assert "staticParams" in url
         assert "conditionalParams" in url
         assert "authVariants" in url
-        assert "paramSeparator" in url
+        # paramSeparator only accepts ';' or ','; the default query style (?/&) is not
+        # declarable, so the key must not be emitted for it.
+        assert "paramSeparator" not in url
+
+    def test_param_separator_never_emitted_as_ampersand(self):
+        raw, parsed, _, _ = self._parse()
+        assert "paramSeparator: '&'" not in raw
+        assert parsed["config"]["url"].get("paramSeparator") is None
+
+    def test_url_template_always_present_and_non_null(self):
+        """config.url.template is required. A probe URL the deriver can't match (Oracle's
+        `@host:port/service` form) must still yield a usable template, not null."""
+        _, parsed, _, _ = self._parse(url="jdbc:oracleish:thin:@host:1521/svc")
+        template = parsed["config"]["url"]["template"]
+        assert template
+        # Every placeholder must be backed by a connectionSpec field name.
+        field_names = {f["name"] for f in parsed["config"]["connectionSpec"]["fields"]}
+        placeholders = set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", template))
+        assert placeholders <= field_names, (
+            f"template placeholders {placeholders - field_names} have no connectionSpec field"
+        )
 
     def test_config_contains_connection_spec(self):
         _, parsed, _, _ = self._parse()
@@ -125,10 +190,12 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse()
         assert parsed["config"]["supportsLongLimit"] is False
 
-    def test_config_contains_default_insert_batch_size(self):
-        _, parsed, _, _ = self._parse()
-        assert "defaultInsertBatchSize" in parsed["config"]
-        assert parsed["config"]["defaultInsertBatchSize"] is None
+    def test_default_insert_batch_size_commented_not_null(self):
+        """`defaultInsertBatchSize: null` is a parse error — the unset case must be a
+        commented-out stub, not an emitted key."""
+        raw, parsed, _, _ = self._parse()
+        assert "defaultInsertBatchSize" not in parsed["config"]
+        assert "# defaultInsertBatchSize:" in raw
 
     def test_config_contains_connection_property_mappings(self):
         _, parsed, _, _ = self._parse()
@@ -165,29 +232,37 @@ class TestBuildYamlStructure:
         assert "clauses" in sql
         assert isinstance(sql["clauses"], list)  # empty list when all defaults
 
-    def test_sql_capabilities_under_sql_queries(self):
-        """SQL query-style fields should use QuerySlot keys under sql.queries."""
-        probes = {**_MINIMAL_PROBES, "schemaOnly": "PG_CTE"}
-        _, parsed, _, _ = self._parse(probes=probes)
-        assert parsed["sql"]["queries"]["schemaOnly"] == "PG_CTE"
-        assert "schemaOnlyQueryStyle" not in parsed
-        assert "schemaOnlyQueryStyle" not in parsed.get("config", {})
-        assert "schemaOnlyQueryStyle" not in parsed["sql"]["queries"]
+    def test_query_slots_are_never_emitted_as_strategy_tokens(self):
+        """Every sql.queries value is a full SQL statement, never a strategy token. A token
+        like `schemaOnly: PG_CTE` PARSES (it is a non-empty, placeholder-free, keyword-free
+        string) and is then sent to the database verbatim at query time — so the generator
+        must leave the slots empty and carry the probed style as a comment only."""
+        probes = {
+            **_MINIMAL_PROBES,
+            "schemaOnly": "PG_CTE",
+            "rowCount": "BQ_TABLES",
+        }
+        raw, parsed, _, _ = self._parse(probes=probes)
+        assert parsed["sql"]["queries"] == {}
+        # The probe result is preserved for the operator, but only inside a comment.
+        assert "# rowCount=BQ_TABLES" in raw
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            assert not stripped.startswith("schemaOnly:"), line
+            assert not stripped.startswith("rowCount:"), line
 
     def test_sql_capabilities_with_detected_values(self):
         probes = {
             **_MINIMAL_PROBES,
             "schemaOnly": "SQLSERVER_TOP0",
-            "dateArithmeticStyle": "DATEADD_DATEDIFF",
             "approxCountDistinctFunction": "APPROX_COUNT_DISTINCT",
         }
         _, parsed, _, _ = self._parse(probes=probes)
-        queries = parsed["sql"]["queries"]
         functions = parsed["sql"]["functions"]
-        assert queries["schemaOnly"] == "SQLSERVER_TOP0"
-        assert queries["freshness"]["style"] == "DATEADD_DATEDIFF"
-        # schemaExistenceQueryStyle is not part of v2 schema — should NOT appear
-        assert "schemaExistenceQueryStyle" not in queries
+        # schemaExistenceQueryStyle is not part of the schema — should NOT appear
+        assert "schemaExistenceQueryStyle" not in parsed["sql"]["queries"]
         assert "APPROX_COUNT_DISTINCT" in functions
 
     def test_sql_functions_with_detected_values(self):
@@ -277,26 +352,11 @@ class TestBuildYamlStructure:
         assert "RANDOM" in parsed["sql"]["functions"]
         assert "LIMIT" in parsed["sql"]["clauses"]
 
-    def test_date_templates_under_freshness_query_slot(self):
-        """Date templates should nest under sql.queries.freshness QuerySlot."""
-        probes = {
-            **_MINIMAL_PROBES,
-            "intervalCalcDatetimeTimestampTemplate": "DATEADD(second, ...)",
-            "upperBoundDatetimeDateTemplate": "DATEADD(day, ...)",
-        }
-        _, parsed, _, _ = self._parse(probes=probes)
-        freshness = parsed["sql"]["queries"]["freshness"]
-        assert (
-            freshness["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
-        )
-        assert freshness["upperBoundDatetimeDateTemplate"] == "DATEADD(day, ...)"
-        assert "intervalCalcDatetimeTimestampTemplate" not in parsed
-        assert "intervalCalcDatetimeTimestampTemplate" not in parsed.get("config", {})
-        # Templates should NOT be at the queries level
-        assert "intervalCalcDatetimeTimestampTemplate" not in parsed["sql"]["queries"]
-
-    def test_freshness_with_style_and_templates(self):
-        """freshness QuerySlot should contain both style and templates when both present."""
+    def test_retired_date_arithmetic_probes_are_never_emitted(self):
+        """dateArithmeticStyle and the range-split templates were retired with the
+        distribution probe (dataplane QUA-2282). Even when a stale probe payload still
+        carries them, nothing may reach the YAML — `config.dateArithmeticStyle` is now an
+        unknown-key parse error in the dataplane."""
         probes = {
             **_MINIMAL_PROBES,
             "dateArithmeticStyle": "DATEADD_DATEDIFF",
@@ -305,29 +365,39 @@ class TestBuildYamlStructure:
             "upperBoundDatetimeTimestampTemplate": "DATEADD(second, ...)",
             "upperBoundDatetimeDateTemplate": "DATEADD(day, ...)",
         }
-        _, parsed, _, _ = self._parse(probes=probes)
-        freshness = parsed["sql"]["queries"]["freshness"]
-        assert freshness["style"] == "DATEADD_DATEDIFF"
-        assert (
-            freshness["intervalCalcDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
-        )
-        assert freshness["intervalCalcDatetimeDateTemplate"] == "DATEADD(day, ...)"
-        assert (
-            freshness["upperBoundDatetimeTimestampTemplate"] == "DATEADD(second, ...)"
-        )
-        assert freshness["upperBoundDatetimeDateTemplate"] == "DATEADD(day, ...)"
-
-    def test_freshness_omitted_when_all_defaults(self):
-        """When dateArithmeticStyle is STANDARD and no templates, freshness key absent."""
-        _, parsed, _, _ = self._parse()
+        raw, parsed, _, _ = self._parse(probes=probes)
+        retired = {
+            "dateArithmeticStyle",
+            "intervalCalcDatetimeTimestampTemplate",
+            "intervalCalcDatetimeDateTemplate",
+            "upperBoundDatetimeTimestampTemplate",
+            "upperBoundDatetimeDateTemplate",
+        }
+        for name in retired:
+            assert name not in raw, f"retired field '{name}' leaked into the YAML"
         assert "freshness" not in parsed["sql"]["queries"]
 
-    def test_row_count_uses_query_slot_key(self):
-        """rowCountQueryStyle probe → rowCount QuerySlot key."""
-        probes = {**_MINIMAL_PROBES, "rowCount": "BQ_TABLES"}
-        _, parsed, _, _ = self._parse(probes=probes)
-        assert parsed["sql"]["queries"]["rowCount"] == "BQ_TABLES"
-        assert "rowCountQueryStyle" not in parsed["sql"]["queries"]
+    def test_null_check_query_slot_is_never_emitted(self):
+        """nullCheck was removed from the dataplane QuerySlot vocabulary; declaring it is
+        now an `unknown query slot` parse error."""
+        raw, parsed, _, _ = self._parse()
+        assert "nullCheck" not in raw
+        assert "nullCheck" not in parsed["sql"]["queries"]
+
+    def test_query_slot_documentation_lists_the_current_vocabulary(self):
+        """The emitted slot guidance must match the dataplane QuerySlot set — nullCheck was
+        removed, and the remaining six each have a documented placeholder allow-set."""
+        raw, _, _, _ = self._parse()
+        assert "nullCheck" not in raw
+        for slot in (
+            "schemaOnly",
+            "rowCount",
+            "volume",
+            "freshness",
+            "partitionColumn",
+            "lineage",
+        ):
+            assert slot in raw, f"slot '{slot}' missing from the generated guidance"
 
     def test_config_fields_not_at_top_level(self):
         """Config fields should NOT appear at the top level."""
@@ -436,11 +506,11 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse(probes=probes)
         assert parsed["config"]["rowLimitStyle"] == "TOP"
 
-    def test_fetch_first_not_in_row_limit_style(self):
-        """FETCH_FIRST should NOT appear as rowLimitStyle — it's a sql.clause."""
+    def test_fetch_first_is_a_row_limit_style(self):
+        """FETCH_FIRST is a rowLimitStyle arm of its own (Db2), not clause-only."""
         probes = {**_MINIMAL_PROBES, "rowLimitStyle": "FETCH_FIRST"}
         _, parsed, _, _ = self._parse(probes=probes)
-        assert "rowLimitStyle" not in parsed.get("config", {})
+        assert parsed["config"]["rowLimitStyle"] == "FETCH_FIRST"
 
     def test_fetch_first_maps_to_offset_fetch_clause(self):
         """FETCH_FIRST rowLimit → OFFSET_FETCH in sql.clauses."""
@@ -493,13 +563,8 @@ class TestBuildYamlStructure:
             "getTablesUsesNullCatalog": True,
             "subqueryAlias": False,
             "approxCountDistinctFunction": "APPROX_COUNT_DISTINCT",
-            "dateArithmeticStyle": "DATEADD_DATEDIFF",
             "rowLimitStyle": "TOP",
             "tableSampleTemplate": "TABLESAMPLE BERNOULLI ({pct})",
-            "intervalCalcDatetimeTimestampTemplate": "DATEADD(second, ...)",
-            "intervalCalcDatetimeDateTemplate": "DATEADD(day, ...)",
-            "upperBoundDatetimeTimestampTemplate": "DATEADD(second, ...)",
-            "upperBoundDatetimeDateTemplate": "DATEADD(day, ...)",
             "viewSampleFallback": "RANDOM",
             "timestampLiteralStyle": "CAST_DATETIME2",
             "dateLiteralStyle": "TO_DATE",
@@ -509,8 +574,8 @@ class TestBuildYamlStructure:
         _, parsed, _, _ = self._parse(
             probes=probes, dialect_class="com.example.Dialect$"
         )
-        # Only these keys are allowed at the top level
-        allowed_top_keys = {"prefix", "className", "dialectClass", "config", "sql"}
+        # Only these keys are allowed at the top level (parser TopLevelKnownKeys)
+        allowed_top_keys = {"dialectClass", "config", "sql"}
         extra = set(parsed.keys()) - allowed_top_keys
         assert not extra, (
             f"Unexpected top-level keys (should be in config or sql): {extra}"
@@ -562,11 +627,9 @@ class TestBuildYamlStructure:
         assert "APPROX_COUNT_DISTINCT" in sql["functions"]
         assert "RANDOM" in sql["functions"]
         assert "TABLESAMPLE_BERNOULLI" in sql["clauses"]
-        assert sql["queries"]["schemaOnly"] == "SQLSERVER_TOP0"
-        assert sql["queries"]["rowCount"] == "ALL_TABLES"
-        freshness = sql["queries"]["freshness"]
-        assert freshness["style"] == "DATEADD_DATEDIFF"
-        assert "intervalCalcDatetimeTimestampTemplate" in freshness
+        # Query slots stay empty — probed styles are hints, not SQL (see
+        # test_query_slots_are_never_emitted_as_strategy_tokens).
+        assert sql["queries"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -694,18 +757,18 @@ class TestEnumValuesMatchDataplane:
 
     # -- rowLimitStyle --
 
-    @pytest.mark.parametrize("value", ["LIMIT", "TOP", "ROWNUM"])
+    @pytest.mark.parametrize("value", ["LIMIT", "TOP", "ROWNUM", "FETCH_FIRST"])
     def test_row_limit_style_valid(self, value):
         probes = {**_MINIMAL_PROBES, "rowLimitStyle": value}
         parsed = self._parse(probes=probes)
         emitted = parsed["config"].get("rowLimitStyle", "LIMIT")
         assert emitted in VALID_ROW_LIMIT_STYLE
 
-    def test_fetch_first_not_emitted_as_row_limit_style(self):
-        """FETCH_FIRST is NOT a valid rowLimitStyle — must map to OFFSET_FETCH clause."""
+    def test_fetch_first_also_declares_offset_fetch_clause(self):
+        """FETCH_FIRST is a rowLimitStyle AND pairs with the OFFSET_FETCH clause token."""
         probes = {**_MINIMAL_PROBES, "rowLimitStyle": "FETCH_FIRST"}
         parsed = self._parse(probes=probes)
-        assert "rowLimitStyle" not in parsed.get("config", {})
+        assert parsed["config"]["rowLimitStyle"] == "FETCH_FIRST"
         assert "OFFSET_FETCH" in parsed["sql"]["clauses"]
         assert "OFFSET_FETCH" in VALID_SQL_CLAUSES
 
@@ -765,51 +828,45 @@ class TestEnumValuesMatchDataplane:
         assert expected_token in parsed["sql"]["clauses"]
         assert expected_token in VALID_SQL_CLAUSES
 
-    # -- sql.queries.schemaOnly --
-
-    @pytest.mark.parametrize("value", ["CTE", "SQLSERVER_TOP0", "ORACLE_WHERE_FALSE"])
-    def test_schema_only_valid(self, value):
-        probes = {**_MINIMAL_PROBES, "schemaOnly": value}
-        parsed = self._parse(probes=probes)
-        assert parsed["sql"]["queries"]["schemaOnly"] in VALID_SCHEMA_ONLY
-
-    # -- sql.queries.rowCount --
+    # -- sql.queries: probe styles are hints, never emitted values --
 
     @pytest.mark.parametrize(
-        "value",
+        "key,value",
         [
-            "COUNT_STAR",
-            "BQ_TABLES",
-            "INFORMATION_SCHEMA_ROW_COUNT",
-            "INFORMATION_SCHEMA_TABLES_WITH_SIZE",
-            "ALL_TABLES",
+            ("schemaOnly", "CTE"),
+            ("schemaOnly", "SQLSERVER_TOP0"),
+            ("schemaOnly", "ORACLE_WHERE_FALSE"),
+            ("rowCount", "COUNT_STAR"),
+            ("rowCount", "BQ_TABLES"),
+            ("rowCount", "INFORMATION_SCHEMA_ROW_COUNT"),
+            ("rowCount", "INFORMATION_SCHEMA_TABLES_WITH_SIZE"),
+            ("rowCount", "ALL_TABLES"),
         ],
     )
-    def test_row_count_valid(self, value):
-        probes = {**_MINIMAL_PROBES, "rowCount": value}
+    def test_query_style_probes_never_reach_sql_queries(self, key, value):
+        """These closed vocabularies describe what the probe observed. They are NOT SQL, and
+        sql.queries only accepts SQL — so no probed style may be emitted as a slot value."""
+        probes = {**_MINIMAL_PROBES, key: value}
         parsed = self._parse(probes=probes)
-        assert parsed["sql"]["queries"]["rowCount"] in VALID_ROW_COUNT
+        assert parsed["sql"]["queries"] == {}
 
-    # -- sql.queries.freshness.style --
-
-    @pytest.mark.parametrize(
-        "value",
-        [
-            "STANDARD",
-            "DATEADD_DATEDIFF",
-            "NUMTODSINTERVAL",
-            "TIMESTAMP_ADD",
-            "TIMESTAMPDIFF_DB2",
-        ],
-    )
-    def test_date_arithmetic_style_valid(self, value):
-        probes = {**_MINIMAL_PROBES, "dateArithmeticStyle": value}
-        parsed = self._parse(probes=probes)
-        if "freshness" in parsed["sql"]["queries"]:
-            assert (
-                parsed["sql"]["queries"]["freshness"]["style"]
-                in VALID_DATE_ARITHMETIC_STYLE
+    def test_spark_builtin_dialects_have_no_object_suffix(self):
+        """Spark's built-in dialects are case CLASSES. `PostgresDialect$` resolves to the
+        companion object (a scala.runtime.AbstractFunction0), which does not extend
+        JdbcDialect — CatalogValidation.dialectClassErrors then rejects the whole catalog
+        with "class does not extend org.apache.spark.sql.jdbc.JdbcDialect". Qualytics' own
+        dialects are Scala objects and DO need the '$'; the conventions are not the same."""
+        for prefix, fqcn in _SPARK_BUILTIN_DIALECTS.items():
+            assert fqcn.startswith("org.apache.spark.sql.jdbc."), (prefix, fqcn)
+            assert not fqcn.endswith("$"), (
+                f"{prefix} -> {fqcn}: Spark built-in dialects are classes, drop the '$'"
             )
+
+    def test_schema_only_and_row_count_vocabularies_still_documented(self):
+        """The vocabularies remain the probe's contract even though they are no longer
+        emitted, so keep them pinned against the probe's own outputs."""
+        assert "CTE" in VALID_SCHEMA_ONLY
+        assert "COUNT_STAR" in VALID_ROW_COUNT
 
     # -- exhaustive: every probe output → valid enum --
 
@@ -827,7 +884,6 @@ class TestEnumValuesMatchDataplane:
             "tableSampleTemplate": "TABLESAMPLE BERNOULLI ({pct})",
             "schemaOnly": "SQLSERVER_TOP0",
             "rowCount": "ALL_TABLES",
-            "dateArithmeticStyle": "DATEADD_DATEDIFF",
         }
         parsed = self._parse(probes=probes)
         config = parsed["config"]
@@ -844,6 +900,4 @@ class TestEnumValuesMatchDataplane:
         for cl in sql["clauses"]:
             assert cl in VALID_SQL_CLAUSES, f"sql.clauses: {cl} not valid"
 
-        assert sql["queries"]["schemaOnly"] in VALID_SCHEMA_ONLY
-        assert sql["queries"]["rowCount"] in VALID_ROW_COUNT
-        assert sql["queries"]["freshness"]["style"] in VALID_DATE_ARITHMETIC_STYLE
+        assert sql["queries"] == {}
