@@ -283,6 +283,68 @@ class TestRuleMapping:
             assert mapping.tier in (TIER_DIRECT, TIER_NORMALIZE, TIER_MANUAL), key
 
 
+class TestRelationshipsWhere:
+    """dbt_utils.relationships_where → existsIn with both sides scoped."""
+
+    def _manifest(self, kwargs=None, config=None):
+        orders = f"model.{PKG}.stg_orders"
+        customers = f"model.{PKG}.stg_customers"
+        uid, node = _generic_test(
+            orders,
+            "stg_orders",
+            "relationships_where",
+            namespace="dbt_utils",
+            column="customer_id",
+            kwargs={
+                "to": "ref('stg_customers')",
+                "field": "customer_id",
+                **(kwargs or {}),
+            },
+            extra_deps=[customers],
+        )
+        if config:
+            node["config"] = config
+        return {
+            "nodes": {
+                orders: _model("stg_orders"),
+                customers: _model("stg_customers"),
+                uid: node,
+            }
+        }
+
+    def test_maps_to_exists_in_as_normalize(self):
+        c = convert_manifest(self._manifest())[0]
+        assert c.check["rule_type"] == "existsIn"
+        assert c.tier == TIER_NORMALIZE
+        assert c.check["properties"]["field_name"] == "customer_id"
+        assert c.check["properties"]["ref_container_name"] == "stg_customers"
+
+    def test_to_condition_becomes_ref_filter(self):
+        m = self._manifest({"to_condition": "status = 'active'"})
+        c = convert_manifest(m)[0]
+        assert c.check["properties"]["ref_filter"] == "status = 'active'"
+
+    def test_from_condition_becomes_check_filter(self):
+        m = self._manifest({"from_condition": "customer_id is not null"})
+        c = convert_manifest(m)[0]
+        assert c.check["filter"] == "customer_id is not null"
+
+    def test_noop_default_conditions_are_dropped(self):
+        """dbt-utils defaults both conditions to the literal 1=1."""
+        m = self._manifest({"from_condition": "1=1", "to_condition": "1=1"})
+        c = convert_manifest(m)[0]
+        assert c.check["filter"] is None
+        assert "ref_filter" not in c.check["properties"]
+
+    def test_from_condition_composes_with_where(self):
+        m = self._manifest(
+            {"from_condition": "amount > 0"},
+            config={"where": "status != 'deleted'"},
+        )
+        c = convert_manifest(m)[0]
+        assert c.check["filter"] == "(status != 'deleted') AND (amount > 0)"
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 2b. Split mappings — one dbt test asserting two things
 # ══════════════════════════════════════════════════════════════════════════
