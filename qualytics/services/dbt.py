@@ -145,6 +145,32 @@ def _p_exists_in(kw: dict) -> dict:
     return {"field_name": field} if field else {}
 
 
+def _condition(value: Any) -> str | None:
+    """A dbt-utils condition kwarg, with the package's no-op default dropped.
+
+    dbt-utils defaults ``from_condition`` and ``to_condition`` to ``1=1``, so a
+    manifest carries the literal even when the project never set one. Emitting
+    it would put a meaningless predicate on every converted check.
+    """
+    cond = str(value or "").strip()
+    return None if not cond or cond == "1=1" else cond
+
+
+def _p_relationships_where(kw: dict) -> dict:
+    """relationships_where is existsIn with row scopes on both sides.
+
+    ``to_condition`` filters the referenced table, which existsIn expresses as
+    ``ref_filter``. ``from_condition`` scopes the child rows and becomes the
+    check's own filter; that lands in ``_convert_generic`` because filter is a
+    check field, not a rule property.
+    """
+    props = _p_exists_in(kw)
+    to_cond = _condition(kw.get("to_condition"))
+    if to_cond:
+        props["ref_filter"] = to_cond
+    return props
+
+
 def _p_expected_schema(kw: dict) -> dict:
     """`expect_column_to_exist` asserts one column is present, others allowed."""
     column = kw.get("column_name")
@@ -328,6 +354,12 @@ DBT_RULE_MAP: dict[str, Mapping] = {
         TIER_NORMALIZE,
         _p_expression,
         note="verify expression is valid Spark SQL",
+    ),
+    "dbt_utils.relationships_where": Mapping(
+        "existsIn",
+        TIER_NORMALIZE,
+        _p_relationships_where,
+        note="verify from/to conditions are valid Spark SQL",
     ),
     "dbt_utils.not_constant": Mapping("distinctCount", TIER_DIRECT, _p_not_constant),
     "dbt_utils.cardinality_equality": Mapping(
@@ -860,6 +892,15 @@ def _convert_generic(
     # Container-level rules take no fields; _build_check enforces that from the
     # rule contract rather than a second list kept in sync here.
 
+    # relationships_where scopes the child side with from_condition. It is a
+    # row predicate like config.where, so it belongs in the check's filter;
+    # when both are present they compose with AND.
+    check_filter = row_filter(node)
+    if key == "dbt_utils.relationships_where":
+        cond = _condition(kwargs.get("from_condition"))
+        if cond:
+            check_filter = f"({check_filter}) AND ({cond})" if check_filter else cond
+
     description = f"[dbt] {key}"
     if mapping.note:
         description += f" — {mapping.note}"
@@ -878,7 +919,7 @@ def _convert_generic(
                 tags=tags,
                 extra_metadata=dbt_metadata(node, key, kwargs),
                 include_status=include_status,
-                check_filter=row_filter(node),
+                check_filter=check_filter,
             ),
             mapping.tier,
             key,
