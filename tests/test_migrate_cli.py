@@ -138,3 +138,231 @@ class TestMigratePlan:
         )
         assert result.exit_code == 1
         assert "must be Active or Draft" in result.output
+
+
+# ── apply ─────────────────────────────────────────────────────────────────
+
+ROUTED_SHEET = (
+    "check_id,kind,rule_type,container,fields,value,datastore,query\n"
+    "550,,freshness,orders,,36h,,\n"
+    "551,,freshness,invoices,,1d,5,\n"
+    "770,computed_table,,recon,,,,SELECT 1\n"
+)
+
+
+class _ApplyHarness:
+    """Patches every seam migrate apply touches; records what flowed through."""
+
+    def __init__(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import qualytics.api.client as client_module
+        import qualytics.cli.import_flow as import_flow
+        import qualytics.services.containers as containers_service
+        import qualytics.services.migrate as migrate_service
+
+        self.ensure_calls = []
+        self.import_calls = []
+
+        monkeypatch.setattr(client_module, "get_client", lambda: MagicMock())
+        monkeypatch.setattr(
+            containers_service,
+            "get_table_ids",
+            lambda client, datastore_id: {"orders": 1, "invoices": 2, "recon": 3},
+        )
+
+        def _ensure(client, specs, ds_id, **kw):
+            self.ensure_calls.append(
+                {"datastore": ds_id, "names": [s.name for s in specs], **kw}
+            )
+            return {
+                "created": len(specs),
+                "updated": 0,
+                "skipped": 0,
+                "failed": self.fail_containers_for == ds_id and 1 or 0,
+                "errors": ["boom"] if self.fail_containers_for == ds_id else [],
+                "name_to_id": {},
+            }
+
+        self.fail_containers_for = None
+        monkeypatch.setattr(migrate_service, "ensure_containers", _ensure)
+
+        def _import(client, checks_by_datastore, **kw):
+            self.import_calls.append({"checks": checks_by_datastore, **kw})
+            return {
+                "total_failed": 0,
+                "results": {ds: {} for ds in checks_by_datastore},
+            }
+
+        monkeypatch.setattr(import_flow, "run_check_import", _import)
+
+
+class TestMigrateApply:
+    def test_routes_rows_by_datastore_override(self, cli_runner, tmp_path, monkeypatch):
+        harness = _ApplyHarness(monkeypatch)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        assert harness.ensure_calls[0]["datastore"] == 7
+        assert harness.ensure_calls[0]["names"] == ["recon"]
+
+        (import_call,) = harness.import_calls
+        checks = import_call["checks"]
+        assert set(checks) == {7, 5}
+        assert [c["additional_metadata"]["legacy_check_id"] for c in checks[7]] == [
+            "550"
+        ]
+        assert [c["additional_metadata"]["legacy_check_id"] for c in checks[5]] == [
+            "551"
+        ]
+        assert checks[7][0]["_source_file"] == "row 2 (550)"
+        assert checks[7][0]["status"] == "Draft"
+
+    def test_dry_run_flows_through(self, cli_runner, tmp_path, monkeypatch):
+        harness = _ApplyHarness(monkeypatch)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert harness.ensure_calls[0]["dry_run"] is True
+        assert harness.import_calls[0]["dry_run"] is True
+        assert "DRY RUN" in result.output
+
+    def test_preserve_status_drops_status_key(self, cli_runner, tmp_path, monkeypatch):
+        harness = _ApplyHarness(monkeypatch)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--preserve-status",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        checks = harness.import_calls[0]["checks"]
+        assert all("status" not in c for group in checks.values() for c in group)
+
+    def test_container_failure_blocks_check_phase(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        harness = _ApplyHarness(monkeypatch)
+        harness.fail_containers_for = 7
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "skipping the check phase for datastore 7" in result.output
+        checks = harness.import_calls[0]["checks"]
+        assert set(checks) == {5}
+
+    def test_skip_containers_flag(self, cli_runner, tmp_path, monkeypatch):
+        harness = _ApplyHarness(monkeypatch)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--skip-containers",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert not harness.ensure_calls
+        assert harness.import_calls
+
+    def test_requires_datastore_when_rows_lack_override(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        _ApplyHarness(monkeypatch)
+        result = cli_runner.invoke(
+            app, ["migrate", "apply", "--sheet", _write(tmp_path, ROUTED_SHEET)]
+        )
+        assert result.exit_code == 1
+        assert "--datastore-id is required" in result.output
+
+    def test_strict_fails_on_sheet_errors(self, cli_runner, tmp_path, monkeypatch):
+        _ApplyHarness(monkeypatch)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, BAD_SHEET),
+                "--datastore-id",
+                "7",
+                "--strict",
+            ],
+        )
+        assert result.exit_code == 1
+
+    def test_invalid_on_existing(self, cli_runner, tmp_path, monkeypatch):
+        _ApplyHarness(monkeypatch)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--on-existing",
+                "replace",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "--on-existing must be skip or update" in result.output
+
+    def test_container_name_case_repair(self, cli_runner, tmp_path, monkeypatch):
+        harness = _ApplyHarness(monkeypatch)
+        sheet = "check_id,rule_type,container,fields\n100,notNull,ORDERS,order_id\n"
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "7",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Corrected 1 container name(s)" in result.output
+        checks = harness.import_calls[0]["checks"]
+        assert checks[7][0]["container"] == "orders"

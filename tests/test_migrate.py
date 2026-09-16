@@ -757,3 +757,301 @@ class TestSummary:
     def test_severity_constants(self):
         assert SEVERITY_ERROR == "error"
         assert SEVERITY_WARNING == "warning"
+
+
+# ── Container phase (client-bound, mocked API) ────────────────────────────
+
+
+class TestRepairContainerNames:
+    def test_fixes_casing_in_place(self):
+        from qualytics.services.migrate import repair_container_names
+
+        checks = [{"container": "orders"}, {"container": "CUSTOMERS"}]
+        corrections = repair_container_names(checks, ["ORDERS", "customers"])
+        assert checks[0]["container"] == "ORDERS"
+        assert checks[1]["container"] == "customers"
+        assert corrections == ["orders → ORDERS", "CUSTOMERS → customers"]
+
+    def test_exact_and_unknown_names_untouched(self):
+        from qualytics.services.migrate import repair_container_names
+
+        checks = [{"container": "orders"}, {"container": "mystery"}]
+        corrections = repair_container_names(checks, ["orders"])
+        assert not corrections
+        assert checks[1]["container"] == "mystery"
+
+    def test_ambiguous_casing_left_alone(self):
+        from qualytics.services.migrate import repair_container_names
+
+        checks = [{"container": "orders"}]
+        corrections = repair_container_names(checks, ["ORDERS", "Orders"])
+        assert not corrections
+        assert checks[0]["container"] == "orders"
+
+
+def _spec(kind="computed_table", name="calc", check_id="ct1", row=2, **extra):
+    from qualytics.services.migrate import ContainerSpec
+
+    spec = {"container_type": kind, "name": name, "query": "SELECT 1"}
+    spec.update(extra)
+    return ContainerSpec(kind, name, row, check_id, None, spec)
+
+
+class TestEnsureContainers:
+    def _patches(self, monkeypatch, listing=None):
+        import qualytics.api.containers as api
+
+        calls = {"validate": [], "create": [], "update": [], "get": []}
+        monkeypatch.setattr(
+            api, "list_containers_listing", lambda client, ds: listing or []
+        )
+        monkeypatch.setattr(
+            api,
+            "validate_container",
+            lambda client, payload, **kw: calls["validate"].append(payload),
+        )
+
+        def _create(client, payload):
+            calls["create"].append(payload)
+            return {"id": 100 + len(calls["create"]), "name": payload["name"]}
+
+        monkeypatch.setattr(api, "create_container", _create)
+        monkeypatch.setattr(
+            api,
+            "update_container",
+            lambda client, cid, payload, **kw: calls["update"].append((cid, payload)),
+        )
+        monkeypatch.setattr(
+            api,
+            "get_container",
+            lambda client, cid: {"id": cid, "query": "SELECT existing"},
+        )
+        return calls
+
+    def _no_wait(self, monkeypatch):
+        import qualytics.services.migrate as migrate
+
+        waited = []
+
+        def _wait(client, container_id, datastore_id, **kw):
+            waited.append(container_id)
+            return True, "profiled"
+
+        monkeypatch.setattr(migrate, "wait_for_container_profile", _wait)
+        return waited
+
+    def test_validate_all_then_create_in_order(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(monkeypatch)
+        waited = self._no_wait(monkeypatch)
+        specs = [
+            _spec(name="base"),
+            _spec(
+                kind="computed_join",
+                name="joined",
+                check_id="cj1",
+                row=3,
+                sources=[
+                    {"container": "base", "alias": "b"},
+                    {"container": "other", "alias": "o"},
+                ],
+            ),
+        ]
+        # "other" pre-exists; "base" is created by this run.
+        calls_listing = [{"id": 7, "name": "other", "container_type": "table"}]
+        import qualytics.api.containers as api
+
+        monkeypatch.setattr(
+            api, "list_containers_listing", lambda client, ds: calls_listing
+        )
+
+        result = ensure_containers(object(), specs, 42)
+
+        assert result["created"] == 2
+        assert result["failed"] == 0
+        assert [p["name"] for p in calls["create"]] == ["base", "joined"]
+        join_payload = calls["create"][1]
+        assert join_payload["sources"] == [
+            {"container_id": 101, "alias": "b"},
+            {"container_id": 7, "alias": "o"},
+        ]
+        assert join_payload["datastore_id"] == 42
+        assert waited == [101, 102]
+
+    def test_validation_failure_aborts_before_create(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(monkeypatch)
+        self._no_wait(monkeypatch)
+        import qualytics.api.containers as api
+
+        def _boom(client, payload, **kw):
+            raise RuntimeError("bad SQL")
+
+        monkeypatch.setattr(api, "validate_container", _boom)
+
+        result = ensure_containers(object(), [_spec()], 42)
+        assert result["failed"] == 1
+        assert "validation failed" in result["errors"][0]
+        assert not calls["create"]
+
+    def test_existing_skip_reports_drift(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[{"id": 9, "name": "calc", "container_type": "computed_table"}],
+        )
+        self._no_wait(monkeypatch)
+        messages = []
+
+        result = ensure_containers(object(), [_spec()], 42, report=messages.append)
+        assert result["skipped"] == 1
+        assert not calls["create"] and not calls["update"]
+        assert any("query differs" in m for m in messages)
+
+    def test_existing_update_puts_new_definition(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[{"id": 9, "name": "calc", "container_type": "computed_table"}],
+        )
+        waited = self._no_wait(monkeypatch)
+
+        result = ensure_containers(object(), [_spec()], 42, on_existing="update")
+        assert result["updated"] == 1
+        assert calls["update"][0][0] == 9
+        assert waited == [9]
+
+    def test_existing_type_mismatch_fails(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        self._patches(
+            monkeypatch, listing=[{"id": 9, "name": "calc", "container_type": "view"}]
+        )
+        self._no_wait(monkeypatch)
+        result = ensure_containers(object(), [_spec()], 42, on_existing="update")
+        assert result["failed"] == 1
+        assert "not a computed_table" in result["errors"][0]
+
+    def test_dry_run_makes_no_writes(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[{"id": 9, "name": "calc", "container_type": "computed_table"}],
+        )
+        result = ensure_containers(
+            object(), [_spec(), _spec(name="fresh", check_id="ct2")], 42, dry_run=True
+        )
+        assert result["skipped"] == 1
+        assert result["created"] == 1
+        assert not calls["validate"] and not calls["create"] and not calls["update"]
+
+    def test_unknown_join_source_fails(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(monkeypatch)
+        self._no_wait(monkeypatch)
+        specs = [
+            _spec(
+                kind="computed_join",
+                name="j",
+                sources=[
+                    {"container": "ghost", "alias": "g"},
+                    {"container": "phantom", "alias": "p"},
+                ],
+            )
+        ]
+        result = ensure_containers(object(), specs, 42)
+        assert result["failed"] == 1
+        assert "not found in datastore 42: ghost, phantom" in result["errors"][0]
+        assert not calls["create"]
+
+    def test_profile_failure_stops_the_phase(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+        import qualytics.services.migrate as migrate
+
+        calls = self._patches(monkeypatch)
+        monkeypatch.setattr(
+            migrate,
+            "wait_for_container_profile",
+            lambda *a, **kw: (False, "timed out after 1s"),
+        )
+        specs = [_spec(name="one"), _spec(name="two", check_id="ct2", row=3)]
+        result = ensure_containers(object(), specs, 42)
+        assert result["failed"] == 1
+        assert len(calls["create"]) == 1  # second create never attempted
+
+
+class TestWaitForContainerProfile:
+    def _api(self, monkeypatch, operations, operation, profiles):
+        import qualytics.api.containers as containers_api
+        import qualytics.api.operations as operations_api
+
+        monkeypatch.setattr(
+            operations_api, "list_operations", lambda client, **kw: operations
+        )
+        monkeypatch.setattr(
+            operations_api, "get_operation", lambda client, oid: operation
+        )
+        monkeypatch.setattr(
+            containers_api, "get_field_profiles", lambda client, cid: profiles
+        )
+
+    def test_success(self, monkeypatch):
+        from qualytics.services.migrate import wait_for_container_profile
+
+        self._api(
+            monkeypatch,
+            {"items": [{"id": 55}]},
+            {"id": 55, "end_time": "t", "result": "success"},
+            {"items": [{"field": "a"}]},
+        )
+        ok, detail = wait_for_container_profile(
+            object(), 9, 42, timeout=5, sleep=lambda s: None
+        )
+        assert ok
+        assert "operation 55" in detail
+
+    def test_failed_operation(self, monkeypatch):
+        from qualytics.services.migrate import wait_for_container_profile
+
+        self._api(
+            monkeypatch,
+            {"items": [{"id": 55}]},
+            {"id": 55, "end_time": "t", "result": "failure"},
+            {"items": []},
+        )
+        ok, detail = wait_for_container_profile(
+            object(), 9, 42, timeout=5, sleep=lambda s: None
+        )
+        assert not ok
+        assert "result 'failure'" in detail
+
+    def test_success_without_field_profiles(self, monkeypatch):
+        from qualytics.services.migrate import wait_for_container_profile
+
+        self._api(
+            monkeypatch,
+            {"items": [{"id": 55}]},
+            {"id": 55, "end_time": "t", "result": "success"},
+            {"items": []},
+        )
+        ok, detail = wait_for_container_profile(
+            object(), 9, 42, timeout=5, sleep=lambda s: None
+        )
+        assert not ok
+        assert "no field profiles" in detail
+
+    def test_timeout_when_no_operation_appears(self, monkeypatch):
+        from qualytics.services.migrate import wait_for_container_profile
+
+        self._api(monkeypatch, {"items": []}, {}, {})
+        ok, detail = wait_for_container_profile(
+            object(), 9, 42, timeout=0, sleep=lambda s: None
+        )
+        assert not ok
+        assert "timed out" in detail

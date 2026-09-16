@@ -23,6 +23,7 @@ def list_operations(
     client: QualyticsClient,
     *,
     datastore: list[int] | None = None,
+    container: list[int] | None = None,
     operation_type: str | None = None,
     result: list[str] | None = None,
     finished: bool | None = None,
@@ -39,6 +40,8 @@ def list_operations(
     params: dict = {"page": page, "size": size}
     if datastore is not None:
         params["datastore"] = datastore
+    if container is not None:
+        params["container"] = container
     if operation_type:
         params["operation_type"] = operation_type
     if result is not None:

@@ -7,7 +7,10 @@ into portable check dicts in the same shape as ``strip_for_export`` — ready fo
 ``import_checks_to_datastore`` — plus computed-container specs for the
 container phase of ``migrate apply``.
 
-Pure logic: no API client, no auth, no network.
+Conversion and reporting are pure logic — no API client, no auth, no network.
+The container phase at the bottom of the module (``ensure_containers``,
+``wait_for_container_profile``) is the client-bound half used by
+``migrate apply``.
 
 Design invariants (shared with ``services.dbt``):
 
@@ -928,3 +931,310 @@ def summarize_sheet(plan: SheetPlan) -> dict:
 def to_checks(plan: SheetPlan) -> list[dict]:
     """Strip provenance wrappers, yielding dicts for import_checks_to_datastore."""
     return [item.check for item in plan.checks]
+
+
+# ── Container-name repair (pure) ──────────────────────────────────────────
+
+
+def repair_container_names(
+    checks: list[dict], catalogued_names: list[str]
+) -> list[str]:
+    """Fix check container-name casing against the catalogued names, in place.
+
+    The importer matches containers by exact name; a sheet that says ``orders``
+    against a warehouse that catalogued ``ORDERS`` would fail every row. As
+    with field names, the catalogue is ground truth, so casing is corrected
+    rather than flagged. A name with no case-insensitive match (or an
+    ambiguous one) is left for the importer to report.
+
+    Returns human-readable corrections.
+    """
+    by_lower: dict[str, str | None] = {}
+    for name in catalogued_names:
+        key = name.lower()
+        # Two catalogued names differing only by case: ambiguous, don't touch.
+        by_lower[key] = None if key in by_lower else name
+
+    corrections: list[str] = []
+    for check in checks:
+        container = check.get("container") or ""
+        if not container or container in catalogued_names:
+            continue
+        actual = by_lower.get(container.lower())
+        if actual and actual != container:
+            corrections.append(f"{container} → {actual}")
+            check["container"] = actual
+    return corrections
+
+
+# ── Container phase (client-bound) ────────────────────────────────────────
+# Everything above is pure conversion; from here down talks to the target
+# instance. `migrate apply` ensures the sheet's computed containers exist and
+# are profiled before any check that targets them is imported.
+
+
+def _container_payload(
+    spec: ContainerSpec, datastore_id: int, name_to_id: dict[str, int]
+) -> tuple[dict | None, str | None]:
+    """API payload for one spec, with join sources resolved to container IDs."""
+    payload = {key: value for key, value in spec.spec.items() if key != "sources"}
+    payload["datastore_id"] = datastore_id
+    if spec.kind == KIND_COMPUTED_JOIN:
+        sources = []
+        for source in spec.spec.get("sources") or []:
+            container_id = name_to_id.get(source["container"])
+            if container_id is None:
+                return None, (
+                    f"source container '{source['container']}' not found in "
+                    f"datastore {datastore_id}"
+                )
+            entry = {"container_id": container_id, "alias": source["alias"]}
+            if source.get("where_clause"):
+                entry["where_clause"] = source["where_clause"]
+            sources.append(entry)
+        payload["sources"] = sources
+    return payload, None
+
+
+def wait_for_container_profile(
+    client,
+    container_id: int,
+    datastore_id: int,
+    *,
+    timeout: int = 900,
+    poll_interval: int = 10,
+    sleep=None,
+) -> tuple[bool, str]:
+    """Wait for THIS container's auto-triggered profile to finish.
+
+    Creating a computed container kicks off an async profile; checks that name
+    the container's fields only work once it completes. The operation is found
+    by filtering on the container id — never "the newest profile in the
+    datastore", which races against concurrent operations.
+    """
+    import time as _time
+
+    from ..api.containers import get_field_profiles
+    from ..api.operations import get_operation, list_operations
+
+    sleep = sleep or _time.sleep
+    deadline = _time.monotonic() + timeout
+    operation_id: int | None = None
+
+    while _time.monotonic() < deadline:
+        if operation_id is None:
+            listing = list_operations(
+                client,
+                datastore=[datastore_id],
+                container=[container_id],
+                operation_type="profile",
+                sort_created="desc",
+                size=1,
+            )
+            items = listing.get("items") or []
+            if items:
+                operation_id = items[0]["id"]
+            else:
+                sleep(poll_interval)
+                continue
+
+        operation = get_operation(client, operation_id)
+        if operation.get("end_time"):
+            result = str(operation.get("result") or "").lower()
+            if result != "success":
+                return False, (
+                    f"profile operation {operation_id} finished with "
+                    f"result '{operation.get('result')}'"
+                )
+            try:
+                profiles = get_field_profiles(client, container_id)
+            except Exception as e:  # noqa: BLE001 - verification, not control flow
+                return True, f"profiled (field-profile readback failed: {e})"
+            items = (
+                profiles.get("items") if isinstance(profiles, dict) else profiles
+            ) or []
+            if not items:
+                return False, (
+                    f"profile operation {operation_id} succeeded but the "
+                    "container has no field profiles"
+                )
+            return True, f"profiled by operation {operation_id}"
+        sleep(poll_interval)
+
+    return False, f"timed out after {timeout}s waiting for the profile"
+
+
+def ensure_containers(
+    client,
+    specs: list[ContainerSpec],
+    datastore_id: int,
+    *,
+    on_existing: str = "skip",
+    wait_profile: bool = True,
+    profile_timeout: int = 900,
+    poll_interval: int = 10,
+    dry_run: bool = False,
+    report=None,
+) -> dict:
+    """Ensure the sheet's computed containers exist in a datastore.
+
+    Validates every spec first (``POST containers/validate``) and aborts the
+    phase on any failure — half a dependency graph is worse than none. Then
+    creates in declaration order, waiting for each container's own profile
+    operation before moving on, so dependent joins and checks always see a
+    profiled container.
+
+    ``on_existing='skip'`` leaves an existing same-name container untouched
+    (reporting query drift when visible); ``'update'`` PUTs the new definition.
+
+    Returns {created, updated, skipped, failed, errors, name_to_id}.
+    """
+    from ..api.containers import (
+        create_container,
+        get_container,
+        list_containers_listing,
+        update_container,
+        validate_container,
+    )
+
+    report = report or (lambda message: None)
+    result = {
+        "created": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "errors": [],
+        "name_to_id": {},
+    }
+
+    listing = list_containers_listing(client, datastore_id)
+    name_to_id: dict[str, int] = {item["name"]: item["id"] for item in listing}
+    existing_types = {item["name"]: item.get("container_type") for item in listing}
+    result["name_to_id"] = name_to_id
+
+    def fail(spec: ContainerSpec, reason: str) -> None:
+        result["failed"] += 1
+        result["errors"].append(f"{spec.kind} '{spec.name}': {reason}")
+
+    # First pass: decide what each spec needs. A join may read a container this
+    # run creates on an earlier row (guaranteed earlier by convert_sheet), so
+    # its payload build and validation are deferred to its turn in the create
+    # loop; a source that is neither catalogued nor in-file is an error now.
+    in_file = {spec.name for spec in specs}
+    todo: list[tuple[ContainerSpec, dict | None, bool]] = []
+    for spec in specs:
+        existing_id = name_to_id.get(spec.name)
+        if existing_id is not None and on_existing == "skip":
+            todo.append((spec, None, False))  # decided later, needs no payload
+            continue
+        if spec.kind == KIND_COMPUTED_JOIN:
+            sources = [s["container"] for s in spec.spec.get("sources") or []]
+            unknown = [s for s in sources if s not in name_to_id and s not in in_file]
+            if unknown:
+                fail(
+                    spec,
+                    f"source container(s) not found in datastore "
+                    f"{datastore_id}: {', '.join(unknown)}",
+                )
+                continue
+            if any(s not in name_to_id for s in sources):
+                todo.append((spec, None, True))  # build + validate just-in-time
+                continue
+        payload, error = _container_payload(spec, datastore_id, name_to_id)
+        if error:
+            fail(spec, error)
+            continue
+        todo.append((spec, payload, False))
+    if result["failed"]:
+        return result
+
+    if dry_run:
+        for spec, _payload, _deferred in todo:
+            if spec.name not in name_to_id:
+                report(f"[dry-run] would create {spec.kind} '{spec.name}'")
+                result["created"] += 1
+            elif on_existing == "skip":
+                report(f"[dry-run] would skip existing '{spec.name}'")
+                result["skipped"] += 1
+            else:
+                report(f"[dry-run] would update '{spec.name}'")
+                result["updated"] += 1
+        return result
+
+    # Validate everything buildable before creating anything — half a
+    # dependency graph is worse than none. Deferred joins validate at their
+    # turn instead.
+    for spec, payload, deferred in todo:
+        if payload is None or deferred:
+            continue
+        try:
+            validate_container(client, payload)
+        except Exception as e:  # noqa: BLE001 - collected, phase aborts below
+            fail(spec, f"validation failed: {e}")
+    if result["failed"]:
+        return result
+
+    for spec, _payload, deferred in todo:
+        existing_id = name_to_id.get(spec.name)
+
+        if existing_id is not None and on_existing == "skip":
+            drift = ""
+            try:
+                existing = get_container(client, existing_id)
+                if (
+                    existing.get("query")
+                    and spec.spec.get("query")
+                    and existing["query"].strip() != spec.spec["query"].strip()
+                ):
+                    drift = " (query differs from the sheet — --on-existing update)"
+            except Exception:  # noqa: BLE001 - drift detection is best-effort
+                pass
+            report(f"skipped existing '{spec.name}'{drift}")
+            result["skipped"] += 1
+            continue
+
+        # Sources may have been created earlier in this loop; resolve again.
+        payload, error = _container_payload(spec, datastore_id, name_to_id)
+        if error:
+            fail(spec, error)
+            break
+
+        try:
+            if existing_id is not None:
+                if existing_types.get(spec.name) != spec.kind:
+                    fail(
+                        spec,
+                        f"existing container is a "
+                        f"{existing_types.get(spec.name)}, not a {spec.kind}",
+                    )
+                    break
+                update_container(client, existing_id, payload)
+                container_id = existing_id
+                result["updated"] += 1
+                report(f"updated {spec.kind} '{spec.name}' (id {container_id})")
+            else:
+                if deferred:
+                    validate_container(client, payload)
+                created = create_container(client, payload)
+                container_id = created["id"]
+                name_to_id[spec.name] = container_id
+                result["created"] += 1
+                report(f"created {spec.kind} '{spec.name}' (id {container_id})")
+        except Exception as e:  # noqa: BLE001 - reported, phase aborts
+            fail(spec, str(e))
+            break
+
+        if wait_profile:
+            ok, detail = wait_for_container_profile(
+                client,
+                container_id,
+                datastore_id,
+                timeout=profile_timeout,
+                poll_interval=poll_interval,
+            )
+            report(f"'{spec.name}': {detail}")
+            if not ok:
+                fail(spec, detail)
+                break
+
+    return result

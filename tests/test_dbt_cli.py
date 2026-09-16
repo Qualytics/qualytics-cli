@@ -135,7 +135,8 @@ class TestDbtImport:
         with (
             patch("qualytics.cli.dbt.get_client", return_value=MagicMock()),
             patch(
-                "qualytics.cli.dbt.import_checks_to_datastore", return_value=payload
+                "qualytics.cli.import_flow.import_checks_to_datastore",
+                return_value=payload,
             ) as importer,
         ):
             res = cli_runner.invoke(
@@ -284,7 +285,7 @@ class TestDbtImport:
         with (
             patch("qualytics.cli.dbt.get_client", return_value=MagicMock()),
             patch(
-                "qualytics.cli.dbt.import_checks_to_datastore",
+                "qualytics.cli.import_flow.import_checks_to_datastore",
                 return_value={"created": 2, "updated": 0, "failed": 0, "errors": []},
             ) as importer,
         ):
@@ -357,10 +358,16 @@ class TestFieldValidation:
         """Run import with a stubbed field catalogue for container stg_orders."""
         with (
             patch("qualytics.cli.dbt.get_client", return_value=MagicMock()),
-            patch("qualytics.cli.dbt.get_table_ids", return_value={"stg_orders": 7}),
-            patch("qualytics.cli.dbt.container_field_names", return_value=catalogue),
             patch(
-                "qualytics.cli.dbt.import_checks_to_datastore",
+                "qualytics.cli.import_flow.get_table_ids",
+                return_value={"stg_orders": 7},
+            ),
+            patch(
+                "qualytics.cli.import_flow.container_field_names",
+                return_value=catalogue,
+            ),
+            patch(
+                "qualytics.cli.import_flow.import_checks_to_datastore",
                 return_value={"created": 1, "updated": 0, "failed": 0, "errors": []},
             ) as importer,
         ):
@@ -405,9 +412,9 @@ class TestFieldValidation:
     def test_no_validate_fields_skips_lookup_entirely(self, cli_runner, manifest_file):
         with (
             patch("qualytics.cli.dbt.get_client", return_value=MagicMock()),
-            patch("qualytics.cli.dbt.get_table_ids") as table_ids,
+            patch("qualytics.cli.import_flow.get_table_ids") as table_ids,
             patch(
-                "qualytics.cli.dbt.import_checks_to_datastore",
+                "qualytics.cli.import_flow.import_checks_to_datastore",
                 return_value={"created": 2, "updated": 0, "failed": 0, "errors": []},
             ) as importer,
         ):
@@ -480,7 +487,7 @@ class TestEmitYamlContainment:
         with (
             patch("qualytics.cli.dbt.get_client", return_value=MagicMock()),
             patch(
-                "qualytics.cli.dbt.import_checks_to_datastore",
+                "qualytics.cli.import_flow.import_checks_to_datastore",
                 return_value={"created": 1, "updated": 0, "failed": 0, "errors": []},
             ),
         ):

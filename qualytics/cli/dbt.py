@@ -12,20 +12,16 @@ from rich.console import Console
 from rich.table import Table
 
 from ..api.client import get_client
-from ..api.fields import container_field_names
-from ..services.containers import get_table_ids
 from ..services.dbt import (
     TIER_DIRECT,
     TIER_MANUAL,
     TIER_NORMALIZE,
     convert_manifest,
-    resolve_check_fields,
     summarize,
     to_checks,
 )
-from ..services.quality_checks import import_checks_to_datastore
-from ..utils.failure_log import failure_entry, write_failures_log
 from . import add_suggestion_callback
+from .import_flow import run_check_import
 
 dbt_app = typer.Typer(name="dbt", help="Migrate dbt tests to Qualytics quality checks")
 add_suggestion_callback(dbt_app, "dbt")
@@ -230,32 +226,6 @@ def _print_summary(
     return stats
 
 
-def _field_catalogue(
-    client, datastore_id: int, containers: set[str]
-) -> dict[str, list[str]]:
-    """Catalogued field names for the containers these checks target.
-
-    Only the containers actually referenced are fetched. A container the
-    importer will reject anyway, or one whose fields cannot be read, is simply
-    left out — validation then passes those checks through rather than blocking
-    the import on a lookup problem.
-    """
-    table_ids = get_table_ids(client=client, datastore_id=datastore_id)
-    if not table_ids:
-        return {}
-
-    catalogue: dict[str, list[str]] = {}
-    for name in sorted(containers):
-        container_id = table_ids.get(name)
-        if container_id is None:
-            continue
-        try:
-            catalogue[name] = container_field_names(client, container_id)
-        except Exception as e:  # noqa: BLE001 - lookup failure must not block import
-            print(f"[dim]Could not read fields for '{name}': {e}[/dim]")
-    return catalogue
-
-
 def _safe_dir_name(name: str) -> str:
     """Reduce a manifest-derived container name to a single path segment.
 
@@ -423,85 +393,20 @@ def dbt_import(
     # the marker never lands in the written files.
     for check in checks:
         check["_source_file"] = check["additional_metadata"]["dbt_unique_id"]
-    by_source = {check["_source_file"]: check for check in checks}
 
     if dry_run:
         print("\n[bold yellow]DRY RUN — no changes will be made.[/bold yellow]")
 
-    summary_table = Table(title="Import Summary")
-    summary_table.add_column("Datastore ID", style="cyan")
-    summary_table.add_column("Created", style="green")
-    summary_table.add_column("Updated", style="yellow")
-    summary_table.add_column("Failed", style="red")
-
-    containers = {c["container"] for c in checks if c.get("container")}
-
-    total_failed = 0
-    failure_entries: list[str] = []
-    for ds_id in datastore_id:
-        # Field names are catalogued per datastore, so this resolves per target.
-        payload = checks
-        rejected: list[dict] = []
-        if validate_fields:
-            payload, rejected, corrections = resolve_check_fields(
-                checks, _field_catalogue(client, ds_id, containers)
-            )
-            if corrections:
-                print(
-                    f"[cyan]Corrected {len(corrections)} field name(s) to catalogue "
-                    f"casing: {', '.join(corrections[:5])}"
-                    f"{'…' if len(corrections) > 5 else ''}[/cyan]"
-                )
-
-        print(
-            f"\n[cyan]{'[DRY RUN] ' if dry_run else ''}Importing {len(payload)} checks "
-            f"to datastore {ds_id}...[/cyan]"
-        )
-        result = import_checks_to_datastore(client, ds_id, payload, dry_run=dry_run)
-
-        failed = result["failed"] + len(rejected)
-        summary_table.add_row(
-            str(ds_id),
-            str(result["created"]),
-            str(result["updated"]),
-            str(failed),
-        )
-        total_failed += failed
-
-        for item in rejected:
-            print(f"  [red]{item['reason']}[/red]")
-        for err in result["errors"]:
-            print(f"  [red]{err}[/red]")
-
-        # Field-validation rejections and importer failures both land in the
-        # log; the on-screen lines scroll away, the file is the record.
-        for item in rejected:
-            source = item["check"].get("_source_file", "unknown")
-            failure_entries.append(
-                failure_entry(ds_id, source, item["check"], item["reason"])
-            )
-        for failure in result.get("failures", []):
-            source = failure.get("source", "unknown")
-            failure_entries.append(
-                failure_entry(
-                    ds_id, source, by_source.get(source), failure.get("reason", "")
-                )
-            )
-
-    console.print(summary_table)
-
-    # A dry run promises no changes, so the log is only written on real runs.
-    if failure_entries and not dry_run:
-        write_failures_log(
-            failures_log,
-            "dbt import failures",
-            f"manifest: {manifest_path}",
-            failure_entries,
-        )
-        print(
-            f"\n[yellow]{len(failure_entries)} failed check(s) logged to "
-            f"{failures_log}[/yellow]"
-        )
+    outcome = run_check_import(
+        client,
+        {ds_id: checks for ds_id in datastore_id},
+        validate_fields=validate_fields,
+        dry_run=dry_run,
+        failures_log=failures_log,
+        log_title="dbt import failures",
+        log_origin=f"manifest: {manifest_path}",
+    )
+    total_failed = outcome["total_failed"]
 
     # Failures are reported, not raised — matching `checks import`, which prints
     # per-check errors and still exits 0. Keeping the two bulk importers
