@@ -26,9 +26,27 @@ instead of applying.
 ## The sheet
 
 Column headers are matched case-insensitively with spaces/punctuation
-normalized (`Check ID`, `check_id` and `CHECK-ID` are the same column). Extra
-columns are not errors — their values are preserved on each created check as
-`additional_metadata.sheet_<column>`.
+normalized (`Check ID`, `check_id` and `CHECK-ID` are the same column).
+Unrecognized columns are ignored with a single plan-time warning naming them —
+to stamp a column into `additional_metadata`, prefix its header with
+`metadata:` (see below).
+
+### Custom metadata columns
+
+A column headed `metadata:<key>` writes `<key>` into every produced check's
+(and computed container's) `additional_metadata` — the key is taken **verbatim**
+after the prefix, casing and punctuation preserved. An empty cell means the key
+does not apply to that row, so one sheet can carry `metadata:X` for one subset
+of rows and `metadata:Y` for another:
+
+```csv
+check_id,rule_type,container,fields,metadata:Business Domain,metadata:SLA Tier
+100,notNull,orders,order_id,Treasury,
+200,unique,invoices,invoice_id,,gold
+```
+
+`legacy_check_id` and `_qualytics_check_uid` are reserved (the converter sets
+them from `check_id`); a `metadata:` column naming them is a plan error.
 
 ### Identity columns (every row)
 
@@ -133,12 +151,12 @@ that uses a now-function without a visible conversion
 [docs/examples/check-sheet-example.csv](examples/check-sheet-example.csv):
 
 ```csv
-check_id,kind,rule_type,container,fields,value,min,max,expression,comparison,ref_expression,ref_container,ref_field,ref_datastore,query,sources,tags,description
-550,,freshness,STG_FUND_POSITIONS,,36h,,,,,,,,,,,UAT testing,STG_FUND_POSITIONS loaded within 36 hours
-326,,existsIn,STG_INVESTOR_POSITIONS,PORTFOLIO_ID,,,,,,,efront_portfolio_status,PORTFOLIO_ID,,,,UAT testing,Child portfolio ids exist in portfolio status
-211,,aggregationComparison,efront_entities,,,,,count(distinct FUND_FAMILY_ID),eq,count(distinct FUND_FAMILY_ID),secmaster_mappings,,warehouse,,,UAT testing,Fund family count matches SecMaster mappings
-770,computed_table,,re_fund_recon,,,,,,,,,,,"SELECT metric, delta FROM (SELECT count(*) AS row_count_delta FROM a) UNPIVOT (delta FOR metric IN (row_count_delta))",,,RE fund reconciliation metrics (one row per metric)
-771,,equalTo,re_fund_recon,delta,0,,,,,,,,,,,UAT testing,Reconciliation delta must be exactly zero
+check_id,kind,rule_type,container,fields,value,min,max,expression,comparison,ref_expression,ref_container,ref_field,ref_datastore,query,sources,tags,description,metadata:Source System
+550,,freshness,STG_FUND_POSITIONS,,36h,,,,,,,,,,,UAT testing,STG_FUND_POSITIONS loaded within 36 hours,eFront
+326,,existsIn,STG_INVESTOR_POSITIONS,PORTFOLIO_ID,,,,,,,efront_portfolio_status,PORTFOLIO_ID,,,,UAT testing,Child portfolio ids exist in portfolio status,eFront
+211,,aggregationComparison,efront_entities,,,,,count(distinct FUND_FAMILY_ID),eq,count(distinct FUND_FAMILY_ID),secmaster_mappings,,warehouse,,,UAT testing,Fund family count matches SecMaster mappings,SecMaster
+770,computed_table,,re_fund_recon,,,,,,,,,,,"SELECT metric, delta FROM (SELECT count(*) AS row_count_delta FROM a) UNPIVOT (delta FOR metric IN (row_count_delta))",,,RE fund reconciliation metrics (one row per metric),
+771,,equalTo,re_fund_recon,delta,0,,,,,,,,,,,UAT testing,Reconciliation delta must be exactly zero,Synapse
 ```
 
 Workflow:
