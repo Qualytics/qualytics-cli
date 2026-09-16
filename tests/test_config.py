@@ -3,6 +3,7 @@
 import json
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from qualytics.config import (
@@ -122,3 +123,66 @@ class TestIsTokenValid:
         )
         result = is_token_valid(token)
         assert result == token
+
+
+class TestConfigHomeOverride:
+    """Tests for the QUALYTICS_CONFIG_HOME directory override."""
+
+    def test_config_home_env_redirects_all_paths(self, monkeypatch, tmp_path):
+        import importlib
+
+        import qualytics.config as config_module
+
+        monkeypatch.setenv("QUALYTICS_CONFIG_HOME", str(tmp_path))
+        importlib.reload(config_module)
+        try:
+            assert config_module.BASE_PATH == str(tmp_path)
+            assert config_module.CONFIG_PATH == str(tmp_path / "config.yaml")
+
+            config_module.save_config({"url": "https://alt.example.com", "token": "t"})
+            assert (tmp_path / "config.yaml").exists()
+            assert config_module.load_config()["url"] == "https://alt.example.com"
+        finally:
+            monkeypatch.delenv("QUALYTICS_CONFIG_HOME", raising=False)
+            importlib.reload(config_module)
+
+    def test_default_base_path_is_home_dot_qualytics(self):
+        from pathlib import Path
+
+        from qualytics.config import BASE_PATH
+
+        assert BASE_PATH == f"{Path.home()}/.qualytics"
+
+
+class TestLoadConfigEnvOverride:
+    """Tests for the QUALYTICS_URL / QUALYTICS_TOKEN environment override."""
+
+    def test_env_pair_takes_precedence(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_URL", "https://uat.example.com")
+        monkeypatch.setenv("QUALYTICS_TOKEN", "env-token")
+        config = load_config()
+        assert config == {"url": "https://uat.example.com", "token": "env-token"}
+
+    def test_url_without_token_exits(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_URL", "https://uat.example.com")
+        with pytest.raises(SystemExit):
+            load_config()
+
+    def test_token_without_url_exits(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_TOKEN", "env-token")
+        with pytest.raises(SystemExit):
+            load_config()
+
+    def test_env_ssl_verify_flag(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_URL", "https://uat.example.com")
+        monkeypatch.setenv("QUALYTICS_TOKEN", "env-token")
+        monkeypatch.setenv("QUALYTICS_SSL_VERIFY", "0")
+        assert load_config()["ssl_verify"] is False
+        monkeypatch.setenv("QUALYTICS_SSL_VERIFY", "true")
+        assert load_config()["ssl_verify"] is True
+
+    def test_no_env_falls_back_to_file(self, monkeypatch, tmp_path):
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(yaml.safe_dump({"url": "from-file", "token": "t"}))
+        with patch("qualytics.config.CONFIG_PATH", str(yaml_path)):
+            assert load_config()["url"] == "from-file"

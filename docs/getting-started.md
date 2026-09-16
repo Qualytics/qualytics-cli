@@ -42,9 +42,27 @@ Runs connectivity and configuration checks to verify everything is working.
 
 Configuration is saved to `~/.qualytics/config.yaml`. This file stores your URL, token, and SSL settings. You can edit it directly or use the `auth` commands above.
 
+Set `QUALYTICS_CONFIG_HOME` to point the CLI at an alternate configuration directory — useful for keeping side-by-side profiles, one per deployment:
+
+```bash
+QUALYTICS_CONFIG_HOME=~/.qualytics-uat qualytics auth init --url "https://uat.example.qualytics.io" --token "..."
+QUALYTICS_CONFIG_HOME=~/.qualytics-uat qualytics datastores list
+```
+
 ## Environment Variables
 
-The CLI loads environment variables from a `.env` file in your working directory (via `python-dotenv`). You can use `${ENV_VAR}` syntax in any CLI flag that accepts sensitive values:
+The CLI loads environment variables from a `.env` file in your working directory (via `python-dotenv`).
+
+### Instance override
+
+`QUALYTICS_URL` and `QUALYTICS_TOKEN`, set together, take precedence over the saved configuration for that invocation — no re-login needed when working against a second instance (setting only one of the two is an error). `QUALYTICS_SSL_VERIFY=false` disables certificate verification for the env-configured instance. Run them in a subshell or via [direnv](https://direnv.net/) to keep tokens out of your shell history:
+
+```bash
+(export QUALYTICS_URL="https://uat.example.qualytics.io" QUALYTICS_TOKEN="$(cat /secure/uat-token)"
+ qualytics checks export --datastore-id 4 --output ./uat-checks)
+```
+
+You can also use `${ENV_VAR}` syntax in any CLI flag that accepts sensitive values:
 
 ```bash
 export QUALYTICS_URL="https://your-instance.qualytics.io/"

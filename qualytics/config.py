@@ -20,7 +20,9 @@ home = Path.home()
 
 # Define the new directory
 folder_name = ".qualytics"
-BASE_PATH = f"{home}/{folder_name}"
+# QUALYTICS_CONFIG_HOME points the CLI at an alternate config directory,
+# allowing side-by-side instance profiles (e.g. one directory per deployment).
+BASE_PATH = os.environ.get("QUALYTICS_CONFIG_HOME") or f"{home}/{folder_name}"
 
 CONFIG_PATH = os.path.expanduser(f"{BASE_PATH}/config.yaml")
 CONFIG_PATH_LEGACY = os.path.expanduser(f"{BASE_PATH}/config.json")
@@ -45,13 +47,44 @@ def save_config(data):
         )
 
 
-def load_config():
-    """Load configuration data from the config file.
+def _config_from_env():
+    """Build a configuration dict from environment variables, if present.
 
-    Checks for ``config.yaml`` first, then falls back to the legacy
-    ``config.json``.  When the legacy file is found it is automatically
-    migrated to YAML.
+    ``QUALYTICS_URL`` and ``QUALYTICS_TOKEN`` must be set together; setting
+    only one is treated as a misconfiguration rather than silently falling
+    back to the on-disk config. ``QUALYTICS_SSL_VERIFY=0|false|no`` disables
+    certificate verification for the env-configured instance.
     """
+    url = os.environ.get("QUALYTICS_URL")
+    token = os.environ.get("QUALYTICS_TOKEN")
+    if not url and not token:
+        return None
+    if not (url and token):
+        missing = "QUALYTICS_TOKEN" if url else "QUALYTICS_URL"
+        print(
+            f"[bold red]QUALYTICS_URL and QUALYTICS_TOKEN must be set together; "
+            f"{missing} is missing.[/bold red]"
+        )
+        raise SystemExit(1)
+    config = {"url": url, "token": token}
+    ssl_verify = os.environ.get("QUALYTICS_SSL_VERIFY")
+    if ssl_verify is not None:
+        config["ssl_verify"] = ssl_verify.strip().lower() not in {"0", "false", "no"}
+    return config
+
+
+def load_config():
+    """Resolve the effective configuration.
+
+    The ``QUALYTICS_URL``/``QUALYTICS_TOKEN`` environment pair takes
+    precedence over the on-disk configuration. Otherwise checks for
+    ``config.yaml`` first, then falls back to the legacy ``config.json``.
+    When the legacy file is found it is automatically migrated to YAML.
+    """
+    env_config = _config_from_env()
+    if env_config is not None:
+        return env_config
+
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH) as f:
             return yaml.safe_load(f)

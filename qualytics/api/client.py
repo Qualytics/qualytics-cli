@@ -181,9 +181,13 @@ class QualyticsClient:
 
 
 def get_client(config: dict | None = None) -> QualyticsClient:
-    """Create a QualyticsClient from the stored configuration.
+    """Create a QualyticsClient from the resolved configuration.
 
-    If *config* is ``None`` the configuration is loaded from disk.
+    If *config* is ``None`` the configuration is resolved by
+    ``load_config``, where the ``QUALYTICS_URL``/``QUALYTICS_TOKEN``
+    environment pair takes precedence over the on-disk configuration —
+    useful for targeting a second instance without touching the saved
+    login.
     """
     from ..config import load_config, is_token_valid
     from ..utils import validate_and_format_url
