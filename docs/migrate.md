@@ -122,6 +122,11 @@ a computed table from the same sheet **if that table's row comes first**
    after sheet edits updates in place instead of duplicating. Failures are
    printed, written to `--failures-log`, and do not stop the run (add
    `--strict` to exit non-zero for CI).
+3. **Receipt**: the per-check mapping (sheet `check_id` → created/updated
+   Qualytics check id, container, rule, status, UI link) is written to
+   `--results-csv` (default `migrate-apply-results.csv`; empty string to
+   skip). The terminal stays a summary — the CSV is the record to hand back
+   to whoever owns the source catalog. Dry runs write nothing.
 
 ### Draft-first, activate by hand
 
