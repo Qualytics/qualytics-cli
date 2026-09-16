@@ -147,12 +147,20 @@ def export_checks_to_directory(
 ) -> dict[str, int]:
     """Write one YAML file per check, organized by container.
 
-    Returns {"exported": N, "containers": M}.
+    Returns {"exported": N, "containers": M, "duplicate_uids": {uid: [paths]}}.
+
+    ``duplicate_uids`` names exported files that share an upsert UID. A check
+    without its own ``_qualytics_check_uid`` gets the generated
+    container__rule__fields UID, which collides for same-shaped checks — and
+    the importer upserts on UID, so each colliding set would fold into ONE
+    check on import, later files silently overwriting earlier ones. Callers
+    must surface this.
     """
     base = Path(output_dir)
     containers_seen: set[str] = set()
     # Track filenames per container to handle duplicates
     used_filenames: dict[str, set[str]] = {}
+    uid_files: dict[str, list[str]] = {}
     exported = 0
 
     for check in checks:
@@ -195,9 +203,18 @@ def export_checks_to_directory(
                 sort_keys=False,
                 allow_unicode=True,
             )
+        uid = portable["additional_metadata"].get(_UID_KEY)
+        if uid:
+            uid_files.setdefault(uid, []).append(f"{container_slug}/{fname}")
         exported += 1
 
-    return {"exported": exported, "containers": len(containers_seen)}
+    return {
+        "exported": exported,
+        "containers": len(containers_seen),
+        "duplicate_uids": {
+            uid: files for uid, files in uid_files.items() if len(files) > 1
+        },
+    }
 
 
 def get_quality_check_reference_maps(

@@ -1930,3 +1930,96 @@ class TestContainerFilterByName:
         )
         assert result.exit_code == 1
         assert "not found in datastore 844: GHOST" in result.output
+
+
+class TestDuplicateUidWarnings:
+    def _same_shape_checks(self):
+        # Two UI-authored checks (no stored UID) with identical shape → the
+        # generated container__rule__fields UID collides.
+        return [
+            _make_api_check(1, "volumetric", "nation", [], []),
+            _make_api_check(2, "volumetric", "nation", [], []),
+            _make_api_check(3, "notNull", "nation", ["n_name"], []),
+        ]
+
+    def test_export_reports_duplicate_uids(self, tmp_path):
+        result = export_checks_to_directory(self._same_shape_checks(), str(tmp_path))
+        assert result["exported"] == 3
+        assert result["duplicate_uids"] == {
+            "nation__volumetric": [
+                "nation/volumetric.yaml",
+                "nation/volumetric_2.yaml",
+            ]
+        }
+
+    @patch("qualytics.cli.checks.export_checks_to_directory")
+    @patch("qualytics.cli.checks.get_quality_check_reference_maps")
+    @patch("qualytics.cli.checks.list_all_quality_checks")
+    @patch("qualytics.cli.checks.get_client")
+    def test_export_cli_prints_collision_warning(
+        self, mock_gc, mock_list, mock_maps, mock_export, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_list.return_value = [{"id": 1, "rule_type": "volumetric"}]
+        mock_maps.return_value = ({}, {})
+        mock_export.return_value = {
+            "exported": 2,
+            "containers": 1,
+            "duplicate_uids": {
+                "nation__volumetric": [
+                    "nation/volumetric.yaml",
+                    "nation/volumetric_2.yaml",
+                ]
+            },
+        }
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "export",
+                "--datastore-id",
+                "844",
+                "--output",
+                str(tmp_path / "o"),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "UID collision" in result.output
+        assert "nation__volumetric" in result.output
+
+    @patch("qualytics.cli.checks.import_checks_to_datastore")
+    @patch("qualytics.cli.checks.load_checks_from_directory")
+    @patch("qualytics.cli.checks.get_client")
+    def test_import_cli_prints_collision_warning(
+        self, mock_gc, mock_load, mock_import, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_load.return_value = [
+            {
+                "rule_type": "volumetric",
+                "container": "nation",
+                "additional_metadata": {"_qualytics_check_uid": "nation__volumetric"},
+                "_source_file": "nation/volumetric.yaml",
+            },
+            {
+                "rule_type": "volumetric",
+                "container": "nation",
+                "additional_metadata": {"_qualytics_check_uid": "nation__volumetric"},
+                "_source_file": "nation/volumetric_2.yaml",
+            },
+        ]
+        mock_import.return_value = {
+            "created": 1,
+            "updated": 1,
+            "failed": 0,
+            "errors": [],
+            "failures": [],
+            "outcomes": [],
+        }
+        result = cli_runner.invoke(
+            app,
+            ["checks", "import", "--datastore-id", "4707", "--input", str(tmp_path)],
+        )
+        assert result.exit_code == 0
+        assert "UID collision" in result.output
+        assert "the last file wins" in result.output

@@ -452,6 +452,28 @@ def checks_export(
         f"[bold green]Exported {result['exported']} checks "
         f"across {result['containers']} containers to {output}/[/bold green]"
     )
+    _warn_duplicate_uids(
+        result.get("duplicate_uids") or {},
+        "Importing this directory folds each set into ONE check. To keep them "
+        "distinct, give the duplicates their own _qualytics_check_uid in "
+        "additional_metadata before importing.",
+    )
+
+
+def _warn_duplicate_uids(duplicates: dict, closing: str) -> None:
+    """Surface upsert-UID collisions — the importer folds each set into ONE
+    check (later files silently overwrite earlier ones), so silence here is
+    data loss."""
+    if not duplicates:
+        return
+    total = sum(len(files) for files in duplicates.values())
+    print(
+        f"\n[bold yellow]⚠ {len(duplicates)} upsert UID collision(s) across "
+        f"{total} files (same container + rule + fields):[/bold yellow]"
+    )
+    for uid, files in sorted(duplicates.items()):
+        print(f"  [yellow]{uid}[/yellow] [dim]← {', '.join(sorted(files))}[/dim]")
+    print(f"[yellow]{closing}[/yellow]")
 
 
 # ── Import (git-friendly, directory-based, multi-datastore) ───────────────
@@ -491,6 +513,18 @@ def checks_import(
         raise typer.Exit(code=0)
 
     print(f"[cyan]Loaded {len(checks)} check definitions from {input_dir}/[/cyan]")
+
+    uid_files: dict[str, list[str]] = {}
+    for check in checks:
+        uid = (check.get("additional_metadata") or {}).get("_qualytics_check_uid")
+        if uid:
+            uid_files.setdefault(uid, []).append(check.get("_source_file") or "?")
+    _warn_duplicate_uids(
+        {uid: files for uid, files in uid_files.items() if len(files) > 1},
+        "Each set will upsert into ONE check — the last file wins. Edit the "
+        "duplicates' _qualytics_check_uid values to import them as distinct "
+        "checks.",
+    )
 
     if dry_run:
         print("[bold yellow]DRY RUN — no changes will be made.[/bold yellow]")
