@@ -65,6 +65,15 @@ class TestLoadSheet:
         assert rows[0]["check_id"] == 100
         assert rows[0]["value"] == 3600000
 
+    def test_metadata_headers_keep_key_verbatim(self, tmp_path):
+        path = tmp_path / "sheet.csv"
+        path.write_text(
+            "check_id,rule_type,container,fields,Metadata: Domain Owner\n"
+            "100,notNull,orders,order_id,Treasury Ops\n"
+        )
+        rows = load_sheet(str(path))
+        assert rows[0]["metadata:Domain Owner"] == "Treasury Ops"
+
     def test_unsupported_extension(self, tmp_path):
         path = tmp_path / "sheet.parquet"
         path.write_text("nope")
@@ -488,7 +497,35 @@ class TestConvertChecks:
         )
         assert any("timezone" in m for m in _warnings(plan))
 
-    def test_unconsumed_columns_land_in_metadata(self):
+    def test_metadata_columns_stamped_verbatim_and_sparse(self):
+        rows = [
+            _row(
+                2,
+                check_id="a",
+                rule_type="notNull",
+                container="t",
+                fields="x",
+                **{"metadata:Business Domain": "Treasury", "metadata:tier": 1},
+            ),
+            _row(
+                3,
+                check_id="b",
+                rule_type="unique",
+                container="t",
+                fields="x",
+                **{"metadata:Business Domain": None, "metadata:tier": 2},
+            ),
+        ]
+        plan = convert_sheet(rows)
+        assert not plan.issues
+        first, second = (item.check["additional_metadata"] for item in plan.checks)
+        assert first["Business Domain"] == "Treasury"
+        assert first["tier"] == 1
+        # Empty cell: the key does not apply to that row.
+        assert "Business Domain" not in second
+        assert second["tier"] == 2
+
+    def test_reserved_metadata_key_rejected(self):
         plan = convert_sheet(
             [
                 _row(
@@ -496,14 +533,59 @@ class TestConvertChecks:
                     rule_type="notNull",
                     container="t",
                     fields="x",
-                    severity="High",
-                    approach="Direct notNull check",
+                    **{"metadata:legacy_check_id": "override"},
                 )
             ]
         )
-        meta = plan.checks[0].check["additional_metadata"]
-        assert meta["sheet_severity"] == "High"
-        assert meta["sheet_approach"] == "Direct notNull check"
+        assert not plan.checks
+        assert any("is reserved" in m for m in _errors(plan))
+
+    def test_unknown_columns_warn_once_and_are_ignored(self):
+        rows = [
+            _row(
+                2,
+                check_id="a",
+                rule_type="notNull",
+                container="t",
+                fields="x",
+                severity="High",
+                approach="Direct notNull check",
+            ),
+            _row(
+                3,
+                check_id="b",
+                rule_type="unique",
+                container="t",
+                fields="x",
+                severity="Low",
+            ),
+        ]
+        plan = convert_sheet(rows)
+        warnings = [i for i in plan.warnings if "not recognized" in i.message]
+        assert len(warnings) == 1
+        assert "approach, severity" in warnings[0].message
+        assert "metadata:" in warnings[0].message
+        for item in plan.checks:
+            meta = item.check["additional_metadata"]
+            assert "severity" not in meta and "sheet_severity" not in meta
+
+    def test_container_rows_carry_metadata(self):
+        plan = convert_sheet(
+            [
+                _row(
+                    check_id="ct1",
+                    kind="computed_table",
+                    container="calc",
+                    query="SELECT 1",
+                    **{"metadata:Source System": "eFront"},
+                )
+            ]
+        )
+        (spec,) = plan.containers
+        assert spec.spec["additional_metadata"] == {
+            "legacy_check_id": "ct1",
+            "Source System": "eFront",
+        }
 
     def test_missing_check_id_or_container(self):
         plan = convert_sheet(
@@ -542,6 +624,7 @@ class TestConvertContainers:
             "name": "recon_unpivot",
             "query": "SELECT metric, delta FROM x",
             "description": "Reconciliation metrics",
+            "additional_metadata": {"legacy_check_id": "ct1"},
         }
 
     def test_computed_join_row(self):

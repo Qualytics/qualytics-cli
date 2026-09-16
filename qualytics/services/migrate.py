@@ -41,6 +41,14 @@ SEVERITY_WARNING = "warning"
 
 _VALID_STATUSES = ("Active", "Draft")
 
+# Column-header prefix for custom additional_metadata: a `metadata:<key>`
+# column stamps <key> (verbatim) onto every row with a non-empty cell, so one
+# sheet can carry different metadata keys for different subsets of rows.
+METADATA_PREFIX = "metadata:"
+
+# Keys the converter owns; a metadata: column may not override them.
+_RESERVED_METADATA_KEYS = frozenset({"legacy_check_id", "_qualytics_check_uid"})
+
 # Columns consumed by the converter. Anything else is preserved on the check
 # as additional_metadata so sheet-only context (owner, source system, notes)
 # survives the migration instead of being silently dropped.
@@ -178,7 +186,14 @@ class SheetPlan:
 
 
 def _normalize_header(header) -> str:
-    text = re.sub(r"[^a-z0-9]+", "_", str(header or "").strip().lower())
+    raw = str(header or "").strip()
+    # `metadata:<key>` columns keep the key verbatim — the whole point is
+    # stamping the client's exact metadata key, so normalization must not
+    # touch its casing or punctuation.
+    if raw.lower().startswith(METADATA_PREFIX):
+        key = raw[len(METADATA_PREFIX) :].strip()
+        return f"{METADATA_PREFIX}{key}" if key else ""
+    text = re.sub(r"[^a-z0-9]+", "_", raw.lower())
     return text.strip("_")
 
 
@@ -430,6 +445,26 @@ def sheet_check_uid(check_id) -> str:
     return UID_PREFIX + _slugify(check_id)
 
 
+def _row_metadata(row: dict, fail) -> dict | None:
+    """Collect this row's ``metadata:<key>`` cells, keys verbatim.
+
+    An empty cell simply means the key does not apply to this row, so one
+    sheet can carry `metadata:X` for some rows and `metadata:Y` for others.
+    Returns None (after recording an error) when a column tries to override a
+    key the converter owns.
+    """
+    out: dict[str, Any] = {}
+    for column, value in row.items():
+        if not column.startswith(METADATA_PREFIX) or value is None:
+            continue
+        key = column[len(METADATA_PREFIX) :]
+        if key in _RESERVED_METADATA_KEYS:
+            fail(f"metadata:{key} is reserved — the converter sets it from check_id")
+            return None
+        out[key] = value if isinstance(value, (int, float)) else str(value)
+    return out
+
+
 def _build_properties(rule_type: str, row: dict, fail) -> dict | None:
     """Assemble rule properties from the flat columns + properties_json.
 
@@ -617,15 +652,14 @@ def _convert_check_row(
         if tag not in tags:
             tags.append(tag)
 
+    extra_metadata = _row_metadata(row, fail)
+    if extra_metadata is None:
+        return None
     metadata: dict[str, Any] = {
         "_qualytics_check_uid": sheet_check_uid(check_id),
         "legacy_check_id": str(check_id),
     }
-    # Sheet-only context survives on the check rather than being dropped.
-    for key, val in row.items():
-        if key.startswith("_") or key in _KNOWN_COLUMNS or val is None:
-            continue
-        metadata[f"sheet_{key}"] = val if isinstance(val, (int, float)) else str(val)
+    metadata.update(extra_metadata)
 
     description = str(row.get("description") or "").strip()
     if not description:
@@ -718,6 +752,14 @@ def _convert_container_row(
         if re.search(r"\bselect\s+distinct\b", query, re.IGNORECASE):
             warn("computed_join queries with SELECT DISTINCT may be rejected")
 
+    extra_metadata = _row_metadata(row, fail)
+    if extra_metadata is None:
+        return None
+    spec["additional_metadata"] = {
+        "legacy_check_id": str(check_id),
+        **extra_metadata,
+    }
+
     return ContainerSpec(kind, name, row_num, str(check_id), row.get("datastore"), spec)
 
 
@@ -732,6 +774,32 @@ def convert_sheet(
     checks: list[SheetCheck] = []
     containers: list[ContainerSpec] = []
     issues: list[RowIssue] = []
+
+    # Columns the converter neither consumes nor stamps are ignored — say so
+    # once, because a silently dropped column usually means a typo'd header or
+    # a missing metadata: prefix.
+    unknown_columns = sorted(
+        {
+            key
+            for row in rows
+            for key, value in row.items()
+            if value is not None
+            and not key.startswith("_")
+            and not key.startswith(METADATA_PREFIX)
+            and key not in _KNOWN_COLUMNS
+        }
+    )
+    if unknown_columns:
+        issues.append(
+            RowIssue(
+                1,
+                "",
+                SEVERITY_WARNING,
+                f"column(s) not recognized and ignored: "
+                f"{', '.join(unknown_columns)} — prefix a column with "
+                f"'{METADATA_PREFIX}' to stamp it into additional_metadata",
+            )
+        )
     seen_ids: dict[str, int] = {}
 
     # First pass: where each computed container is declared, for join ordering
