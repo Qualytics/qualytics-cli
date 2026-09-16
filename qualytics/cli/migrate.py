@@ -438,6 +438,12 @@ def migrate_apply(
 
     total_failed = 0
     if checks_by_datastore:
+        # Containers this run creates don't exist yet during a dry run; name
+        # them so dependent checks count as creates, not spurious failures.
+        pending = {
+            ds_id: {spec.name for spec in specs}
+            for ds_id, specs in routed_containers.items()
+        }
         outcome = run_check_import(
             client,
             checks_by_datastore,
@@ -446,6 +452,7 @@ def migrate_apply(
             failures_log=failures_log,
             log_title="migrate apply failures",
             log_origin=f"sheet: {sheet_path}",
+            pending_containers_by_datastore=pending,
         )
         total_failed = outcome["total_failed"]
 

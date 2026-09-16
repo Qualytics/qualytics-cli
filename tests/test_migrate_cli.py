@@ -227,6 +227,9 @@ class TestMigrateApply:
         ]
         assert checks[7][0]["_source_file"] == "row 2 (550)"
         assert checks[7][0]["status"] == "Draft"
+        # The check phase knows which containers this run creates, so a dry
+        # run counts their dependent checks as creates rather than failures.
+        assert import_call["pending_containers_by_datastore"] == {7: {"recon"}}
 
     def test_dry_run_flows_through(self, cli_runner, tmp_path, monkeypatch):
         harness = _ApplyHarness(monkeypatch)

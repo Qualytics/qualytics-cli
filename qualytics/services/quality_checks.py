@@ -392,6 +392,7 @@ def import_checks_to_datastore(
     checks: list[dict],
     *,
     dry_run: bool = False,
+    pending_containers: set[str] | None = None,
 ) -> dict[str, int | list]:
     """Import checks to a single datastore with upsert logic.
 
@@ -401,6 +402,13 @@ def import_checks_to_datastore(
     ``failures`` carries the same information structured as
     ``{"source": ..., "reason": ...}`` so callers can log or report which
     check failed and why without parsing the strings back apart.
+
+    ``pending_containers`` names containers an earlier phase of the same run
+    will have created by the time checks import for real (e.g. `migrate
+    apply`'s computed containers). Only a dry run consults it — a check
+    targeting one counts as a create instead of a spurious "container not
+    found"; a real run resolves against the live listing, where those
+    containers already exist.
     """
     # Resolve container names → IDs
     table_ids = get_table_ids(client=client, datastore_id=datastore_id)
@@ -447,6 +455,11 @@ def import_checks_to_datastore(
             container_name = check.get("container", "")
             container_id = table_ids.get(container_name)
             if container_id is None:
+                if dry_run and container_name in (pending_containers or ()):
+                    # The container phase of this run will create it; the
+                    # check can only be a create, never an update.
+                    created += 1
+                    continue
                 reason = (
                     f"Container '{container_name}' not found in datastore "
                     f"{datastore_id}"

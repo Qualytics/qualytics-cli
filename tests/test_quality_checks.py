@@ -912,6 +912,39 @@ class TestImportChecksToDatastore:
         assert result["created"] == 0
         assert result["updated"] == 1
 
+    @patch("qualytics.services.quality_checks.list_all_quality_checks")
+    @patch("qualytics.services.quality_checks.get_table_ids")
+    def test_dry_run_counts_pending_container_as_create(self, mock_tables, mock_list):
+        """A container the same run will create is not a dry-run failure."""
+        client = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        mock_list.return_value = []
+
+        checks = [_make_portable_check("notNull", "recon_unpivot", ["delta"])]
+        result = import_checks_to_datastore(
+            client, 42, checks, dry_run=True, pending_containers={"recon_unpivot"}
+        )
+
+        assert result["created"] == 1
+        assert result["failed"] == 0
+        assert result["errors"] == []
+
+    @patch("qualytics.services.quality_checks.list_all_quality_checks")
+    @patch("qualytics.services.quality_checks.get_table_ids")
+    def test_real_run_ignores_pending_containers(self, mock_tables, mock_list):
+        """Outside dry-run the live listing is the only truth."""
+        client = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        mock_list.return_value = []
+
+        checks = [_make_portable_check("notNull", "recon_unpivot", ["delta"])]
+        result = import_checks_to_datastore(
+            client, 42, checks, dry_run=False, pending_containers={"recon_unpivot"}
+        )
+
+        assert result["failed"] == 1
+        assert "not found" in result["errors"][0]
+
     @patch("qualytics.services.quality_checks.get_table_ids")
     def test_container_not_found_fails(self, mock_tables):
         client = _mock_client()

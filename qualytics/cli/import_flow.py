@@ -53,6 +53,7 @@ def run_check_import(
     failures_log: str | None = None,
     log_title: str = "check import failures",
     log_origin: str = "",
+    pending_containers_by_datastore: dict[int, set[str]] | None = None,
 ) -> dict:
     """Import portable checks into each target datastore, with the shared
     summary table and failures log.
@@ -61,8 +62,13 @@ def run_check_import(
     for it (callers with identical checks for every target pass the same list
     per id). Each check's ``_source_file`` names it in failure reports.
 
+    ``pending_containers_by_datastore`` names containers an earlier phase of
+    the same run creates (per datastore), so a dry run counts their dependent
+    checks as creates instead of "container not found" failures.
+
     Returns ``{"total_failed": int, "results": {datastore_id: import_result}}``.
     """
+    pending_containers_by_datastore = pending_containers_by_datastore or {}
     summary_table = Table(title="Import Summary")
     summary_table.add_column("Datastore ID", style="cyan")
     summary_table.add_column("Created", style="green")
@@ -96,7 +102,13 @@ def run_check_import(
             f"\n[cyan]{'[DRY RUN] ' if dry_run else ''}Importing {len(payload)} checks "
             f"to datastore {ds_id}...[/cyan]"
         )
-        result = import_checks_to_datastore(client, ds_id, payload, dry_run=dry_run)
+        result = import_checks_to_datastore(
+            client,
+            ds_id,
+            payload,
+            dry_run=dry_run,
+            pending_containers=pending_containers_by_datastore.get(ds_id),
+        )
         results[ds_id] = result
 
         failed = result["failed"] + len(rejected)
