@@ -113,8 +113,14 @@ a computed table from the same sheet **if that table's row comes first**
    and after each creation the CLI waits for **that container's own profile
    operation** to finish (`--profile-timeout`, default 900s) so dependent joins
    and checks always see profiled fields. Existing same-name containers are
-   skipped by default (query drift is reported); `--on-existing update` PUTs
-   the sheet's definition instead. If the phase fails for a datastore, its
+   skipped by default (query drift is reported); `--on-existing update` diffs
+   the sheet against the live definition and PUTs only real changes —
+   identical definitions report `unchanged`, and label/metadata-only
+   differences never trigger a re-profile. A definition change that would
+   drop fields carrying quality checks is refused by the platform (409);
+   add `--force-drop-fields` to proceed — the affected checks are preserved
+   and reactivate if the fields reappear, and the sheet's dependent check
+   rows must be updated to the new field names. If the phase fails for a datastore, its
    check phase is skipped rather than failing one check at a time.
 2. **Check phase**: container and field names are case-corrected against the
    target's catalogue, cross-references (`ref_container`, `ref_datastore`)
