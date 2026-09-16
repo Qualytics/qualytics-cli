@@ -89,6 +89,8 @@ def _print_summary(plan: SheetPlan, sheet_path: str) -> dict:
         table.add_column("Checks", justify="right")
         for rule, count in stats["by_rule"].items():
             table.add_row(rule, str(count))
+        table.add_section()
+        table.add_row("[bold]Total[/bold]", f"[bold]{stats['checks']}[/bold]")
         console.print(table)
 
     if plan.containers:

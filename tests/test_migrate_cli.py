@@ -41,6 +41,7 @@ class TestMigratePlan:
         assert result.exit_code == 0
         assert "3 checks" in result.output
         assert "1 computed containers" in result.output
+        assert "Total" in result.output
 
     def test_plan_reports_issues_but_exits_zero(self, cli_runner, tmp_path):
         result = cli_runner.invoke(
