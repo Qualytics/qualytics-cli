@@ -16,6 +16,7 @@ from ..api.quality_checks import (
 )
 from ..services.containers import get_container_by_name, get_table_ids
 from ..services.datastores import get_datastore_by_name
+from ..services.rules import CROSS_REF_RULES
 from ..utils.serialization import _SafeStringLoader
 
 # ── Stable UID ────────────────────────────────────────────────────────────
@@ -23,9 +24,8 @@ from ..utils.serialization import _SafeStringLoader
 _UID_KEY = "_qualytics_check_uid"
 
 # Cross-reference rule types that use ref_container_id / ref_datastore_id
-_CROSS_REF_RULES = frozenset(
-    {"existsIn", "notExistsIn", "isReplicaOf", "dataDiff", "aggregationComparison"}
-)
+# (shared with the dbt and sheet-migration pipelines).
+_CROSS_REF_RULES = CROSS_REF_RULES
 
 
 def _slugify(text: str) -> str:
