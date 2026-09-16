@@ -132,7 +132,10 @@ def _print_summary(plan: SheetPlan, sheet_path: str) -> dict:
                 "[dim]Fix the sheet and re-run plan.[/dim]"
             )
     else:
-        print("\n[green]No issues found.[/green]")
+        # Scoped wording: apply/validate print later phases right after
+        # this line, and a bare "no issues" reads as a verdict on the whole
+        # run rather than on the sheet.
+        print("\n[green]Sheet OK — no sheet-level issues.[/green]")
 
     return stats
 
