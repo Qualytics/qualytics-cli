@@ -1866,3 +1866,67 @@ class TestCheckContractRegressions:
         assert payload["tags"] == ["critical"]
         assert payload["additional_metadata"] == {"source": "manual"}
         assert payload["status"] == "Draft"
+
+
+class TestContainerFilterByName:
+    @patch("qualytics.cli.checks.export_checks_to_directory")
+    @patch("qualytics.cli.checks.get_quality_check_reference_maps")
+    @patch("qualytics.cli.checks.list_all_quality_checks")
+    @patch("qualytics.cli.checks.get_table_ids")
+    @patch("qualytics.cli.checks.get_client")
+    def test_export_accepts_names_and_ids(
+        self,
+        mock_gc,
+        mock_tables,
+        mock_list,
+        mock_maps,
+        mock_export,
+        cli_runner,
+        tmp_path,
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_tables.return_value = {"NATION": 6659, "REGION": 6663}
+        mock_list.return_value = [{"id": 1, "rule_type": "notNull"}]
+        mock_maps.return_value = ({}, {})
+        mock_export.return_value = {"exported": 1, "containers": 1}
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "export",
+                "--datastore-id",
+                "844",
+                "--containers",
+                "nation,6663",
+                "--output",
+                str(tmp_path / "out"),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        # Case-insensitive name resolved + numeric id passed through.
+        assert mock_list.call_args.kwargs["containers"] == [6663, 6659]
+
+    @patch("qualytics.cli.checks.get_table_ids")
+    @patch("qualytics.cli.checks.get_client")
+    def test_export_unknown_container_name_exits(
+        self, mock_gc, mock_tables, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_tables.return_value = {"NATION": 6659}
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "export",
+                "--datastore-id",
+                "844",
+                "--containers",
+                "GHOST",
+                "--output",
+                str(tmp_path / "out"),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "not found in datastore 844: GHOST" in result.output

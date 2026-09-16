@@ -151,6 +151,35 @@ def checks_get(
     print(format_for_display(result, fmt))
 
 
+def _resolve_container_filter(client, datastore_id: int, containers: str) -> list[int]:
+    """A --containers value of ids and/or names, resolved to container ids.
+
+    Names resolve against the datastore's catalogue (exact first, then
+    case-insensitive); an unknown name aborts rather than silently exporting
+    or listing the wrong scope.
+    """
+    tokens = _parse_comma_list(containers)
+    resolved = [int(token) for token in tokens if token.isdigit()]
+    names = [token for token in tokens if not token.isdigit()]
+    if names:
+        table_ids = get_table_ids(client=client, datastore_id=datastore_id) or {}
+        by_lower = {name.lower(): cid for name, cid in table_ids.items()}
+        missing = []
+        for name in names:
+            container_id = table_ids.get(name) or by_lower.get(name.lower())
+            if container_id is None:
+                missing.append(name)
+            else:
+                resolved.append(container_id)
+        if missing:
+            print(
+                f"[red]Container(s) not found in datastore {datastore_id}: "
+                f"{', '.join(missing)}[/red]"
+            )
+            raise typer.Exit(code=1)
+    return resolved
+
+
 # ── CRUD: list ────────────────────────────────────────────────────────────
 
 
@@ -162,7 +191,7 @@ def checks_list(
     containers: str | None = typer.Option(
         None,
         "--containers",
-        help='Comma-separated container IDs. Example: "1,2,3"',
+        help='Comma-separated container IDs or names. Example: "1,ORDERS"',
     ),
     tags: str | None = typer.Option(
         None,
@@ -183,7 +212,7 @@ def checks_list(
 
     container_ids = None
     if containers:
-        container_ids = [int(x) for x in _parse_comma_list(containers)]
+        container_ids = _resolve_container_filter(client, datastore_id, containers)
     tag_list = _parse_comma_list(tags) if tags else None
 
     # Handle archived as a special status
@@ -369,7 +398,7 @@ def checks_export(
     containers: str | None = typer.Option(
         None,
         "--containers",
-        help='Comma-separated container IDs. Example: "1,2,3"',
+        help='Comma-separated container IDs or names. Example: "1,ORDERS"',
     ),
     tags: str | None = typer.Option(
         None, "--tags", help='Comma-separated tag names. Example: "tag1,tag2"'
@@ -383,7 +412,7 @@ def checks_export(
 
     container_ids = None
     if containers:
-        container_ids = [int(x) for x in _parse_comma_list(containers)]
+        container_ids = _resolve_container_filter(client, datastore_id, containers)
     tag_list = _parse_comma_list(tags) if tags else None
 
     archived = None
