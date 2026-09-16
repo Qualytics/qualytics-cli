@@ -857,6 +857,7 @@ def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
             {
                 **item.check,
                 "container": lower_tables.get(item.container.lower(), item.container),
+                "_source_file": f"row {item.row} ({item.check_id})",
             }
             for item in resolvable
         ]
@@ -867,7 +868,8 @@ def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
         for correction in corrections:
             print(f"  [dim]field casing repaired: {correction}[/dim]")
         for item in rejected:
-            print(f"  [red]✗ {item['reason']}[/red]")
+            source = item["check"].get("_source_file", "")
+            print(f"  [red]✗ {source}: {item['reason']}[/red]")
             ds_errors += 1
 
         # Cross-references resolve to a real container (and field).
