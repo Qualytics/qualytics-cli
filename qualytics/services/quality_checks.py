@@ -23,7 +23,9 @@ from ..utils.serialization import _SafeStringLoader
 _UID_KEY = "_qualytics_check_uid"
 
 # Cross-reference rule types that use ref_container_id / ref_datastore_id
-_CROSS_REF_RULES = frozenset({"existsIn", "notExistsIn", "isReplicaOf", "dataDiff"})
+_CROSS_REF_RULES = frozenset(
+    {"existsIn", "notExistsIn", "isReplicaOf", "dataDiff", "aggregationComparison"}
+)
 
 
 def _slugify(text: str) -> str:

@@ -228,6 +228,31 @@ class TestStripForExport:
             "ref_datastore_name": "crm",
         }
 
+    def test_resolves_aggregation_comparison_refs_to_names(self):
+        check = _make_api_check(
+            rule_type="aggregationComparison",
+            fields=None,
+            properties={
+                "expression": "sum(amount)",
+                "comparison": "eq",
+                "ref_expression": "sum(total_amount)",
+                "ref_container_id": 200,
+                "ref_datastore_id": 20,
+            },
+        )
+        result = strip_for_export(
+            check,
+            containers_by_id={200: {"id": 200, "name": "customers"}},
+            datastores_by_id={20: {"id": 20, "name": "crm"}},
+        )
+        assert result["properties"] == {
+            "expression": "sum(amount)",
+            "comparison": "eq",
+            "ref_expression": "sum(total_amount)",
+            "ref_container_name": "customers",
+            "ref_datastore_name": "crm",
+        }
+
 
 class TestQualityCheckReferences:
     @patch("qualytics.services.quality_checks.get_datastore")
@@ -285,6 +310,43 @@ class TestQualityCheckReferences:
             "ref_container_id": 200,
         }
         mock_get_container.assert_called_once_with(client, 20, "customers")
+
+    @patch("qualytics.services.quality_checks.get_container_by_name")
+    @patch("qualytics.services.quality_checks.get_datastore_by_name")
+    def test_aggregation_comparison_round_trips_across_instances(
+        self, mock_get_datastore, mock_get_container
+    ):
+        """Export resolves ref IDs to names; import resolves them back."""
+        check = _make_api_check(
+            rule_type="aggregationComparison",
+            fields=None,
+            properties={
+                "expression": "sum(amount)",
+                "comparison": "eq",
+                "ref_expression": "sum(total_amount)",
+                "ref_container_id": 200,
+                "ref_datastore_id": 20,
+            },
+        )
+        portable = strip_for_export(
+            check,
+            containers_by_id={200: {"id": 200, "name": "customers"}},
+            datastores_by_id={20: {"id": 20, "name": "crm"}},
+        )
+
+        client = _mock_client()
+        mock_get_datastore.return_value = {"id": 77, "name": "crm"}
+        mock_get_container.return_value = {"id": 888, "name": "customers"}
+
+        resolved = resolve_quality_check_references(client, portable, datastore_id=10)
+
+        assert resolved["properties"] == {
+            "expression": "sum(amount)",
+            "comparison": "eq",
+            "ref_expression": "sum(total_amount)",
+            "ref_datastore_id": 77,
+            "ref_container_id": 888,
+        }
 
 
 # ── Directory export/import ──────────────────────────────────────────────

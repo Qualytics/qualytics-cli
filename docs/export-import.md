@@ -48,7 +48,7 @@ qualytics-config/
 - **Connections** are deduplicated across datastores (exported once by name)
 - **Computed containers** are exported with their SQL definitions (tables/views/files are created by sync)
 - **Computed fields** are exported per container under `computed_fields/`
-- **ID references** are replaced with name references for cross-environment portability
+- **ID references** are replaced with name references for cross-environment portability (including `ref_container_id`/`ref_datastore_id` on `existsIn`, `notExistsIn`, `isReplicaOf`, `dataDiff`, and `aggregationComparison` checks)
 - **Re-export** produces zero git diff when nothing has changed
 
 ### Resource types
