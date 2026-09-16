@@ -809,6 +809,11 @@ class TestImportChecksToDatastore:
         assert result["updated"] == 0
         assert result["failed"] == 0
         mock_create.assert_called_once()
+        (outcome,) = result["outcomes"]
+        assert outcome["action"] == "created"
+        assert outcome["id"] == 999
+        assert outcome["container_id"] == 100
+        assert outcome["check"] is checks[0]
 
     @patch("qualytics.services.quality_checks.update_quality_check")
     @patch("qualytics.services.quality_checks.list_all_quality_checks")
@@ -829,6 +834,9 @@ class TestImportChecksToDatastore:
         assert result["updated"] == 1
         assert result["failed"] == 0
         mock_update.assert_called_once()
+        (outcome,) = result["outcomes"]
+        assert outcome["action"] == "updated"
+        assert outcome["id"] == 50
 
     @patch("qualytics.services.quality_checks.get_quality_check")
     @patch("qualytics.services.quality_checks.update_quality_check")

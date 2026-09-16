@@ -223,6 +223,68 @@ def migrate_plan(
         raise typer.Exit(code=1)
 
 
+def _write_results_csv(path: str, outcomes_by_datastore: dict, base_url: str) -> int:
+    """The per-check receipt: which sheet row became which check, with links.
+
+    Terminal output stays a summary — at migration scale (dozens to hundreds
+    of rows) a per-check line is scrollback noise, but the client handoff
+    needs the mapping. CSV so it pastes straight back into the tracker the
+    sheet came from.
+    """
+    import csv
+
+    if not any(outcomes_by_datastore.values()):
+        return 0
+
+    rows = 0
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "check_id",
+                "action",
+                "qualytics_check_id",
+                "datastore_id",
+                "container",
+                "rule_type",
+                "status",
+                "url",
+            ]
+        )
+        for ds_id, outcomes in outcomes_by_datastore.items():
+            for outcome in outcomes:
+                check = outcome["check"]
+                meta = check.get("additional_metadata") or {}
+                url = ""
+                if base_url:
+                    url = (
+                        f"{base_url}datastores/{ds_id}/containers/"
+                        f"{outcome['container_id']}/checks/{outcome['id']}/overview"
+                    )
+                writer.writerow(
+                    [
+                        meta.get("legacy_check_id", ""),
+                        outcome["action"],
+                        outcome["id"],
+                        ds_id,
+                        check.get("container", ""),
+                        check.get("rule_type", ""),
+                        check.get("status", ""),
+                        url,
+                    ]
+                )
+                rows += 1
+    return rows
+
+
+def _instance_base_url(client) -> str:
+    """The UI base URL: the API base with its trailing api path removed."""
+    base = getattr(client, "base_url", "") or ""
+    if base.endswith("api/"):
+        base = base[: -len("api/")]
+    return base
+
+
 # ── apply ─────────────────────────────────────────────────────────────────
 
 
@@ -322,6 +384,12 @@ def migrate_apply(
         "migrate-apply-failures.log",
         "--failures-log",
         help="Write checks that failed to import (which row, why) to this file",
+    ),
+    results_csv: str = typer.Option(
+        "migrate-apply-results.csv",
+        "--results-csv",
+        help="Write the per-check receipt (check_id → created/updated Qualytics "
+        "check, with links) to this CSV; pass an empty string to skip",
     ),
     strict: bool = typer.Option(
         False,
@@ -455,6 +523,20 @@ def migrate_apply(
             pending_containers_by_datastore=pending,
         )
         total_failed = outcome["total_failed"]
+
+        if not dry_run and results_csv:
+            outcomes_by_datastore = {
+                ds_id: result.get("outcomes") or []
+                for ds_id, result in outcome["results"].items()
+            }
+            written = _write_results_csv(
+                results_csv, outcomes_by_datastore, _instance_base_url(client)
+            )
+            if written:
+                print(
+                    f"[cyan]Per-check results written to {results_csv} "
+                    f"({written} check(s))[/cyan]"
+                )
 
     if not dry_run and stats["by_status"].get("Draft"):
         print(

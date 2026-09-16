@@ -153,7 +153,7 @@ ROUTED_SHEET = (
 class _ApplyHarness:
     """Patches every seam migrate apply touches; records what flowed through."""
 
-    def __init__(self, monkeypatch):
+    def __init__(self, monkeypatch, tmp_path):
         from unittest.mock import MagicMock
 
         import qualytics.api.client as client_module
@@ -161,10 +161,18 @@ class _ApplyHarness:
         import qualytics.services.containers as containers_service
         import qualytics.services.migrate as migrate_service
 
+        # Default-named side-effect files (results CSV) land in cwd; keep them
+        # inside the test sandbox.
+        monkeypatch.chdir(tmp_path)
+
         self.ensure_calls = []
         self.import_calls = []
 
-        monkeypatch.setattr(client_module, "get_client", lambda: MagicMock())
+        monkeypatch.setattr(
+            client_module,
+            "get_client",
+            lambda: MagicMock(base_url="https://x.example.com/api/"),
+        )
         monkeypatch.setattr(
             containers_service,
             "get_table_ids",
@@ -189,17 +197,28 @@ class _ApplyHarness:
 
         def _import(client, checks_by_datastore, **kw):
             self.import_calls.append({"checks": checks_by_datastore, **kw})
-            return {
-                "total_failed": 0,
-                "results": {ds: {} for ds in checks_by_datastore},
-            }
+            results = {}
+            for ds, checks in checks_by_datastore.items():
+                results[ds] = {
+                    "outcomes": [
+                        {
+                            "source": check.get("_source_file", ""),
+                            "action": "created",
+                            "id": 9000 + index,
+                            "container_id": 77,
+                            "check": check,
+                        }
+                        for index, check in enumerate(checks)
+                    ]
+                }
+            return {"total_failed": 0, "results": results}
 
         monkeypatch.setattr(import_flow, "run_check_import", _import)
 
 
 class TestMigrateApply:
     def test_routes_rows_by_datastore_override(self, cli_runner, tmp_path, monkeypatch):
-        harness = _ApplyHarness(monkeypatch)
+        harness = _ApplyHarness(monkeypatch, tmp_path)
         result = cli_runner.invoke(
             app,
             [
@@ -232,7 +251,7 @@ class TestMigrateApply:
         assert import_call["pending_containers_by_datastore"] == {7: {"recon"}}
 
     def test_dry_run_flows_through(self, cli_runner, tmp_path, monkeypatch):
-        harness = _ApplyHarness(monkeypatch)
+        harness = _ApplyHarness(monkeypatch, tmp_path)
         result = cli_runner.invoke(
             app,
             [
@@ -251,7 +270,7 @@ class TestMigrateApply:
         assert "DRY RUN" in result.output
 
     def test_preserve_status_drops_status_key(self, cli_runner, tmp_path, monkeypatch):
-        harness = _ApplyHarness(monkeypatch)
+        harness = _ApplyHarness(monkeypatch, tmp_path)
         result = cli_runner.invoke(
             app,
             [
@@ -271,7 +290,7 @@ class TestMigrateApply:
     def test_container_failure_blocks_check_phase(
         self, cli_runner, tmp_path, monkeypatch
     ):
-        harness = _ApplyHarness(monkeypatch)
+        harness = _ApplyHarness(monkeypatch, tmp_path)
         harness.fail_containers_for = 7
         result = cli_runner.invoke(
             app,
@@ -290,7 +309,7 @@ class TestMigrateApply:
         assert set(checks) == {5}
 
     def test_skip_containers_flag(self, cli_runner, tmp_path, monkeypatch):
-        harness = _ApplyHarness(monkeypatch)
+        harness = _ApplyHarness(monkeypatch, tmp_path)
         result = cli_runner.invoke(
             app,
             [
@@ -310,7 +329,7 @@ class TestMigrateApply:
     def test_requires_datastore_when_rows_lack_override(
         self, cli_runner, tmp_path, monkeypatch
     ):
-        _ApplyHarness(monkeypatch)
+        _ApplyHarness(monkeypatch, tmp_path)
         result = cli_runner.invoke(
             app, ["migrate", "apply", "--sheet", _write(tmp_path, ROUTED_SHEET)]
         )
@@ -318,7 +337,7 @@ class TestMigrateApply:
         assert "--datastore-id is required" in result.output
 
     def test_strict_fails_on_sheet_errors(self, cli_runner, tmp_path, monkeypatch):
-        _ApplyHarness(monkeypatch)
+        _ApplyHarness(monkeypatch, tmp_path)
         result = cli_runner.invoke(
             app,
             [
@@ -334,7 +353,7 @@ class TestMigrateApply:
         assert result.exit_code == 1
 
     def test_invalid_on_existing(self, cli_runner, tmp_path, monkeypatch):
-        _ApplyHarness(monkeypatch)
+        _ApplyHarness(monkeypatch, tmp_path)
         result = cli_runner.invoke(
             app,
             [
@@ -352,7 +371,7 @@ class TestMigrateApply:
         assert "--on-existing must be skip or update" in result.output
 
     def test_container_name_case_repair(self, cli_runner, tmp_path, monkeypatch):
-        harness = _ApplyHarness(monkeypatch)
+        harness = _ApplyHarness(monkeypatch, tmp_path)
         sheet = "check_id,rule_type,container,fields\n100,notNull,ORDERS,order_id\n"
         result = cli_runner.invoke(
             app,
@@ -369,3 +388,57 @@ class TestMigrateApply:
         assert "Corrected 1 container name(s)" in result.output
         checks = harness.import_calls[0]["checks"]
         assert checks[7][0]["container"] == "orders"
+
+    def test_results_csv_receipt(self, cli_runner, tmp_path, monkeypatch):
+        import csv
+
+        _ApplyHarness(monkeypatch, tmp_path)
+        out = tmp_path / "results.csv"
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--results-csv",
+                str(out),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Per-check results written" in result.output
+
+        with open(out, newline="") as f:
+            rows = {row["check_id"]: row for row in csv.DictReader(f)}
+        assert set(rows) == {"550", "551"}
+        row = rows["550"]
+        assert row["action"] == "created"
+        assert row["qualytics_check_id"] == "9000"
+        assert row["datastore_id"] == "7"
+        assert row["rule_type"] == "freshness"
+        # UI link: API base without the api/ suffix, container from the outcome.
+        assert row["url"] == (
+            "https://x.example.com/datastores/7/containers/77/checks/9000/overview"
+        )
+
+    def test_dry_run_writes_no_results_csv(self, cli_runner, tmp_path, monkeypatch):
+        _ApplyHarness(monkeypatch, tmp_path)
+        out = tmp_path / "results.csv"
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--dry-run",
+                "--results-csv",
+                str(out),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert not out.exists()

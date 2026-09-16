@@ -423,6 +423,7 @@ def import_checks_to_datastore(
                 {"source": check.get("_source_file", "unknown"), "reason": reason}
                 for check in checks
             ],
+            "outcomes": [],
         }
 
     # Build UID lookup for upsert matching
@@ -433,6 +434,10 @@ def import_checks_to_datastore(
     failed = 0
     errors: list[str] = []
     failures: list[dict] = []
+    # One entry per successful write — the per-check receipt callers can log:
+    # {source, action: created|updated, id, container_id, check}. Dry runs
+    # leave it empty (nothing was written).
+    outcomes: list[dict] = []
 
     # Build reverse lookup for validating container_id when provided directly
     id_to_name = {v: k for k, v in table_ids.items()}
@@ -490,6 +495,15 @@ def import_checks_to_datastore(
                 payload = _build_update_payload(update_source)
                 update_quality_check(client, existing_id, payload)
                 updated += 1
+                outcomes.append(
+                    {
+                        "source": source,
+                        "action": "updated",
+                        "id": existing_id,
+                        "container_id": container_id,
+                        "check": check,
+                    }
+                )
             else:
                 # Create new check
                 payload = _build_create_payload(resolved_check, container_id)
@@ -498,6 +512,15 @@ def import_checks_to_datastore(
                 # Register UID for subsequent duplicate detection within this run
                 if uid:
                     uid_lookup[uid] = result["id"]
+                outcomes.append(
+                    {
+                        "source": source,
+                        "action": "created",
+                        "id": result["id"],
+                        "container_id": container_id,
+                        "check": check,
+                    }
+                )
         except Exception as e:
             errors.append(f"Failed on '{source}': {e}")
             failures.append({"source": source, "reason": str(e)})
@@ -509,4 +532,5 @@ def import_checks_to_datastore(
         "failed": failed,
         "errors": errors,
         "failures": failures,
+        "outcomes": outcomes,
     }
