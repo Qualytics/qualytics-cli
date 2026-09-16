@@ -996,6 +996,67 @@ def _container_payload(
     return payload, None
 
 
+def _definition_changed(spec: ContainerSpec, payload: dict, existing: dict) -> bool:
+    """Whether the sheet's definition differs from the live container's.
+
+    Only the definition counts (query, join sources) — labels and metadata are
+    handled separately because the platform re-validates and re-profiles on a
+    definition change, and resending an identical join `sources` list forces
+    that expensive path for nothing.
+    """
+
+    def _sql(value) -> str:
+        return str(value or "").strip()
+
+    if _sql(payload.get("query")) != _sql(existing.get("query")):
+        return True
+    if spec.kind != KIND_COMPUTED_JOIN:
+        return False
+
+    def _norm(sources) -> list[tuple]:
+        return [
+            (
+                source.get("container_id"),
+                source.get("alias"),
+                source.get("where_clause") or None,
+            )
+            for source in sources or []
+        ]
+
+    return _norm(payload.get("sources")) != _norm(existing.get("sources"))
+
+
+def _labels_changed(payload: dict, existing: dict) -> bool:
+    """Whether the sheet carries label/metadata values the live container lacks."""
+    if "description" in payload and payload["description"] != (
+        existing.get("description") or None
+    ):
+        return True
+    if "additional_metadata" in payload and payload["additional_metadata"] != (
+        existing.get("additional_metadata") or None
+    ):
+        return True
+    return False
+
+
+def _latest_profile_operation_id(
+    client, container_id: int, datastore_id: int
+) -> int | None:
+    """The newest profile operation id for a container, or None."""
+    from ..api.operations import list_operations
+
+    listing = list_operations(
+        client,
+        datastore=[datastore_id],
+        container=[container_id],
+        operation_type="profile",
+        sort_created="desc",
+        size=1,
+    )
+    items = listing.get("items") or []
+    return items[0]["id"] if items else None
+
+
 def wait_for_container_profile(
     client,
     container_id: int,
@@ -1004,6 +1065,7 @@ def wait_for_container_profile(
     timeout: int = 900,
     poll_interval: int = 10,
     sleep=None,
+    after_operation_id: int | None = None,
 ) -> tuple[bool, str]:
     """Wait for THIS container's auto-triggered profile to finish.
 
@@ -1011,6 +1073,12 @@ def wait_for_container_profile(
     the container's fields only work once it completes. The operation is found
     by filtering on the container id — never "the newest profile in the
     datastore", which races against concurrent operations.
+
+    ``after_operation_id`` anchors an UPDATE's wait: the async re-profile can
+    register after we first look, and without the anchor the newest completed
+    op is the container's previous profile — an instant false success against
+    stale fields. Pass the id captured before the write; only younger
+    operations count.
     """
     import time as _time
 
@@ -1032,7 +1100,9 @@ def wait_for_container_profile(
                 size=1,
             )
             items = listing.get("items") or []
-            if items:
+            if items and (
+                after_operation_id is None or items[0]["id"] > after_operation_id
+            ):
                 operation_id = items[0]["id"]
             else:
                 sleep(poll_interval)
@@ -1085,9 +1155,12 @@ def ensure_containers(
     profiled container.
 
     ``on_existing='skip'`` leaves an existing same-name container untouched
-    (reporting query drift when visible); ``'update'`` PUTs the new definition.
+    (reporting query drift when visible); ``'update'`` diffs the sheet against
+    the live definition and PUTs only real changes — an identical definition is
+    reported unchanged (label/metadata differences go through the platform's
+    cheap label-only path, which never re-profiles).
 
-    Returns {created, updated, skipped, failed, errors, name_to_id}.
+    Returns {created, updated, unchanged, skipped, failed, errors, name_to_id}.
     """
     from ..api.containers import (
         create_container,
@@ -1101,6 +1174,7 @@ def ensure_containers(
     result = {
         "created": 0,
         "updated": 0,
+        "unchanged": 0,
         "skipped": 0,
         "failed": 0,
         "errors": [],
@@ -1199,6 +1273,7 @@ def ensure_containers(
             fail(spec, error)
             break
 
+        baseline_operation_id: int | None = None
         try:
             if existing_id is not None:
                 if existing_types.get(spec.name) != spec.kind:
@@ -1208,6 +1283,45 @@ def ensure_containers(
                         f"{existing_types.get(spec.name)}, not a {spec.kind}",
                     )
                     break
+
+                existing = get_container(client, existing_id)
+                if not _definition_changed(spec, payload, existing):
+                    # The definition matches the platform: a full PUT would be
+                    # a no-op at best, and resending a join's sources forces a
+                    # pointless re-validate + re-profile. Push label/metadata
+                    # differences through the platform's cheap label-only path
+                    # (no definition fields for a join; a computed table's
+                    # update schema requires query, so send the live one).
+                    if _labels_changed(payload, existing):
+                        label_payload = {
+                            "container_type": spec.kind,
+                            "name": spec.name,
+                        }
+                        if spec.kind == KIND_COMPUTED_TABLE:
+                            label_payload["query"] = existing.get("query")
+                        for key in ("description", "additional_metadata"):
+                            if key in payload:
+                                label_payload[key] = payload[key]
+                        update_container(client, existing_id, label_payload)
+                        result["updated"] += 1
+                        report(
+                            f"updated metadata for '{spec.name}' "
+                            f"(id {existing_id}, definition unchanged)"
+                        )
+                    else:
+                        result["unchanged"] += 1
+                        report(f"'{spec.name}' unchanged (id {existing_id})")
+                    # No definition change ⇒ the platform will not re-profile;
+                    # the existing profile stands.
+                    continue
+
+                # Anchor the profile wait to the newest pre-update operation so
+                # a stale completed profile can't satisfy it (the update's
+                # async re-profile may register after our first look).
+                if wait_profile:
+                    baseline_operation_id = _latest_profile_operation_id(
+                        client, existing_id, datastore_id
+                    )
                 update_container(client, existing_id, payload)
                 container_id = existing_id
                 result["updated"] += 1
@@ -1231,6 +1345,7 @@ def ensure_containers(
                 datastore_id,
                 timeout=profile_timeout,
                 poll_interval=poll_interval,
+                after_operation_id=baseline_operation_id,
             )
             report(f"'{spec.name}': {detail}")
             if not ok:

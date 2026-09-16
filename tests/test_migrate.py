@@ -800,6 +800,12 @@ def _spec(kind="computed_table", name="calc", check_id="ct1", row=2, **extra):
 class TestEnsureContainers:
     def _patches(self, monkeypatch, listing=None):
         import qualytics.api.containers as api
+        import qualytics.api.operations as operations_api
+
+        # Baseline profile-op lookup before an update; no prior operations.
+        monkeypatch.setattr(
+            operations_api, "list_operations", lambda client, **kw: {"items": []}
+        )
 
         calls = {"validate": [], "create": [], "update": [], "get": []}
         monkeypatch.setattr(
@@ -920,10 +926,93 @@ class TestEnsureContainers:
         )
         waited = self._no_wait(monkeypatch)
 
+        # get_container mock returns "SELECT existing"; the spec says SELECT 1,
+        # so the definition genuinely changed.
         result = ensure_containers(object(), [_spec()], 42, on_existing="update")
         assert result["updated"] == 1
         assert calls["update"][0][0] == 9
+        assert calls["update"][0][1]["query"] == "SELECT 1"
         assert waited == [9]
+
+    def test_existing_update_unchanged_definition_never_puts(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[{"id": 9, "name": "calc", "container_type": "computed_table"}],
+        )
+        waited = self._no_wait(monkeypatch)
+        messages = []
+
+        spec = _spec(query="SELECT existing")
+        result = ensure_containers(
+            object(), [spec], 42, on_existing="update", report=messages.append
+        )
+        assert result["unchanged"] == 1
+        assert result["updated"] == 0
+        assert not calls["update"]
+        assert waited == []  # existing profile stands
+        assert any("unchanged" in m for m in messages)
+
+    def test_existing_update_metadata_only_uses_label_path(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[{"id": 9, "name": "calc", "container_type": "computed_table"}],
+        )
+        waited = self._no_wait(monkeypatch)
+
+        spec = _spec(
+            query="SELECT existing",
+            additional_metadata={"legacy_check_id": "ct1", "Source System": "eFront"},
+        )
+        result = ensure_containers(object(), [spec], 42, on_existing="update")
+        assert result["updated"] == 1
+        (update_call,) = calls["update"]
+        assert update_call[0] == 9
+        # Label-only PUT: live query resent (schema requires it), no re-profile wait.
+        assert update_call[1]["query"] == "SELECT existing"
+        assert update_call[1]["additional_metadata"]["Source System"] == "eFront"
+        assert waited == []
+
+    def test_existing_join_update_unchanged_sources_never_puts(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+        import qualytics.api.containers as api
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[
+                {"id": 9, "name": "j", "container_type": "computed_join"},
+                {"id": 1, "name": "orders", "container_type": "table"},
+                {"id": 2, "name": "customers", "container_type": "table"},
+            ],
+        )
+        self._no_wait(monkeypatch)
+        monkeypatch.setattr(
+            api,
+            "get_container",
+            lambda client, cid: {
+                "id": cid,
+                "query": "SELECT 1",
+                "sources": [
+                    {"container_id": 1, "alias": "o", "ordinal": 0},
+                    {"container_id": 2, "alias": "c", "ordinal": 1},
+                ],
+            },
+        )
+
+        spec = _spec(
+            kind="computed_join",
+            name="j",
+            sources=[
+                {"container": "orders", "alias": "o"},
+                {"container": "customers", "alias": "c"},
+            ],
+        )
+        result = ensure_containers(object(), [spec], 42, on_existing="update")
+        assert result["unchanged"] == 1
+        assert not calls["update"]
 
     def test_existing_type_mismatch_fails(self, monkeypatch):
         from qualytics.services.migrate import ensure_containers
@@ -1055,3 +1144,47 @@ class TestWaitForContainerProfile:
         )
         assert not ok
         assert "timed out" in detail
+
+
+class TestWaitForContainerProfileAnchor:
+    def test_stale_completed_profile_never_satisfies_anchored_wait(self, monkeypatch):
+        """The container's previous profile op must not read as instant success."""
+        import qualytics.api.operations as operations_api
+        from qualytics.services.migrate import wait_for_container_profile
+
+        monkeypatch.setattr(
+            operations_api,
+            "list_operations",
+            lambda client, **kw: {"items": [{"id": 55}]},
+        )
+        ok, detail = wait_for_container_profile(
+            object(), 9, 42, timeout=0, sleep=lambda s: None, after_operation_id=55
+        )
+        assert not ok
+        assert "timed out" in detail
+
+    def test_younger_operation_satisfies_anchored_wait(self, monkeypatch):
+        import qualytics.api.containers as containers_api
+        import qualytics.api.operations as operations_api
+        from qualytics.services.migrate import wait_for_container_profile
+
+        monkeypatch.setattr(
+            operations_api,
+            "list_operations",
+            lambda client, **kw: {"items": [{"id": 56}]},
+        )
+        monkeypatch.setattr(
+            operations_api,
+            "get_operation",
+            lambda client, oid: {"id": 56, "end_time": "t", "result": "success"},
+        )
+        monkeypatch.setattr(
+            containers_api,
+            "get_field_profiles",
+            lambda client, cid: {"items": [{"field": "a"}]},
+        )
+        ok, detail = wait_for_container_profile(
+            object(), 9, 42, timeout=5, sleep=lambda s: None, after_operation_id=55
+        )
+        assert ok
+        assert "operation 56" in detail
