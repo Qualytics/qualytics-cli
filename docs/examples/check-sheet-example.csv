@@ -1,0 +1,12 @@
+check_id,kind,rule_type,container,fields,value,min,max,expression,comparison,ref_expression,ref_container,ref_field,ref_datastore,query,sources,tags,description
+550,,freshness,STG_FUND_POSITIONS,,36h,,,,,,,,,,,UAT testing,STG_FUND_POSITIONS loaded within 36 hours
+551,,freshness,STG_INVESTOR_OPERATIONS,,1d,,,,,,,,,,,UAT testing,STG_INVESTOR_OPERATIONS refreshed daily
+326,,existsIn,STG_INVESTOR_POSITIONS,PORTFOLIO_ID,,,,,,,efront_portfolio_status,PORTFOLIO_ID,,,,UAT testing,Child portfolio ids exist in portfolio status
+211,,aggregationComparison,efront_entities,,,,,count(distinct FUND_FAMILY_ID),eq,count(distinct FUND_FAMILY_ID),secmaster_mappings,,warehouse,,,UAT testing,Fund family count matches SecMaster mappings
+400,,notNull,STG_FUND_POSITIONS,"FUND_ID, POSITION_DATE",,,,,,,,,,,,UAT testing,Primary key columns must not be null
+460,,unique,STG_FUND_POSITIONS,"FUND_ID, POSITION_DATE",,,,,,,,,,,,UAT testing,Primary key must be unique
+610,,between,STG_FUND_POSITIONS,POSITION_WEIGHT,,0,1,,,,,,,,,UAT testing,Position weight stays within [0 and 1]
+770,computed_table,,re_fund_recon,,,,,,,,,,,"SELECT metric, delta FROM (SELECT count(*) AS row_count_delta FROM source_table) UNPIVOT (delta FOR metric IN (row_count_delta))",,,RE fund reconciliation metrics (one row per metric)
+771,,equalTo,re_fund_recon,delta,0,,,,,,,,,,,UAT testing,Reconciliation delta must be exactly zero
+900,computed_join,,orders_with_customers,,,,,,,,,,,"SELECT o.order_id, o.customer_id, c.region FROM o JOIN c ON o.customer_id = c.customer_id","orders=o; customers=c",,Orders joined to customer regions
+901,,notNull,orders_with_customers,region,,,,,,,,,,,,UAT testing,Every joined order resolves a customer region

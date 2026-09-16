@@ -4,6 +4,8 @@ Computed tables let you define SQL-based virtual containers in Qualytics and aut
 
 For creating individual computed containers, see `qualytics containers create --type computed_table`.
 
+> **Note:** for new bulk workflows prefer a [check sheet](migrate.md) (`qualytics migrate apply`): it supports named columns, computed joins, updating existing containers, and attaching arbitrary check types — this importer is kept for the fixed 3-column layout and its auto-generated `satisfiesExpression` checks.
+
 ## Input File Structure
 
 The input file must have **3 columns in positional order** (the first row is treated as a header and skipped):
