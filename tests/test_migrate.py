@@ -168,7 +168,8 @@ class TestConvertChecks:
         assert check["status"] == "Draft"
         assert check["coverage"] == 1.0
         meta = check["additional_metadata"]
-        assert meta["_qualytics_check_uid"] == "sheet__100"
+        # The client key IS the upsert identity — no internal UID in metadata.
+        assert "_qualytics_check_uid" not in meta
         assert meta["legacy_check_id"] == "100"
 
     def test_freshness_contract_and_duration(self):

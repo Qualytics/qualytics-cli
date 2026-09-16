@@ -54,6 +54,7 @@ def run_check_import(
     log_title: str = "check import failures",
     log_origin: str = "",
     pending_containers_by_datastore: dict[int, set[str]] | None = None,
+    uid_key: str = "_qualytics_check_uid",
 ) -> dict:
     """Import portable checks into each target datastore, with the shared
     summary table and failures log.
@@ -108,6 +109,7 @@ def run_check_import(
             payload,
             dry_run=dry_run,
             pending_containers=pending_containers_by_datastore.get(ds_id),
+            uid_key=uid_key,
         )
         results[ds_id] = result
 

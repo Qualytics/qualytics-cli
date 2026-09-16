@@ -2064,3 +2064,35 @@ class TestDuplicateUidWarnings:
         assert result.exit_code == 0
         assert "UID collision" in result.output
         assert "the last file wins" in result.output
+
+
+class TestCustomUidKey:
+    @patch("qualytics.services.quality_checks.update_quality_check")
+    @patch("qualytics.services.quality_checks.get_quality_check")
+    @patch("qualytics.services.quality_checks.list_all_quality_checks")
+    @patch("qualytics.services.quality_checks.get_table_ids")
+    def test_upserts_on_alternate_metadata_key(
+        self, mock_tables, mock_list, mock_get, mock_update
+    ):
+        """migrate keys its upsert on legacy_check_id — no internal UID needed."""
+        client = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        mock_list.return_value = [
+            {"id": 50, "additional_metadata": {"legacy_check_id": "WR-01"}},
+        ]
+        mock_get.return_value = {"id": 50, "additional_metadata": {}}
+        mock_update.return_value = {"id": 50}
+
+        checks = [
+            {
+                "rule_type": "notNull",
+                "container": "orders",
+                "fields": ["order_id"],
+                "additional_metadata": {"legacy_check_id": "WR-01"},
+            }
+        ]
+        result = import_checks_to_datastore(
+            client, 42, checks, uid_key="legacy_check_id"
+        )
+        assert result["updated"] == 1
+        assert result["created"] == 0

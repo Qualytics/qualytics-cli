@@ -440,10 +440,12 @@ def _slugify(text: str) -> str:
 
 
 def sheet_check_uid(check_id) -> str:
-    """Stable UID from the sheet's check_id column.
+    """Slug form of the sheet's check_id: duplicate detection and filenames.
 
-    Never ``generate_check_uid``: its container__rule__fields scheme collides
-    for same-shaped checks and the importer silently updates on collision.
+    The upsert identity itself is the raw ``legacy_check_id`` value (migrate
+    apply imports with that as the uid_key), so this slug never lands in
+    check metadata — it guards against two check_ids that differ only in
+    case/punctuation, and names emitted YAML files.
     """
     return UID_PREFIX + _slugify(check_id)
 
@@ -658,10 +660,10 @@ def _convert_check_row(
     extra_metadata = _row_metadata(row, fail)
     if extra_metadata is None:
         return None
-    metadata: dict[str, Any] = {
-        "_qualytics_check_uid": sheet_check_uid(check_id),
-        "legacy_check_id": str(check_id),
-    }
+    # legacy_check_id is both the client's trace key AND the upsert identity —
+    # migrate apply imports with uid_key="legacy_check_id", so no internal
+    # _qualytics_check_uid needs to appear in the check's visible metadata.
+    metadata: dict[str, Any] = {"legacy_check_id": str(check_id)}
     metadata.update(extra_metadata)
 
     description = str(row.get("description") or "").strip()

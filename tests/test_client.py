@@ -396,7 +396,9 @@ class TestGetClientEnvOverrides:
     def test_explicit_config_beats_env(self, monkeypatch):
         monkeypatch.setenv("QUALYTICS_URL", "https://uat.example.com")
         monkeypatch.setenv("QUALYTICS_TOKEN", self._token())
-        client = get_client({"url": "https://param.example.com", "token": self._token()})
+        client = get_client(
+            {"url": "https://param.example.com", "token": self._token()}
+        )
         assert client.base_url == "https://param.example.com/api/"
 
     def test_env_ssl_verify_disabled(self, monkeypatch):

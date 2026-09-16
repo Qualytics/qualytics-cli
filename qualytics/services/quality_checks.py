@@ -256,15 +256,23 @@ def load_checks_from_directory(input_dir: str) -> list[dict]:
     return checks
 
 
-def _build_uid_lookup(client: QualyticsClient, datastore_id: int) -> dict[str, int]:
-    """Build a mapping of _qualytics_check_uid → check_id for a datastore."""
+def _build_uid_lookup(
+    client: QualyticsClient, datastore_id: int, uid_key: str = _UID_KEY
+) -> dict[str, int]:
+    """Build a mapping of upsert key → check_id for a datastore.
+
+    ``uid_key`` names the additional_metadata key that identifies a check
+    across runs — ``_qualytics_check_uid`` for the export/import and dbt
+    flows, ``legacy_check_id`` for sheet migrations (whose client-owned key
+    doubles as the upsert identity, keeping internal keys out of the UI).
+    """
     existing = list_all_quality_checks(client, datastore_id)
     lookup: dict[str, int] = {}
     for check in existing:
         meta = check.get("additional_metadata") or {}
-        uid = meta.get(_UID_KEY)
-        if uid:
-            lookup[uid] = check["id"]
+        uid = meta.get(uid_key)
+        if uid is not None:
+            lookup[str(uid)] = check["id"]
     return lookup
 
 
@@ -393,6 +401,7 @@ def import_checks_to_datastore(
     *,
     dry_run: bool = False,
     pending_containers: set[str] | None = None,
+    uid_key: str = _UID_KEY,
 ) -> dict[str, int | list]:
     """Import checks to a single datastore with upsert logic.
 
@@ -427,7 +436,7 @@ def import_checks_to_datastore(
         }
 
     # Build UID lookup for upsert matching
-    uid_lookup = _build_uid_lookup(client, datastore_id)
+    uid_lookup = _build_uid_lookup(client, datastore_id, uid_key)
 
     created = 0
     updated = 0
@@ -474,7 +483,8 @@ def import_checks_to_datastore(
                 failed += 1
                 continue
 
-        uid = (check.get("additional_metadata") or {}).get(_UID_KEY)
+        uid = (check.get("additional_metadata") or {}).get(uid_key)
+        uid = str(uid) if uid is not None else None
 
         if dry_run:
             if uid and uid in uid_lookup:

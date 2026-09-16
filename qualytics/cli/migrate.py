@@ -151,7 +151,9 @@ def _emit_yaml(plan: SheetPlan, out_dir: str) -> None:
             print(f"[red]Refusing to write outside {out_dir}: {item.container}[/red]")
             continue
         os.makedirs(container_dir, exist_ok=True)
-        uid = item.check["additional_metadata"]["_qualytics_check_uid"]
+        from ..services.migrate import sheet_check_uid
+
+        uid = sheet_check_uid(item.check_id)
         with open(os.path.join(container_dir, f"{uid}.yaml"), "w") as f:
             yaml.safe_dump(item.check, f, sort_keys=False, default_flow_style=False)
         written += 1
@@ -529,6 +531,7 @@ def migrate_apply(
             log_title="migrate apply failures",
             log_origin=f"sheet: {sheet_path}",
             pending_containers_by_datastore=pending,
+            uid_key="legacy_check_id",
         )
         total_failed = outcome["total_failed"]
 

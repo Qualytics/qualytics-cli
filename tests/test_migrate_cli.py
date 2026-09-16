@@ -103,7 +103,7 @@ class TestMigratePlan:
         assert check["rule_type"] == "freshness"
         assert check["properties"] == {"value": 129_600_000}
         assert check["tags"] == ["UAT testing"]
-        assert check["additional_metadata"]["legacy_check_id"] == "550"
+        assert check["additional_metadata"] == {"legacy_check_id": "550"}
 
         specs = yaml.safe_load((out_dir / "_computed_containers.yaml").read_text())
         assert specs[0]["name"] == "recon_unpivot"
