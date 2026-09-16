@@ -210,17 +210,23 @@ def _clean(value):
     return value
 
 
-def load_sheet(path: str) -> list[dict]:
+def load_sheet(path: str, worksheet: str | None = None) -> list[dict]:
     """Read a check sheet into row dicts keyed by normalized header name.
 
-    Supports ``.xlsx``/``.xls`` (first worksheet) and ``.csv``. Each row dict
-    carries ``_row``: its 1-based position in the file (header included), so
-    issues can point at the exact spreadsheet line.
+    Supports ``.xlsx``/``.xls`` and ``.csv``. ``worksheet`` selects a tab of a
+    workbook by name (case-insensitive) or 1-based position; the default is
+    the first tab. Each row dict carries ``_row``: its 1-based position in the
+    file (header included), so issues can point at the exact spreadsheet line.
     """
     lower = path.lower()
     if lower.endswith((".xlsx", ".xls")):
-        rows = _load_xlsx(path)
+        rows = _load_xlsx(path, worksheet)
     elif lower.endswith(".csv"):
+        if worksheet is not None:
+            raise ValueError(
+                "CSV files have a single sheet — --worksheet applies to "
+                "Excel workbooks only"
+            )
         rows = _load_csv(path)
     else:
         raise ValueError(
@@ -228,6 +234,24 @@ def load_sheet(path: str) -> list[dict]:
         )
     # Drop rows with no values at all (spreadsheets love trailing blanks).
     return [r for r in rows if any(v is not None for k, v in r.items() if k != "_row")]
+
+
+def _select_worksheet(workbook, worksheet: str | None):
+    """Pick a workbook tab by name (case-insensitive) or 1-based position."""
+    if worksheet is None:
+        return workbook.worksheets[0]
+    by_name = {title.lower(): title for title in workbook.sheetnames}
+    actual = by_name.get(str(worksheet).strip().lower())
+    if actual is not None:
+        return workbook[actual]
+    if str(worksheet).strip().isdigit():
+        index = int(str(worksheet).strip())
+        if 1 <= index <= len(workbook.worksheets):
+            return workbook.worksheets[index - 1]
+    raise ValueError(
+        f"Worksheet '{worksheet}' not found — available: "
+        f"{', '.join(workbook.sheetnames)}"
+    )
 
 
 def _load_csv(path: str) -> list[dict]:
@@ -245,12 +269,12 @@ def _load_csv(path: str) -> list[dict]:
     return out
 
 
-def _load_xlsx(path: str) -> list[dict]:
+def _load_xlsx(path: str, worksheet: str | None = None) -> list[dict]:
     from openpyxl import load_workbook
 
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
-        sheet = workbook.worksheets[0]
+        sheet = _select_worksheet(workbook, worksheet)
         out: list[dict] = []
         headers: list[str] | None = None
         for line_num, raw in enumerate(sheet.iter_rows(values_only=True), start=1):

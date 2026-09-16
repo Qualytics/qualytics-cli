@@ -1,5 +1,7 @@
 """Tests for the `qualytics migrate plan` command."""
 
+import re
+
 import yaml
 
 from qualytics.qualytics import app
@@ -195,11 +197,18 @@ class _ApplyHarness:
         self.fail_containers_for = None
         monkeypatch.setattr(migrate_service, "ensure_containers", _ensure)
 
+        self.fail_check_sources = []
+
         def _import(client, checks_by_datastore, **kw):
             self.import_calls.append({"checks": checks_by_datastore, **kw})
             results = {}
             for ds, checks in checks_by_datastore.items():
                 results[ds] = {
+                    "failures": [
+                        {"source": source, "reason": "boom: field not found"}
+                        for source in self.fail_check_sources
+                        if any(c.get("_source_file") == source for c in checks)
+                    ],
                     "outcomes": [
                         {
                             "source": check.get("_source_file", ""),
@@ -209,7 +218,7 @@ class _ApplyHarness:
                             "check": check,
                         }
                         for index, check in enumerate(checks)
-                    ]
+                    ],
                 }
             return {"total_failed": 0, "results": results}
 
@@ -464,3 +473,153 @@ class TestMigrateApply:
         assert result.exit_code == 0, result.output
         assert harness.ensure_calls[0]["force_drop_fields"] is True
         assert harness.ensure_calls[0]["on_existing"] == "update"
+
+    def test_run_dir_artifacts(self, cli_runner, tmp_path, monkeypatch):
+        import csv
+
+        harness = _ApplyHarness(monkeypatch, tmp_path)
+        harness.fail_check_sources = ["row 2 (550)"]
+        run_dir = tmp_path / "run"
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--run-dir",
+                str(run_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        log_text = (run_dir / "run.log").read_text()
+        assert "qualytics migrate apply" in log_text
+        assert "Ensuring 1 computed container(s)" in log_text  # transcript
+        assert re.search(r"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", log_text)
+
+        with open(run_dir / "results.csv", newline="") as f:
+            rows = list(csv.DictReader(f))
+        failed = [r for r in rows if r["action"] == "failed"]
+        assert failed and failed[0]["reason"] == "boom: field not found"
+        assert failed[0]["check_id"] == "550"
+
+        assert (run_dir / "yaml" / "orders" / "sheet__550.yaml").exists()
+        assert "Run artifacts in" in result.output
+
+    def test_dry_run_creates_no_run_dir(self, cli_runner, tmp_path, monkeypatch):
+        _ApplyHarness(monkeypatch, tmp_path)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert not (tmp_path / "migrate-runs").exists()
+
+
+class TestMigrateValidate:
+    def _online_patches(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import qualytics.api.client as client_module
+        import qualytics.api.fields as fields_api
+        import qualytics.cli.import_flow as import_flow
+        import qualytics.services.containers as containers_service
+        import qualytics.services.datastores as datastores_service
+
+        monkeypatch.setattr(client_module, "get_client", lambda: MagicMock())
+        monkeypatch.setattr(
+            containers_service,
+            "get_table_ids",
+            lambda client, datastore_id: {"orders": 1, "invoices": 2, "REGION": 3},
+        )
+        monkeypatch.setattr(
+            import_flow,
+            "field_catalogue",
+            lambda client, ds, containers: {"orders": ["order_id", "customer_id"]},
+        )
+        monkeypatch.setattr(
+            fields_api,
+            "container_field_names",
+            lambda client, cid: ["R_REGIONKEY", "R_NAME"],
+        )
+        monkeypatch.setattr(
+            datastores_service,
+            "get_datastore_by_name",
+            lambda client, name: {"id": 9} if name == "warehouse" else None,
+        )
+
+    def test_validate_passes_and_resolves_refs(self, cli_runner, tmp_path, monkeypatch):
+        self._online_patches(monkeypatch)
+        sheet = (
+            "check_id,rule_type,container,fields,value,ref_container,ref_field,"
+            "ref_datastore\n"
+            "550,freshness,orders,,36h,,,\n"
+            "326,existsIn,orders,customer_id,,REGION,R_REGIONKEY,warehouse\n"
+        )
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "7",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "all references resolve" in result.output
+        assert "Validation passed" in result.output
+
+    def test_validate_fails_on_unknown_container_and_ref_field(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        self._online_patches(monkeypatch)
+        sheet = (
+            "check_id,rule_type,container,fields,value,ref_container,ref_field,"
+            "ref_datastore\n"
+            "1,freshness,ghost_table,,1d,,,\n"
+            "2,existsIn,orders,customer_id,,REGION,R_GHOST,warehouse\n"
+            "3,notNull,orders,not_a_field,,,,\n"
+        )
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "7",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "'ghost_table' not found" in result.output
+        assert "ref_field 'R_GHOST' not found" in result.output
+        assert "not_a_field" in result.output
+        assert "Validation failed" in result.output
+
+    def test_validate_offline_only_without_datastore(self, cli_runner, tmp_path):
+        result = cli_runner.invoke(
+            app, ["migrate", "validate", "--sheet", _write(tmp_path, BAD_SHEET)]
+        )
+        assert result.exit_code == 1
+        assert "Validation failed" in result.output
+
+    def test_validate_offline_clean_sheet_passes(self, cli_runner, tmp_path):
+        result = cli_runner.invoke(
+            app, ["migrate", "validate", "--sheet", _write(tmp_path, GOOD_SHEET)]
+        )
+        assert result.exit_code == 0
+        assert "Validation passed" in result.output

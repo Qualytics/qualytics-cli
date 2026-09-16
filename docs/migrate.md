@@ -9,13 +9,17 @@ there is nothing to export.
 
 ```bash
 # Offline: validate the sheet, see what it would produce (no auth needed)
-qualytics migrate plan --sheet wafra-week1.xlsx --show-checks
+qualytics migrate plan --sheet week1.xlsx --show-checks
+
+# Fail-early: everything plan checks, plus read-only resolution of containers,
+# fields and cross-references against the target (nothing is created)
+qualytics migrate validate --sheet week1.xlsx --datastore-id 12
 
 # Create everything on the target (checks land as Draft by default)
-qualytics migrate apply --sheet wafra-week1.xlsx --datastore-id 12 --tag "UAT testing"
+qualytics migrate apply --sheet week1.xlsx --datastore-id 12 --tag "client-uat"
 
 # Re-apply after sheet edits — upserts in place, keeps hand-activated checks Active
-qualytics migrate apply --sheet wafra-week1.xlsx --datastore-id 12 --preserve-status
+qualytics migrate apply --sheet week1.xlsx --datastore-id 12 --preserve-status
 ```
 
 The pipeline is: **sheet → portable check YAML → API**. `--emit-yaml` writes the
@@ -24,6 +28,9 @@ converted checks can be reviewed, diffed, and version-controlled before or
 instead of applying.
 
 ## The sheet
+
+One workbook can hold several tabs — `--worksheet` picks one by name
+(case-insensitive) or 1-based position; the default is the first tab.
 
 Column headers are matched case-insensitively with spaces/punctuation
 normalized (`Check ID`, `check_id` and `CHECK-ID` are the same column).
@@ -52,7 +59,7 @@ them from `check_id`); a `metadata:` column naming them is a plan error.
 
 | Column | Meaning |
 |---|---|
-| `check_id` | **Required.** Your catalog's key for the row. Duplicates are plan errors. Becomes the upsert UID (`sheet__<check_id>`) and is stamped verbatim as `additional_metadata.legacy_check_id`, so every created check traces back to its source row. |
+| `check_id` | **Required.** Your catalog's key for the row. Duplicates are plan errors. Stamped verbatim as `additional_metadata.legacy_check_id` — the only metadata key the converter adds — which is both the trace back to the source row and the upsert identity on re-applies. |
 | `kind` | Blank or `check` (default) for a quality check; `computed_table` or `computed_join` for a computed container the checks depend on. |
 | `datastore` | Optional per-row target (name or numeric id). Rows without it go to every `--datastore-id` passed to `apply`; rows with it go only there. |
 | `container` | For checks: the target table/view name (matched by name on the target, casing auto-corrected against the catalogue). For computed rows: the new container's name. |
@@ -124,15 +131,20 @@ a computed table from the same sheet **if that table's row comes first**
    check phase is skipped rather than failing one check at a time.
 2. **Check phase**: container and field names are case-corrected against the
    target's catalogue, cross-references (`ref_container`, `ref_datastore`)
-   resolve to ids, and checks upsert on the `sheet__<check_id>` UID — re-running
-   after sheet edits updates in place instead of duplicating. Failures are
+   resolve to ids, and checks upsert on the sheet's `check_id` (via the
+   `legacy_check_id` metadata) — re-running after sheet edits updates in
+   place instead of duplicating. Failures are
    printed, written to `--failures-log`, and do not stop the run (add
    `--strict` to exit non-zero for CI).
-3. **Receipt**: the per-check mapping (sheet `check_id` → created/updated
-   Qualytics check id, container, rule, status, UI link) is written to
-   `--results-csv` (default `migrate-apply-results.csv`; empty string to
-   skip). The terminal stays a summary — the CSV is the record to hand back
-   to whoever owns the source catalog. Dry runs write nothing.
+3. **Run artifacts**: every real run leaves a folder (`--run-dir`, default
+   `migrate-runs/<UTC timestamp>/`, empty string to disable) containing
+   `run.log` — the full timestamped transcript of the run — `results.csv` —
+   the per-check OK/FAIL ledger (sheet `check_id`, action, Qualytics check
+   id, container, rule, status, UI link, and the failure reason for failed
+   rows) — and `yaml/` — the as-applied portable check definitions.
+   `--results-csv`/`--failures-log` relocate the individual files. The
+   terminal stays a summary; the folder is the record to hand back to
+   whoever owns the source catalog. Dry runs write nothing.
 
 ### Draft-first, activate by hand
 
@@ -179,6 +191,32 @@ qualytics migrate apply --sheet sheet.xlsx --datastore-id 12
 # review Drafts in the product, activate, then on later edits:
 qualytics migrate apply --sheet sheet.xlsx --datastore-id 12 --preserve-status
 ```
+
+## FAQ
+
+**Does row order matter?** Not between checks and the containers they target:
+`apply` is two-phase — every computed container is created and profiled before
+any check imports — so a check row may sit anywhere relative to its computed
+table. Order matters only *among computed containers*: a `computed_join`
+reading a computed table from the same sheet needs that table's row first
+(containers are created in declaration order; `plan` errors on violations).
+
+**Why does only `computed_join` have a `sources` column?** A `computed_table`
+runs its SQL pushed down to the source database in the warehouse's native
+dialect — it references warehouse tables directly, so Qualytics needs no
+source declarations. A `computed_join` runs in Spark over *catalogued
+Qualytics containers*; `sources` declares which containers feed it and the
+alias each one carries in the query's FROM clause.
+
+**Which datastore does `ref_container` resolve in?** The one named by the
+row's `ref_datastore` column when it's filled, otherwise the row's own target
+datastore — never globally. `ref_field` is then a field of that resolved
+container. `migrate validate --datastore-id N` resolves and prints every
+reference before anything is created.
+
+**What metadata do created checks carry?** Exactly `legacy_check_id` (the
+sheet's `check_id`, verbatim — also the upsert identity) plus whatever
+`metadata:<key>` columns the sheet defines. No internal bookkeeping keys.
 
 ## migrate vs the other bulk paths
 

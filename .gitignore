@@ -181,3 +181,4 @@ sandbox/
 migrate-apply-results.csv
 migrate-apply-failures.log
 dbt-import-failures.log
+migrate-runs/

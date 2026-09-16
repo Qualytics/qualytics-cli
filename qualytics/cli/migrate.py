@@ -6,6 +6,7 @@ offline half: load, convert, validate, summarize — no auth, no network.
 """
 
 import os
+import re
 
 import typer
 import yaml
@@ -33,13 +34,16 @@ _KIND_LABEL = {"computed_table": "computed table", "computed_join": "computed jo
 
 
 def _load_plan(
-    sheet_path: str, status: str | None, tags: list[str] | None
+    sheet_path: str,
+    status: str | None,
+    tags: list[str] | None,
+    worksheet: str | None = None,
 ) -> SheetPlan:
     if not os.path.isfile(sheet_path):
         print(f"[red]Sheet not found: {sheet_path}[/red]")
         raise typer.Exit(code=1)
     try:
-        rows = load_sheet(sheet_path)
+        rows = load_sheet(sheet_path, worksheet)
     except ValueError as e:
         print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
@@ -169,6 +173,60 @@ def _emit_yaml(plan: SheetPlan, out_dir: str) -> None:
     )
 
 
+_ANSI_ESCAPES = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+class _TeeStream:
+    """stdout tee: everything printed also lands, timestamped and de-ANSIed,
+    in the run log — one transcript, no second logging code path to drift."""
+
+    def __init__(self, real):
+        self.real = real
+        self.lines: list[tuple[str, str]] = []
+        self._buffer = ""
+
+    def write(self, text: str) -> int:
+        self.real.write(text)
+        self._buffer += text
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            self.lines.append((_now_stamp(), _ANSI_ESCAPES.sub("", line).rstrip()))
+        return len(text)
+
+    def flush(self) -> None:
+        self.real.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+def _now_stamp() -> str:
+    from datetime import datetime
+
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _write_run_log(path: str, *, sheet_path: str, worksheet, lines) -> None:
+    from ..config import __version__
+
+    try:
+        with open(path, "w") as f:
+            f.write(
+                f"qualytics migrate apply — CLI v{__version__}\n"
+                f"started: {lines[0][0] if lines else _now_stamp()}\n"
+                f"finished: {_now_stamp()}\n"
+                f"sheet: {os.path.abspath(sheet_path)}"
+                + (f" (worksheet: {worksheet})" if worksheet else "")
+                + "\n"
+                + "-" * 72
+                + "\n"
+            )
+            for stamp, line in lines:
+                f.write(f"[{stamp}] {line}\n")
+    except OSError as e:  # pragma: no cover - the log must never sink the run
+        print(f"[yellow]Could not write run log {path}: {e}[/yellow]")
+
+
 # ── plan ──────────────────────────────────────────────────────────────────
 
 
@@ -176,6 +234,11 @@ def _emit_yaml(plan: SheetPlan, out_dir: str) -> None:
 def migrate_plan(
     sheet_path: str = typer.Option(
         ..., "--sheet", "-s", help="Path to the check sheet (.xlsx or .csv)"
+    ),
+    worksheet: str = typer.Option(
+        None,
+        "--worksheet",
+        help="Workbook tab to read: name or 1-based position (default: first)",
     ),
     status: str = typer.Option(
         None,
@@ -196,7 +259,7 @@ def migrate_plan(
     ),
 ):
     """Validate and summarize a check sheet. Offline — no auth required."""
-    plan = _load_plan(sheet_path, status, tag)
+    plan = _load_plan(sheet_path, status, tag, worksheet)
     stats = _print_summary(plan, sheet_path)
 
     if show_checks and plan.checks:
@@ -225,7 +288,13 @@ def migrate_plan(
         raise typer.Exit(code=1)
 
 
-def _write_results_csv(path: str, outcomes_by_datastore: dict, base_url: str) -> int:
+def _write_results_csv(
+    path: str,
+    outcomes_by_datastore: dict,
+    base_url: str,
+    failures_by_datastore: dict | None = None,
+    checks_by_source: dict | None = None,
+) -> int:
     """The per-check receipt: which sheet row became which check, with links.
 
     Terminal output stays a summary — at migration scale (dozens to hundreds
@@ -235,9 +304,13 @@ def _write_results_csv(path: str, outcomes_by_datastore: dict, base_url: str) ->
     """
     import csv
 
-    if not any(outcomes_by_datastore.values()):
+    failures_by_datastore = failures_by_datastore or {}
+    if not any(outcomes_by_datastore.values()) and not any(
+        failures_by_datastore.values()
+    ):
         return 0
 
+    checks_by_source = checks_by_source or {}
     rows = 0
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -251,6 +324,7 @@ def _write_results_csv(path: str, outcomes_by_datastore: dict, base_url: str) ->
                 "rule_type",
                 "status",
                 "url",
+                "reason",
             ]
         )
         for ds_id, outcomes in outcomes_by_datastore.items():
@@ -273,6 +347,25 @@ def _write_results_csv(path: str, outcomes_by_datastore: dict, base_url: str) ->
                         check.get("rule_type", ""),
                         check.get("status", ""),
                         url,
+                        "",
+                    ]
+                )
+                rows += 1
+        for ds_id, failures in failures_by_datastore.items():
+            for failure in failures:
+                check = checks_by_source.get(failure.get("source")) or {}
+                meta = check.get("additional_metadata") or {}
+                writer.writerow(
+                    [
+                        meta.get("legacy_check_id", failure.get("source", "")),
+                        "failed",
+                        "",
+                        ds_id,
+                        check.get("container", ""),
+                        check.get("rule_type", ""),
+                        "",
+                        "",
+                        failure.get("reason", ""),
                     ]
                 )
                 rows += 1
@@ -331,92 +424,26 @@ def _route(items, base_ids: list[int], resolved: dict) -> dict[int, list]:
     return routed
 
 
-@migrate_app.command("apply")
-def migrate_apply(
-    sheet_path: str = typer.Option(
-        ..., "--sheet", "-s", help="Path to the check sheet (.xlsx or .csv)"
-    ),
-    datastore_id: list[int] = typer.Option(
-        None,
-        "--datastore-id",
-        help="Target datastore ID for rows without a datastore column "
-        "(repeat for multiple)",
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Preview what would be created/updated"
-    ),
-    status: str = typer.Option(
-        None,
-        "--status",
-        help="Default landing status for rows without one (default: Draft)",
-    ),
-    preserve_status: bool = typer.Option(
-        False,
-        "--preserve-status",
-        help="Omit status so re-applies keep what was set in the product "
-        "(e.g. hand-activated checks stay Active)",
-    ),
-    tag: list[str] = typer.Option(
-        None, "--tag", help="Tag to attach to every check (repeatable)"
-    ),
-    validate_fields: bool = typer.Option(
-        True,
-        "--validate-fields/--no-validate-fields",
-        help="Check field names against the catalogue and correct their casing",
-    ),
-    skip_containers: bool = typer.Option(
-        False,
-        "--skip-containers",
-        help="Skip the computed-container phase (containers already ensured)",
-    ),
-    on_existing: str = typer.Option(
-        "skip",
-        "--on-existing",
-        help="What to do when a computed container already exists: skip or update",
-    ),
-    force_drop_fields: bool = typer.Option(
-        False,
-        "--force-drop-fields",
-        help="With --on-existing update: allow definition changes that drop "
-        "fields carrying quality checks (the platform preserves those checks; "
-        "they reactivate if the fields reappear)",
-    ),
-    profile_timeout: int = typer.Option(
-        900,
-        "--profile-timeout",
-        help="Seconds to wait for each created container's profile operation",
-    ),
-    emit_yaml: str = typer.Option(
-        None, "--emit-yaml", help="Also write the converted checks to this directory"
-    ),
-    failures_log: str = typer.Option(
-        "migrate-apply-failures.log",
-        "--failures-log",
-        help="Write checks that failed to import (which row, why) to this file",
-    ),
-    results_csv: str = typer.Option(
-        "migrate-apply-results.csv",
-        "--results-csv",
-        help="Write the per-check receipt (check_id → created/updated Qualytics "
-        "check, with links) to this CSV; pass an empty string to skip",
-    ),
-    strict: bool = typer.Option(
-        False,
-        "--strict",
-        help="Exit non-zero when the sheet has error rows or anything fails",
-    ),
-):
-    """Create the sheet's computed containers and checks on the target instance.
-
-    Two phases: computed containers first (validate all, create in declaration
-    order, wait for each container's own profile operation), then the checks.
-    Checks upsert on a UID derived from the sheet's check_id, so re-running
-    after sheet edits updates in place rather than duplicating.
-
-    Rows with error-level issues are skipped and reported; fix the sheet and
-    re-apply. By default everything lands as Draft for review — activate in
-    the product, and use --preserve-status on re-applies so activations stick.
-    """
+def _apply_body(
+    *,
+    sheet_path: str,
+    worksheet: str | None,
+    datastore_id: list[int],
+    dry_run: bool,
+    status: str | None,
+    preserve_status: bool,
+    tag: list[str] | None,
+    validate_fields: bool,
+    skip_containers: bool,
+    on_existing: str,
+    force_drop_fields: bool,
+    profile_timeout: int,
+    emit_yaml: str | None,
+    failures_log: str,
+    results_csv: str,
+    strict: bool,
+    run_dir: str | None,
+) -> None:
     from ..api.client import get_client
     from ..services.containers import get_table_ids
     from ..services.migrate import ensure_containers, repair_container_names
@@ -426,7 +453,7 @@ def migrate_apply(
         print(f"[red]--on-existing must be skip or update, got: {on_existing}[/red]")
         raise typer.Exit(code=1)
 
-    plan = _load_plan(sheet_path, status, tag)
+    plan = _load_plan(sheet_path, status, tag, worksheet)
     stats = _print_summary(plan, sheet_path)
 
     if stats["errors"]:
@@ -441,6 +468,9 @@ def migrate_apply(
 
     if emit_yaml:
         _emit_yaml(plan, emit_yaml)
+    if run_dir:
+        # The as-applied YAML is part of the run's audit trail.
+        _emit_yaml(plan, os.path.join(run_dir, "yaml"))
 
     base_ids = list(datastore_id or [])
     needs_base = any(
@@ -540,8 +570,21 @@ def migrate_apply(
                 ds_id: result.get("outcomes") or []
                 for ds_id, result in outcome["results"].items()
             }
+            failures_by_datastore = {
+                ds_id: result.get("failures") or []
+                for ds_id, result in outcome["results"].items()
+            }
+            checks_by_source = {
+                check.get("_source_file"): check
+                for checks in checks_by_datastore.values()
+                for check in checks
+            }
             written = _write_results_csv(
-                results_csv, outcomes_by_datastore, _instance_base_url(client)
+                results_csv,
+                outcomes_by_datastore,
+                _instance_base_url(client),
+                failures_by_datastore,
+                checks_by_source,
             )
             if written:
                 print(
@@ -559,3 +602,373 @@ def migrate_apply(
         stats["errors"] or override_errors or container_failures or total_failed
     ):
         raise typer.Exit(code=1)
+
+
+_RUN_DIR_HELP = (
+    "Directory for this run's artifacts — run.log (timestamped transcript), "
+    "results.csv (per-check OK/FAIL ledger), yaml/ (the as-applied check "
+    "definitions). Default: migrate-runs/<UTC timestamp>. Pass an empty "
+    "string to disable. Dry runs write nothing."
+)
+
+
+@migrate_app.command("apply")
+def migrate_apply(
+    sheet_path: str = typer.Option(
+        ..., "--sheet", "-s", help="Path to the check sheet (.xlsx or .csv)"
+    ),
+    worksheet: str = typer.Option(
+        None,
+        "--worksheet",
+        help="Workbook tab to read: name or 1-based position (default: first)",
+    ),
+    datastore_id: list[int] = typer.Option(
+        None,
+        "--datastore-id",
+        help="Target datastore ID for rows without a datastore column "
+        "(repeat for multiple)",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview what would be created/updated"
+    ),
+    status: str = typer.Option(
+        None,
+        "--status",
+        help="Default landing status for rows without one (default: Draft)",
+    ),
+    preserve_status: bool = typer.Option(
+        False,
+        "--preserve-status",
+        help="Omit status so re-applies keep what was set in the product "
+        "(e.g. hand-activated checks stay Active)",
+    ),
+    tag: list[str] = typer.Option(
+        None, "--tag", help="Tag to attach to every check (repeatable)"
+    ),
+    validate_fields: bool = typer.Option(
+        True,
+        "--validate-fields/--no-validate-fields",
+        help="Check field names against the catalogue and correct their casing",
+    ),
+    skip_containers: bool = typer.Option(
+        False,
+        "--skip-containers",
+        help="Skip the computed-container phase (containers already ensured)",
+    ),
+    on_existing: str = typer.Option(
+        "skip",
+        "--on-existing",
+        help="What to do when a computed container already exists: skip or update",
+    ),
+    force_drop_fields: bool = typer.Option(
+        False,
+        "--force-drop-fields",
+        help="With --on-existing update: allow definition changes that drop "
+        "fields carrying quality checks (the platform preserves those checks; "
+        "they reactivate if the fields reappear)",
+    ),
+    profile_timeout: int = typer.Option(
+        900,
+        "--profile-timeout",
+        help="Seconds to wait for each created container's profile operation",
+    ),
+    emit_yaml: str = typer.Option(
+        None, "--emit-yaml", help="Also write the converted checks to this directory"
+    ),
+    failures_log: str = typer.Option(
+        None,
+        "--failures-log",
+        help="Failure log path (default: <run-dir>/failures.log)",
+    ),
+    results_csv: str = typer.Option(
+        None,
+        "--results-csv",
+        help="Per-check OK/FAIL ledger path (default: <run-dir>/results.csv); "
+        "empty string to skip",
+    ),
+    run_dir: str = typer.Option(None, "--run-dir", help=_RUN_DIR_HELP),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Exit non-zero when the sheet has error rows or anything fails",
+    ),
+):
+    """Create the sheet's computed containers and checks on the target instance.
+
+    Two phases: computed containers first (validate all, create in declaration
+    order, wait for each container's own profile operation), then the checks.
+    Checks upsert on the sheet's check_id (stored as legacy_check_id), so
+    re-running after sheet edits updates in place rather than duplicating.
+
+    Every real run leaves an artifact folder (see --run-dir): a timestamped
+    run.log, a per-check results.csv, and the as-applied YAML definitions.
+
+    Rows with error-level issues are skipped and reported; fix the sheet and
+    re-apply. By default everything lands as Draft for review — activate in
+    the product, and use --preserve-status on re-applies so activations stick.
+    """
+    import sys
+    from datetime import datetime, timezone as _tz
+
+    effective_run_dir = None
+    if not dry_run and run_dir != "":
+        effective_run_dir = run_dir or os.path.join(
+            "migrate-runs", datetime.now(_tz.utc).strftime("%Y%m%d-%H%M%S")
+        )
+        os.makedirs(effective_run_dir, exist_ok=True)
+    if results_csv is None:
+        results_csv = (
+            os.path.join(effective_run_dir, "results.csv") if effective_run_dir else ""
+        )
+    if failures_log is None:
+        failures_log = (
+            os.path.join(effective_run_dir, "failures.log")
+            if effective_run_dir
+            else "migrate-apply-failures.log"
+        )
+
+    tee = None
+    if effective_run_dir:
+        tee = _TeeStream(sys.stdout)
+        sys.stdout = tee
+    try:
+        _apply_body(
+            sheet_path=sheet_path,
+            worksheet=worksheet,
+            datastore_id=datastore_id,
+            dry_run=dry_run,
+            status=status,
+            preserve_status=preserve_status,
+            tag=tag,
+            validate_fields=validate_fields,
+            skip_containers=skip_containers,
+            on_existing=on_existing,
+            force_drop_fields=force_drop_fields,
+            profile_timeout=profile_timeout,
+            emit_yaml=emit_yaml,
+            failures_log=failures_log,
+            results_csv=results_csv,
+            strict=strict,
+            run_dir=effective_run_dir,
+        )
+    finally:
+        if tee is not None:
+            sys.stdout = tee.real
+            _write_run_log(
+                os.path.join(effective_run_dir, "run.log"),
+                sheet_path=sheet_path,
+                worksheet=worksheet,
+                lines=tee.lines,
+            )
+            print(
+                f"[cyan]Run artifacts in {effective_run_dir}/ — run.log, "
+                f"results.csv, yaml/[/cyan]"
+            )
+
+
+# ── validate ──────────────────────────────────────────────────────────────
+
+
+def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
+    """Read-only checks against the target instance; returns the error count.
+
+    Resolves everything `apply` would need — target containers, field names,
+    cross-references, join sources — with GETs only, so a broken sheet fails
+    here instead of one POST at a time mid-migration.
+    """
+    from ..api.client import get_client
+    from ..api.fields import container_field_names
+    from ..services.containers import get_table_ids
+    from ..services.datastores import get_datastore_by_name
+    from ..services.rules import resolve_check_fields
+    from .import_flow import field_catalogue
+
+    client = get_client()
+    errors = 0
+
+    resolved, override_errors = _resolve_datastore_overrides(client, plan)
+    for message in override_errors:
+        print(f"  [red]✗ {message}[/red]")
+        errors += 1
+
+    routed_checks = _route(plan.checks, base_ids, resolved)
+    routed_containers = _route(plan.containers, base_ids, resolved)
+
+    datastore_cache: dict[str, int | None] = {}
+
+    def _resolve_ref_datastore(properties: dict, default_id: int) -> int | None:
+        if "ref_datastore_id" in properties:
+            return int(properties["ref_datastore_id"])
+        name = properties.get("ref_datastore_name")
+        if not name:
+            return default_id
+        if name not in datastore_cache:
+            found = get_datastore_by_name(client, name)
+            datastore_cache[name] = found["id"] if found else None
+        return datastore_cache[name]
+
+    table_cache: dict[int, dict] = {}
+
+    def _tables(ds_id: int) -> dict:
+        if ds_id not in table_cache:
+            table_cache[ds_id] = get_table_ids(client=client, datastore_id=ds_id) or {}
+        return table_cache[ds_id]
+
+    for ds_id in sorted(set(routed_checks) | set(routed_containers)):
+        print(f"\n[cyan]Validating against datastore {ds_id} (read-only)...[/cyan]")
+        ds_errors = 0
+        tables = _tables(ds_id)
+        lower_tables = {name.lower(): name for name in tables}
+        in_sheet = {spec.name for spec in routed_containers.get(ds_id, [])}
+
+        # Join sources resolve against the catalogue or earlier sheet rows.
+        for spec in routed_containers.get(ds_id, []):
+            for source in spec.spec.get("sources") or []:
+                name = source["container"]
+                if name in tables or name.lower() in lower_tables or name in in_sheet:
+                    continue
+                print(
+                    f"  [red]✗ row {spec.row} ({spec.check_id}): join source "
+                    f"'{name}' not found in datastore {ds_id}[/red]"
+                )
+                ds_errors += 1
+
+        # Target containers exist (or this sheet creates them).
+        resolvable: list = []
+        for item in routed_checks.get(ds_id, []):
+            name = item.container
+            if name in tables or name.lower() in lower_tables:
+                resolvable.append(item)
+            elif name in in_sheet:
+                print(
+                    f"  [dim]row {item.row} ({item.check_id}): container "
+                    f"'{name}' will be created by this sheet — field names "
+                    "checked after profiling[/dim]"
+                )
+            else:
+                print(
+                    f"  [red]✗ row {item.row} ({item.check_id}): container "
+                    f"'{name}' not found in datastore {ds_id}[/red]"
+                )
+                ds_errors += 1
+
+        # Field names against the catalogue (with the casing repair apply uses).
+        checks = [
+            {
+                **item.check,
+                "container": lower_tables.get(item.container.lower(), item.container),
+            }
+            for item in resolvable
+        ]
+        catalogue = field_catalogue(
+            client, ds_id, {check["container"] for check in checks}
+        )
+        _importable, rejected, corrections = resolve_check_fields(checks, catalogue)
+        for correction in corrections:
+            print(f"  [dim]field casing repaired: {correction}[/dim]")
+        for item in rejected:
+            print(f"  [red]✗ {item['reason']}[/red]")
+            ds_errors += 1
+
+        # Cross-references resolve to a real container (and field).
+        ref_field_cache: dict[int, list[str]] = {}
+        for item in routed_checks.get(ds_id, []):
+            properties = item.check.get("properties") or {}
+            ref_name = properties.get("ref_container_name")
+            if not ref_name:
+                continue
+            ref_ds = _resolve_ref_datastore(properties, ds_id)
+            if ref_ds is None:
+                print(
+                    f"  [red]✗ row {item.row} ({item.check_id}): referenced "
+                    f"datastore '{properties.get('ref_datastore_name')}' not "
+                    "found[/red]"
+                )
+                ds_errors += 1
+                continue
+            ref_tables = _tables(ref_ds)
+            ref_lower = {name.lower(): name for name in ref_tables}
+            actual = ref_tables.get(ref_name) or ref_tables.get(
+                ref_lower.get(ref_name.lower(), "")
+            )
+            if actual is None and ref_name in in_sheet and ref_ds == ds_id:
+                print(
+                    f"  [dim]row {item.row} ({item.check_id}): ref container "
+                    f"'{ref_name}' will be created by this sheet[/dim]"
+                )
+                continue
+            if actual is None:
+                print(
+                    f"  [red]✗ row {item.row} ({item.check_id}): ref_container "
+                    f"'{ref_name}' not found in datastore {ref_ds}[/red]"
+                )
+                ds_errors += 1
+                continue
+            print(
+                f"  [dim]row {item.row} ({item.check_id}): ref '{ref_name}' → "
+                f"container {actual} in datastore {ref_ds}[/dim]"
+            )
+            ref_field = properties.get("field_name")
+            if ref_field:
+                if actual not in ref_field_cache:
+                    try:
+                        ref_field_cache[actual] = container_field_names(client, actual)
+                    except Exception:  # noqa: BLE001 - lookup is best-effort
+                        ref_field_cache[actual] = []
+                known = ref_field_cache[actual]
+                if (
+                    known
+                    and ref_field not in known
+                    and ref_field.lower() not in {name.lower() for name in known}
+                ):
+                    print(
+                        f"  [red]✗ row {item.row} ({item.check_id}): ref_field "
+                        f"'{ref_field}' not found in '{ref_name}'[/red]"
+                    )
+                    ds_errors += 1
+
+        if ds_errors:
+            print(f"  [red]{ds_errors} problem(s) in datastore {ds_id}[/red]")
+        else:
+            print(f"  [green]datastore {ds_id}: all references resolve[/green]")
+        errors += ds_errors
+
+    return errors
+
+
+@migrate_app.command("validate")
+def migrate_validate(
+    sheet_path: str = typer.Option(
+        ..., "--sheet", "-s", help="Path to the check sheet (.xlsx or .csv)"
+    ),
+    worksheet: str = typer.Option(
+        None,
+        "--worksheet",
+        help="Workbook tab to read: name or 1-based position (default: first)",
+    ),
+    datastore_id: list[int] = typer.Option(
+        None,
+        "--datastore-id",
+        help="Also resolve containers/fields/refs against this datastore, "
+        "read-only (repeat for multiple)",
+    ),
+):
+    """Fail-early validation: everything `plan` checks, plus read-only
+    resolution against target datastores when --datastore-id is given.
+    Makes no changes; exits non-zero on any problem."""
+    plan = _load_plan(sheet_path, None, None, worksheet)
+    stats = _print_summary(plan, sheet_path)
+
+    total_errors = stats["errors"]
+    if datastore_id:
+        total_errors += _validate_online(plan, list(datastore_id))
+    elif any(item.datastore is not None for item in [*plan.checks, *plan.containers]):
+        print(
+            "[dim]Pass --datastore-id to also resolve containers, fields and "
+            "references against the target instance.[/dim]"
+        )
+
+    if total_errors:
+        print(f"\n[bold red]Validation failed — {total_errors} problem(s).[/bold red]")
+        raise typer.Exit(code=1)
+    print("\n[bold green]Validation passed.[/bold green]")

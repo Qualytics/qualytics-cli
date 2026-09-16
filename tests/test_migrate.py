@@ -1235,3 +1235,42 @@ class TestWaitForContainerProfileAnchor:
         )
         assert ok
         assert "operation 56" in detail
+
+
+class TestWorksheetSelection:
+    def _workbook(self, tmp_path):
+        from openpyxl import Workbook
+
+        path = tmp_path / "multi.xlsx"
+        workbook = Workbook()
+        first = workbook.active
+        first.title = "Notes"
+        first.append(["note"])
+        first.append(["remember the timezone convention"])
+        checks = workbook.create_sheet("Week 1 Checks")
+        checks.append(["check_id", "rule_type", "container", "fields"])
+        checks.append(["100", "notNull", "orders", "order_id"])
+        workbook.save(path)
+        return str(path)
+
+    def test_worksheet_by_name_case_insensitive(self, tmp_path):
+        rows = load_sheet(self._workbook(tmp_path), "week 1 checks")
+        assert rows[0]["check_id"] == "100"
+
+    def test_worksheet_by_position(self, tmp_path):
+        rows = load_sheet(self._workbook(tmp_path), "2")
+        assert rows[0]["check_id"] == "100"
+
+    def test_default_is_first_worksheet(self, tmp_path):
+        rows = load_sheet(self._workbook(tmp_path))
+        assert rows[0]["note"] == "remember the timezone convention"
+
+    def test_unknown_worksheet_lists_available(self, tmp_path):
+        with pytest.raises(ValueError, match="available: Notes, Week 1 Checks"):
+            load_sheet(self._workbook(tmp_path), "week 2")
+
+    def test_csv_rejects_worksheet(self, tmp_path):
+        path = tmp_path / "sheet.csv"
+        path.write_text("check_id\n1\n")
+        with pytest.raises(ValueError, match="single sheet"):
+            load_sheet(str(path), "2")
