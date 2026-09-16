@@ -954,6 +954,52 @@ class TestEnsureContainers:
         assert waited == []  # existing profile stands
         assert any("unchanged" in m for m in messages)
 
+    def test_force_drop_fields_passes_through(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+        import qualytics.api.containers as api
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[{"id": 9, "name": "calc", "container_type": "computed_table"}],
+        )
+        self._no_wait(monkeypatch)
+        forced = []
+        monkeypatch.setattr(
+            api,
+            "update_container",
+            lambda client, cid, payload, **kw: forced.append(
+                kw.get("force_drop_fields")
+            ),
+        )
+
+        ensure_containers(
+            object(), [_spec()], 42, on_existing="update", force_drop_fields=True
+        )
+        assert forced == [True]
+        assert not calls["update"]  # bypassed the default recorder above
+
+    def test_conflict_error_gets_force_hint(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+        import qualytics.api.containers as api
+
+        self._patches(
+            monkeypatch,
+            listing=[{"id": 9, "name": "calc", "container_type": "computed_table"}],
+        )
+        self._no_wait(monkeypatch)
+
+        def _conflict(client, cid, payload, **kw):
+            raise RuntimeError(
+                'HTTP 409: Conflict: {"detail": {"message": "Set '
+                'force_drop_fields=true to proceed."}}'
+            )
+
+        monkeypatch.setattr(api, "update_container", _conflict)
+        result = ensure_containers(object(), [_spec()], 42, on_existing="update")
+        assert result["failed"] == 1
+        assert "--force-drop-fields" in result["errors"][0]
+        assert "update the sheet's dependent check rows" in result["errors"][0]
+
     def test_existing_update_metadata_only_uses_label_path(self, monkeypatch):
         from qualytics.services.migrate import ensure_containers
 

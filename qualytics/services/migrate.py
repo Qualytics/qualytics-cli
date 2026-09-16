@@ -1140,6 +1140,7 @@ def ensure_containers(
     datastore_id: int,
     *,
     on_existing: str = "skip",
+    force_drop_fields: bool = False,
     wait_profile: bool = True,
     profile_timeout: int = 900,
     poll_interval: int = 10,
@@ -1322,7 +1323,12 @@ def ensure_containers(
                     baseline_operation_id = _latest_profile_operation_id(
                         client, existing_id, datastore_id
                     )
-                update_container(client, existing_id, payload)
+                update_container(
+                    client,
+                    existing_id,
+                    payload,
+                    force_drop_fields=force_drop_fields,
+                )
                 container_id = existing_id
                 result["updated"] += 1
                 report(f"updated {spec.kind} '{spec.name}' (id {container_id})")
@@ -1335,7 +1341,17 @@ def ensure_containers(
                 result["created"] += 1
                 report(f"created {spec.kind} '{spec.name}' (id {container_id})")
         except Exception as e:  # noqa: BLE001 - reported, phase aborts
-            fail(spec, str(e))
+            message = str(e)
+            if "force_drop_fields" in message and not force_drop_fields:
+                message += (
+                    "\n    The platform is protecting quality checks attached to "
+                    "fields this change would drop. Re-run with "
+                    "--force-drop-fields to proceed — affected checks are "
+                    "preserved and reactivate if the fields reappear — and "
+                    "update the sheet's dependent check rows to the new field "
+                    "names."
+                )
+            fail(spec, message)
             break
 
         if wait_profile:

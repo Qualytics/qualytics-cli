@@ -442,3 +442,25 @@ class TestMigrateApply:
         )
         assert result.exit_code == 0, result.output
         assert not out.exists()
+
+    def test_force_drop_fields_flag_reaches_container_phase(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        harness = _ApplyHarness(monkeypatch, tmp_path)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, ROUTED_SHEET),
+                "--datastore-id",
+                "7",
+                "--on-existing",
+                "update",
+                "--force-drop-fields",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert harness.ensure_calls[0]["force_drop_fields"] is True
+        assert harness.ensure_calls[0]["on_existing"] == "update"

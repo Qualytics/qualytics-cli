@@ -372,6 +372,13 @@ def migrate_apply(
         "--on-existing",
         help="What to do when a computed container already exists: skip or update",
     ),
+    force_drop_fields: bool = typer.Option(
+        False,
+        "--force-drop-fields",
+        help="With --on-existing update: allow definition changes that drop "
+        "fields carrying quality checks (the platform preserves those checks; "
+        "they reactivate if the fields reappear)",
+    ),
     profile_timeout: int = typer.Option(
         900,
         "--profile-timeout",
@@ -469,6 +476,7 @@ def migrate_apply(
                 specs,
                 ds_id,
                 on_existing=on_existing,
+                force_drop_fields=force_drop_fields,
                 profile_timeout=profile_timeout,
                 dry_run=dry_run,
                 report=lambda message: print(f"  {message}"),
