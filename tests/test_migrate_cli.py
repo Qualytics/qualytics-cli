@@ -751,8 +751,17 @@ class TestValidateSql:
 
         def _validate(client, payload, **kw):
             calls.append(payload)
-            if fail:
-                raise RuntimeError("HTTP 422: Invalid object name 'ORDERS'.")
+            if fail == "raise":
+                from qualytics.api.client import QualyticsAPIError
+
+                raise QualyticsAPIError(422, "Invalid object name 'ORDERS'.", "u")
+            if fail == "body":
+                return {"success": False, "message": "Invalid SQL near UNPIVOT"}
+            if fail == "infra":
+                from qualytics.api.client import AuthenticationError
+
+                raise AuthenticationError(401, "token expired", "u")
+            return {"success": True, "message": "Validation passed"}
 
         monkeypatch.setattr(containers_api, "validate_container", _validate)
         return calls
@@ -764,7 +773,7 @@ class TestValidateSql:
     )
 
     def test_bad_sql_fails_validate(self, cli_runner, tmp_path, monkeypatch):
-        calls = self._patches(monkeypatch, fail=True)
+        calls = self._patches(monkeypatch, fail="raise")
         result = cli_runner.invoke(
             app,
             [
@@ -837,3 +846,47 @@ class TestValidateSql:
         assert result.exit_code == 0, result.output
         assert "SQL validated at apply time" in result.output
         assert len(calls) == 1  # only the base table hit the endpoint
+
+    def test_failure_reported_in_success_body(self, cli_runner, tmp_path, monkeypatch):
+        """A 200 body with success: false is a failure, not a pass."""
+        self._patches(monkeypatch, fail="body")
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, self.SHEET),
+                "--datastore-id",
+                "19",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "failed source validation" in result.output
+        assert "Invalid SQL" in result.output
+
+    def test_infra_error_reported_once_not_per_container(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        calls = self._patches(monkeypatch, fail="infra")
+        sheet = (
+            "check_id,kind,rule_type,container,fields,query\n"
+            "CT1,computed_table,,recon_a,,SELECT 1 AS a FROM tpch.ORDERS\n"
+            "CT2,computed_table,,recon_b,,SELECT 2 AS b FROM tpch.ORDERS\n"
+        )
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "19",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "SQL validation unavailable" in result.output
+        assert "not a sheet problem" in result.output
+        assert result.output.count("failed source validation") == 0
+        assert len(calls) == 1  # stopped after the shared failure

@@ -925,6 +925,13 @@ def _validate_online(
         # can't vouch for (schema qualification, dialect). A join reading a
         # table this sheet creates can only be validated at apply time.
         if validate_sql:
+            import requests
+
+            from ..api.client import (
+                AuthenticationError,
+                QualyticsAPIError,
+                ServerError,
+            )
             from ..api.containers import validate_container
 
             for spec in routed_containers.get(ds_id, []):
@@ -943,12 +950,42 @@ def _validate_online(
                     ds_errors += 1
                     continue
                 try:
-                    validate_container(client, payload)
+                    result = validate_container(client, payload)
+                    # The endpoint can report failure in a 200 body instead of
+                    # raising — same contract `containers validate` checks.
+                    if isinstance(result, dict) and result.get("success") is False:
+                        message = str(result.get("message") or result)
+                        print(
+                            f"  [red]✗ row {spec.row} ({spec.check_id}): SQL for "
+                            f"'{spec.name}' failed source validation: "
+                            f"{message[:400]}[/red]"
+                        )
+                        ds_errors += 1
+                        continue
                     print(
                         f"  [dim]row {spec.row} ({spec.check_id}): SQL for "
                         f"'{spec.name}' validated against the source[/dim]"
                     )
-                except Exception as e:  # noqa: BLE001 - surfaced as a finding
+                except (
+                    AuthenticationError,
+                    ServerError,
+                    requests.RequestException,
+                ) as e:
+                    # Auth, connectivity and server outages are one shared
+                    # problem, not a per-container SQL finding — report once
+                    # and stop pretending to validate SQL.
+                    message = str(e)
+                    if len(message) > 300:
+                        message = message[:300] + "…"
+                    print(
+                        f"  [red]✗ SQL validation unavailable ({message}) — an "
+                        "instance/connectivity problem, not a sheet problem; "
+                        "skipping remaining SQL validation[/red]"
+                    )
+                    ds_errors += 1
+                    validate_sql = False
+                    break
+                except QualyticsAPIError as e:
                     message = str(e)
                     if len(message) > 400:
                         message = message[:400] + "…"
