@@ -1,0 +1,7 @@
+check_id,kind,rule_type,container,fields,value,expression,query,sources
+100,,freshness,orders,,,,,
+100,,notNull,orders,order_id,,,,
+200,,existsIn,orders,customer_id,,,,
+300,,satisfiesExpression,orders,,,d >= CURRENT_DATE - 1,,
+cj1,computed_join,,joined,,,,SELECT 1,late_table=l; orders=o
+ct1,computed_table,,late_table,,,,SELECT 1,

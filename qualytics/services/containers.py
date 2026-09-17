@@ -53,6 +53,14 @@ def get_container_by_name(
     for item in items:
         if item.get("name") == name:
             return item
+    # The catalogue is ground truth for casing (Snowflake uppercases, dbt and
+    # sheets tend to lowercase) — fall back to a case-insensitive match when it
+    # is unambiguous, mirroring the field-name repair. Two catalogued names
+    # differing only by case stay a miss rather than a guess.
+    lowered = name.lower()
+    matches = [item for item in items if (item.get("name") or "").lower() == lowered]
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 

@@ -176,3 +176,9 @@ test_example/**
 
 # Local, non-committed test assets and artifacts (mock manifests, scratch files)
 sandbox/
+
+# Bulk-importer run artifacts (written to CWD by default)
+migrate-apply-results.csv
+migrate-apply-failures.log
+dbt-import-failures.log
+migrate-runs/

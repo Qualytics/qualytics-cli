@@ -364,3 +364,52 @@ class TestGetClient:
         config = {"url": "https://example.com/api", "token": token, "timeout": 60}
         client = get_client(config)
         assert client.timeout == 60
+
+
+class TestGetClientEnvOverrides:
+    """Tests for QUALYTICS_URL / QUALYTICS_TOKEN instance overrides."""
+
+    @staticmethod
+    def _token():
+        import jwt
+
+        return jwt.encode(
+            {"sub": "user"},
+            key="test-secret-key-with-at-least-32-bytes",
+            algorithm="HS256",
+        )
+
+    def test_env_pair_builds_client(self, monkeypatch, tmp_path):
+        # A stored config must not shadow the env pair.
+        import yaml
+
+        stored = tmp_path / "config.yaml"
+        stored.write_text(
+            yaml.safe_dump({"url": "https://stored.example.com", "token": "stale"})
+        )
+        monkeypatch.setenv("QUALYTICS_URL", "https://uat.example.com")
+        monkeypatch.setenv("QUALYTICS_TOKEN", self._token())
+        with patch("qualytics.config.CONFIG_PATH", str(stored)):
+            client = get_client()
+        assert client.base_url == "https://uat.example.com/api/"
+
+    def test_explicit_config_beats_env(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_URL", "https://uat.example.com")
+        monkeypatch.setenv("QUALYTICS_TOKEN", self._token())
+        client = get_client(
+            {"url": "https://param.example.com", "token": self._token()}
+        )
+        assert client.base_url == "https://param.example.com/api/"
+
+    def test_env_ssl_verify_disabled(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_URL", "https://uat.example.com")
+        monkeypatch.setenv("QUALYTICS_TOKEN", self._token())
+        monkeypatch.setenv("QUALYTICS_SSL_VERIFY", "false")
+        client = get_client()
+        assert client.ssl_verify is False
+
+    def test_env_expired_token_exits(self, monkeypatch):
+        monkeypatch.setenv("QUALYTICS_URL", "https://uat.example.com")
+        monkeypatch.setenv("QUALYTICS_TOKEN", "not-a-jwt")
+        with pytest.raises(SystemExit):
+            get_client()

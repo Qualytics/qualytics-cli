@@ -16,6 +16,7 @@ from ..api.quality_checks import (
 )
 from ..services.containers import get_container_by_name, get_table_ids
 from ..services.datastores import get_datastore_by_name
+from ..services.rules import CROSS_REF_RULES
 from ..utils.serialization import _SafeStringLoader
 
 # ── Stable UID ────────────────────────────────────────────────────────────
@@ -23,7 +24,8 @@ from ..utils.serialization import _SafeStringLoader
 _UID_KEY = "_qualytics_check_uid"
 
 # Cross-reference rule types that use ref_container_id / ref_datastore_id
-_CROSS_REF_RULES = frozenset({"existsIn", "notExistsIn", "isReplicaOf", "dataDiff"})
+# (shared with the dbt and sheet-migration pipelines).
+_CROSS_REF_RULES = CROSS_REF_RULES
 
 
 def _slugify(text: str) -> str:
@@ -145,12 +147,20 @@ def export_checks_to_directory(
 ) -> dict[str, int]:
     """Write one YAML file per check, organized by container.
 
-    Returns {"exported": N, "containers": M}.
+    Returns {"exported": N, "containers": M, "duplicate_uids": {uid: [paths]}}.
+
+    ``duplicate_uids`` names exported files that share an upsert UID. A check
+    without its own ``_qualytics_check_uid`` gets the generated
+    container__rule__fields UID, which collides for same-shaped checks — and
+    the importer upserts on UID, so each colliding set would fold into ONE
+    check on import, later files silently overwriting earlier ones. Callers
+    must surface this.
     """
     base = Path(output_dir)
     containers_seen: set[str] = set()
     # Track filenames per container to handle duplicates
     used_filenames: dict[str, set[str]] = {}
+    uid_files: dict[str, list[str]] = {}
     exported = 0
 
     for check in checks:
@@ -193,9 +203,18 @@ def export_checks_to_directory(
                 sort_keys=False,
                 allow_unicode=True,
             )
+        uid = portable["additional_metadata"].get(_UID_KEY)
+        if uid:
+            uid_files.setdefault(uid, []).append(f"{container_slug}/{fname}")
         exported += 1
 
-    return {"exported": exported, "containers": len(containers_seen)}
+    return {
+        "exported": exported,
+        "containers": len(containers_seen),
+        "duplicate_uids": {
+            uid: files for uid, files in uid_files.items() if len(files) > 1
+        },
+    }
 
 
 def get_quality_check_reference_maps(
@@ -237,15 +256,23 @@ def load_checks_from_directory(input_dir: str) -> list[dict]:
     return checks
 
 
-def _build_uid_lookup(client: QualyticsClient, datastore_id: int) -> dict[str, int]:
-    """Build a mapping of _qualytics_check_uid → check_id for a datastore."""
+def _build_uid_lookup(
+    client: QualyticsClient, datastore_id: int, uid_key: str = _UID_KEY
+) -> dict[str, int]:
+    """Build a mapping of upsert key → check_id for a datastore.
+
+    ``uid_key`` names the additional_metadata key that identifies a check
+    across runs — ``_qualytics_check_uid`` for the export/import and dbt
+    flows, ``legacy_check_id`` for sheet migrations (whose client-owned key
+    doubles as the upsert identity, keeping internal keys out of the UI).
+    """
     existing = list_all_quality_checks(client, datastore_id)
     lookup: dict[str, int] = {}
     for check in existing:
         meta = check.get("additional_metadata") or {}
-        uid = meta.get(_UID_KEY)
-        if uid:
-            lookup[uid] = check["id"]
+        uid = meta.get(uid_key)
+        if uid is not None:
+            lookup[str(uid)] = check["id"]
     return lookup
 
 
@@ -373,6 +400,8 @@ def import_checks_to_datastore(
     checks: list[dict],
     *,
     dry_run: bool = False,
+    pending_containers: set[str] | None = None,
+    uid_key: str = _UID_KEY,
 ) -> dict[str, int | list]:
     """Import checks to a single datastore with upsert logic.
 
@@ -382,6 +411,13 @@ def import_checks_to_datastore(
     ``failures`` carries the same information structured as
     ``{"source": ..., "reason": ...}`` so callers can log or report which
     check failed and why without parsing the strings back apart.
+
+    ``pending_containers`` names containers an earlier phase of the same run
+    will have created by the time checks import for real (e.g. `migrate
+    apply`'s computed containers). Only a dry run consults it — a check
+    targeting one counts as a create instead of a spurious "container not
+    found"; a real run resolves against the live listing, where those
+    containers already exist.
     """
     # Resolve container names → IDs
     table_ids = get_table_ids(client=client, datastore_id=datastore_id)
@@ -396,16 +432,21 @@ def import_checks_to_datastore(
                 {"source": check.get("_source_file", "unknown"), "reason": reason}
                 for check in checks
             ],
+            "outcomes": [],
         }
 
     # Build UID lookup for upsert matching
-    uid_lookup = _build_uid_lookup(client, datastore_id)
+    uid_lookup = _build_uid_lookup(client, datastore_id, uid_key)
 
     created = 0
     updated = 0
     failed = 0
     errors: list[str] = []
     failures: list[dict] = []
+    # One entry per successful write — the per-check receipt callers can log:
+    # {source, action: created|updated, id, container_id, check}. Dry runs
+    # leave it empty (nothing was written).
+    outcomes: list[dict] = []
 
     # Build reverse lookup for validating container_id when provided directly
     id_to_name = {v: k for k, v in table_ids.items()}
@@ -428,6 +469,11 @@ def import_checks_to_datastore(
             container_name = check.get("container", "")
             container_id = table_ids.get(container_name)
             if container_id is None:
+                if dry_run and container_name in (pending_containers or ()):
+                    # The container phase of this run will create it; the
+                    # check can only be a create, never an update.
+                    created += 1
+                    continue
                 reason = (
                     f"Container '{container_name}' not found in datastore "
                     f"{datastore_id}"
@@ -437,7 +483,8 @@ def import_checks_to_datastore(
                 failed += 1
                 continue
 
-        uid = (check.get("additional_metadata") or {}).get(_UID_KEY)
+        uid = (check.get("additional_metadata") or {}).get(uid_key)
+        uid = str(uid) if uid is not None else None
 
         if dry_run:
             if uid and uid in uid_lookup:
@@ -458,6 +505,15 @@ def import_checks_to_datastore(
                 payload = _build_update_payload(update_source)
                 update_quality_check(client, existing_id, payload)
                 updated += 1
+                outcomes.append(
+                    {
+                        "source": source,
+                        "action": "updated",
+                        "id": existing_id,
+                        "container_id": container_id,
+                        "check": check,
+                    }
+                )
             else:
                 # Create new check
                 payload = _build_create_payload(resolved_check, container_id)
@@ -466,6 +522,15 @@ def import_checks_to_datastore(
                 # Register UID for subsequent duplicate detection within this run
                 if uid:
                     uid_lookup[uid] = result["id"]
+                outcomes.append(
+                    {
+                        "source": source,
+                        "action": "created",
+                        "id": result["id"],
+                        "container_id": container_id,
+                        "check": check,
+                    }
+                )
         except Exception as e:
             errors.append(f"Failed on '{source}': {e}")
             failures.append({"source": source, "reason": str(e)})
@@ -477,4 +542,5 @@ def import_checks_to_datastore(
         "failed": failed,
         "errors": errors,
         "failures": failures,
+        "outcomes": outcomes,
     }

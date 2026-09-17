@@ -228,6 +228,31 @@ class TestStripForExport:
             "ref_datastore_name": "crm",
         }
 
+    def test_resolves_aggregation_comparison_refs_to_names(self):
+        check = _make_api_check(
+            rule_type="aggregationComparison",
+            fields=None,
+            properties={
+                "expression": "sum(amount)",
+                "comparison": "eq",
+                "ref_expression": "sum(total_amount)",
+                "ref_container_id": 200,
+                "ref_datastore_id": 20,
+            },
+        )
+        result = strip_for_export(
+            check,
+            containers_by_id={200: {"id": 200, "name": "customers"}},
+            datastores_by_id={20: {"id": 20, "name": "crm"}},
+        )
+        assert result["properties"] == {
+            "expression": "sum(amount)",
+            "comparison": "eq",
+            "ref_expression": "sum(total_amount)",
+            "ref_container_name": "customers",
+            "ref_datastore_name": "crm",
+        }
+
 
 class TestQualityCheckReferences:
     @patch("qualytics.services.quality_checks.get_datastore")
@@ -285,6 +310,43 @@ class TestQualityCheckReferences:
             "ref_container_id": 200,
         }
         mock_get_container.assert_called_once_with(client, 20, "customers")
+
+    @patch("qualytics.services.quality_checks.get_container_by_name")
+    @patch("qualytics.services.quality_checks.get_datastore_by_name")
+    def test_aggregation_comparison_round_trips_across_instances(
+        self, mock_get_datastore, mock_get_container
+    ):
+        """Export resolves ref IDs to names; import resolves them back."""
+        check = _make_api_check(
+            rule_type="aggregationComparison",
+            fields=None,
+            properties={
+                "expression": "sum(amount)",
+                "comparison": "eq",
+                "ref_expression": "sum(total_amount)",
+                "ref_container_id": 200,
+                "ref_datastore_id": 20,
+            },
+        )
+        portable = strip_for_export(
+            check,
+            containers_by_id={200: {"id": 200, "name": "customers"}},
+            datastores_by_id={20: {"id": 20, "name": "crm"}},
+        )
+
+        client = _mock_client()
+        mock_get_datastore.return_value = {"id": 77, "name": "crm"}
+        mock_get_container.return_value = {"id": 888, "name": "customers"}
+
+        resolved = resolve_quality_check_references(client, portable, datastore_id=10)
+
+        assert resolved["properties"] == {
+            "expression": "sum(amount)",
+            "comparison": "eq",
+            "ref_expression": "sum(total_amount)",
+            "ref_datastore_id": 77,
+            "ref_container_id": 888,
+        }
 
 
 # ── Directory export/import ──────────────────────────────────────────────
@@ -747,6 +809,11 @@ class TestImportChecksToDatastore:
         assert result["updated"] == 0
         assert result["failed"] == 0
         mock_create.assert_called_once()
+        (outcome,) = result["outcomes"]
+        assert outcome["action"] == "created"
+        assert outcome["id"] == 999
+        assert outcome["container_id"] == 100
+        assert outcome["check"] is checks[0]
 
     @patch("qualytics.services.quality_checks.update_quality_check")
     @patch("qualytics.services.quality_checks.list_all_quality_checks")
@@ -767,6 +834,9 @@ class TestImportChecksToDatastore:
         assert result["updated"] == 1
         assert result["failed"] == 0
         mock_update.assert_called_once()
+        (outcome,) = result["outcomes"]
+        assert outcome["action"] == "updated"
+        assert outcome["id"] == 50
 
     @patch("qualytics.services.quality_checks.get_quality_check")
     @patch("qualytics.services.quality_checks.update_quality_check")
@@ -849,6 +919,39 @@ class TestImportChecksToDatastore:
 
         assert result["created"] == 0
         assert result["updated"] == 1
+
+    @patch("qualytics.services.quality_checks.list_all_quality_checks")
+    @patch("qualytics.services.quality_checks.get_table_ids")
+    def test_dry_run_counts_pending_container_as_create(self, mock_tables, mock_list):
+        """A container the same run will create is not a dry-run failure."""
+        client = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        mock_list.return_value = []
+
+        checks = [_make_portable_check("notNull", "recon_unpivot", ["delta"])]
+        result = import_checks_to_datastore(
+            client, 42, checks, dry_run=True, pending_containers={"recon_unpivot"}
+        )
+
+        assert result["created"] == 1
+        assert result["failed"] == 0
+        assert result["errors"] == []
+
+    @patch("qualytics.services.quality_checks.list_all_quality_checks")
+    @patch("qualytics.services.quality_checks.get_table_ids")
+    def test_real_run_ignores_pending_containers(self, mock_tables, mock_list):
+        """Outside dry-run the live listing is the only truth."""
+        client = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        mock_list.return_value = []
+
+        checks = [_make_portable_check("notNull", "recon_unpivot", ["delta"])]
+        result = import_checks_to_datastore(
+            client, 42, checks, dry_run=False, pending_containers={"recon_unpivot"}
+        )
+
+        assert result["failed"] == 1
+        assert "not found" in result["errors"][0]
 
     @patch("qualytics.services.quality_checks.get_table_ids")
     def test_container_not_found_fails(self, mock_tables):
@@ -1804,3 +1907,218 @@ class TestCheckContractRegressions:
         assert payload["tags"] == ["critical"]
         assert payload["additional_metadata"] == {"source": "manual"}
         assert payload["status"] == "Draft"
+
+
+class TestContainerFilterByName:
+    @patch("qualytics.cli.checks.export_checks_to_directory")
+    @patch("qualytics.cli.checks.get_quality_check_reference_maps")
+    @patch("qualytics.cli.checks.list_all_quality_checks")
+    @patch("qualytics.cli.checks.get_table_ids")
+    @patch("qualytics.cli.checks.get_client")
+    def test_export_accepts_names_and_ids(
+        self,
+        mock_gc,
+        mock_tables,
+        mock_list,
+        mock_maps,
+        mock_export,
+        cli_runner,
+        tmp_path,
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_tables.return_value = {"NATION": 6659, "REGION": 6663}
+        mock_list.return_value = [{"id": 1, "rule_type": "notNull"}]
+        mock_maps.return_value = ({}, {})
+        mock_export.return_value = {"exported": 1, "containers": 1}
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "export",
+                "--datastore-id",
+                "844",
+                "--containers",
+                "nation,6663",
+                "--output",
+                str(tmp_path / "out"),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        # Case-insensitive name resolved + numeric id passed through.
+        assert mock_list.call_args.kwargs["containers"] == [6663, 6659]
+
+    @patch("qualytics.cli.checks.get_table_ids")
+    @patch("qualytics.cli.checks.get_client")
+    def test_export_unknown_container_name_exits(
+        self, mock_gc, mock_tables, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_tables.return_value = {"NATION": 6659}
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "export",
+                "--datastore-id",
+                "844",
+                "--containers",
+                "GHOST",
+                "--output",
+                str(tmp_path / "out"),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "not found in datastore 844: GHOST" in result.output
+
+
+class TestDuplicateUidWarnings:
+    def _same_shape_checks(self):
+        # Two UI-authored checks (no stored UID) with identical shape → the
+        # generated container__rule__fields UID collides.
+        return [
+            _make_api_check(1, "volumetric", "nation", [], []),
+            _make_api_check(2, "volumetric", "nation", [], []),
+            _make_api_check(3, "notNull", "nation", ["n_name"], []),
+        ]
+
+    def test_export_reports_duplicate_uids(self, tmp_path):
+        result = export_checks_to_directory(self._same_shape_checks(), str(tmp_path))
+        assert result["exported"] == 3
+        assert result["duplicate_uids"] == {
+            "nation__volumetric": [
+                "nation/volumetric.yaml",
+                "nation/volumetric_2.yaml",
+            ]
+        }
+
+    @patch("qualytics.cli.checks.export_checks_to_directory")
+    @patch("qualytics.cli.checks.get_quality_check_reference_maps")
+    @patch("qualytics.cli.checks.list_all_quality_checks")
+    @patch("qualytics.cli.checks.get_client")
+    def test_export_cli_prints_collision_warning(
+        self, mock_gc, mock_list, mock_maps, mock_export, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_list.return_value = [{"id": 1, "rule_type": "volumetric"}]
+        mock_maps.return_value = ({}, {})
+        mock_export.return_value = {
+            "exported": 2,
+            "containers": 1,
+            "duplicate_uids": {
+                "nation__volumetric": [
+                    "nation/volumetric.yaml",
+                    "nation/volumetric_2.yaml",
+                ]
+            },
+        }
+        result = cli_runner.invoke(
+            app,
+            [
+                "checks",
+                "export",
+                "--datastore-id",
+                "844",
+                "--output",
+                str(tmp_path / "o"),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "UID collision" in result.output
+        assert "nation__volumetric" in result.output
+
+    @patch("qualytics.cli.checks.import_checks_to_datastore")
+    @patch("qualytics.cli.checks.load_checks_from_directory")
+    @patch("qualytics.cli.checks.get_client")
+    def test_import_cli_prints_collision_warning(
+        self, mock_gc, mock_load, mock_import, cli_runner, tmp_path
+    ):
+        mock_gc.return_value = _mock_client()
+        mock_load.return_value = [
+            {
+                "rule_type": "volumetric",
+                "container": "nation",
+                "additional_metadata": {"_qualytics_check_uid": "nation__volumetric"},
+                "_source_file": "nation/volumetric.yaml",
+            },
+            {
+                "rule_type": "volumetric",
+                "container": "nation",
+                "additional_metadata": {"_qualytics_check_uid": "nation__volumetric"},
+                "_source_file": "nation/volumetric_2.yaml",
+            },
+        ]
+        mock_import.return_value = {
+            "created": 1,
+            "updated": 1,
+            "failed": 0,
+            "errors": [],
+            "failures": [],
+            "outcomes": [],
+        }
+        result = cli_runner.invoke(
+            app,
+            ["checks", "import", "--datastore-id", "4707", "--input", str(tmp_path)],
+        )
+        assert result.exit_code == 0
+        assert "UID collision" in result.output
+        assert "the last file wins" in result.output
+
+
+class TestCustomUidKey:
+    @patch("qualytics.services.quality_checks.update_quality_check")
+    @patch("qualytics.services.quality_checks.get_quality_check")
+    @patch("qualytics.services.quality_checks.list_all_quality_checks")
+    @patch("qualytics.services.quality_checks.get_table_ids")
+    def test_upserts_on_alternate_metadata_key(
+        self, mock_tables, mock_list, mock_get, mock_update
+    ):
+        """migrate keys its upsert on legacy_check_id — no internal UID needed."""
+        client = _mock_client()
+        mock_tables.return_value = {"orders": 100}
+        mock_list.return_value = [
+            {"id": 50, "additional_metadata": {"legacy_check_id": "WR-01"}},
+        ]
+        mock_get.return_value = {"id": 50, "additional_metadata": {}}
+        mock_update.return_value = {"id": 50}
+
+        checks = [
+            {
+                "rule_type": "notNull",
+                "container": "orders",
+                "fields": ["order_id"],
+                "additional_metadata": {"legacy_check_id": "WR-01"},
+            }
+        ]
+        result = import_checks_to_datastore(
+            client, 42, checks, uid_key="legacy_check_id"
+        )
+        assert result["updated"] == 1
+        assert result["created"] == 0
+
+
+class TestCaseInsensitiveResolution:
+    @patch("qualytics.services.containers.list_containers_listing")
+    def test_container_lookup_falls_back_case_insensitively(self, mock_listing):
+        from qualytics.services.containers import get_container_by_name
+
+        mock_listing.return_value = [{"id": 7, "name": "CUSTOMERS"}]
+        assert get_container_by_name(_mock_client(), 1, "customers")["id"] == 7
+
+    @patch("qualytics.services.containers.list_containers_listing")
+    def test_container_lookup_ambiguous_case_stays_miss(self, mock_listing):
+        from qualytics.services.containers import get_container_by_name
+
+        mock_listing.return_value = [
+            {"id": 7, "name": "CUSTOMERS"},
+            {"id": 8, "name": "Customers"},
+        ]
+        assert get_container_by_name(_mock_client(), 1, "customers") is None
+
+    @patch("qualytics.services.datastores.list_datastores")
+    def test_datastore_lookup_falls_back_case_insensitively(self, mock_list):
+        from qualytics.services.datastores import get_datastore_by_name
+
+        mock_list.return_value = {"items": [{"id": 20, "name": "Snowflake TPCH"}]}
+        assert get_datastore_by_name(_mock_client(), "snowflake tpch")["id"] == 20
