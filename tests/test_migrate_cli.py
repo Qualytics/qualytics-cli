@@ -533,6 +533,8 @@ class TestMigrateApply:
 
 
 class TestMigrateValidate:
+    sql_validations: list = []
+
     def _online_patches(self, monkeypatch):
         from unittest.mock import MagicMock
 
@@ -557,6 +559,14 @@ class TestMigrateValidate:
             fields_api,
             "container_field_names",
             lambda client, cid: ["R_REGIONKEY", "R_NAME"],
+        )
+        import qualytics.api.containers as containers_api
+
+        self.sql_validations = []
+        monkeypatch.setattr(
+            containers_api,
+            "validate_container",
+            lambda client, payload, **kw: self.sql_validations.append(payload),
         )
         monkeypatch.setattr(
             datastores_service,
@@ -717,3 +727,166 @@ class TestValidateAmbiguousCasing:
         assert result.exit_code == 1
         assert result.output.count("is ambiguous in datastore 7") == 2
         assert "use the exact name" in result.output
+
+
+class TestValidateSql:
+    def _patches(self, monkeypatch, fail=False):
+        from unittest.mock import MagicMock
+
+        import qualytics.api.client as client_module
+        import qualytics.api.containers as containers_api
+        import qualytics.cli.import_flow as import_flow
+        import qualytics.services.containers as containers_service
+
+        monkeypatch.setattr(client_module, "get_client", lambda: MagicMock())
+        monkeypatch.setattr(
+            containers_service,
+            "get_table_ids",
+            lambda client, datastore_id: {"ORDERS": 1},
+        )
+        monkeypatch.setattr(
+            import_flow, "field_catalogue", lambda client, ds, containers: {}
+        )
+        calls = []
+
+        def _validate(client, payload, **kw):
+            calls.append(payload)
+            if fail == "raise":
+                from qualytics.api.client import QualyticsAPIError
+
+                raise QualyticsAPIError(422, "Invalid object name 'ORDERS'.", "u")
+            if fail == "body":
+                return {"success": False, "message": "Invalid SQL near UNPIVOT"}
+            if fail == "infra":
+                # The client wraps SSL/timeout/connection failures in the
+                # BUILTIN ConnectionError — the exact type that must be caught.
+                raise ConnectionError("SSL certificate verification failed")
+            return {"success": True, "message": "Validation passed"}
+
+        monkeypatch.setattr(containers_api, "validate_container", _validate)
+        return calls
+
+    SHEET = (
+        "check_id,kind,rule_type,container,fields,query\n"
+        "CT1,computed_table,,recon,,SELECT 1 AS a FROM ORDERS\n"
+        "C1,,notNull,ORDERS,O_ID,\n"
+    )
+
+    def test_bad_sql_fails_validate(self, cli_runner, tmp_path, monkeypatch):
+        calls = self._patches(monkeypatch, fail="raise")
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, self.SHEET),
+                "--datastore-id",
+                "19",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "failed source validation" in result.output
+        assert "HTTP 422" in result.output
+        assert len(calls) == 1
+
+    def test_good_sql_passes_and_flag_skips(self, cli_runner, tmp_path, monkeypatch):
+        calls = self._patches(monkeypatch)
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, self.SHEET),
+                "--datastore-id",
+                "19",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "validated against the source" in result.output
+        assert len(calls) == 1
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, self.SHEET),
+                "--datastore-id",
+                "19",
+                "--no-validate-sql",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 1  # unchanged
+
+    def test_join_reading_in_sheet_table_defers(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        calls = self._patches(monkeypatch)
+        sheet = (
+            "check_id,kind,rule_type,container,fields,query,sources\n"
+            "CT1,computed_table,,base,,SELECT 1 AS a FROM ORDERS,\n"
+            "CJ1,computed_join,,joined,,SELECT b.a FROM b JOIN o ON b.a = o.a,"
+            '"base=b; ORDERS=o"\n'
+        )
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "19",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "SQL validated at apply time" in result.output
+        assert len(calls) == 1  # only the base table hit the endpoint
+
+    def test_failure_reported_in_success_body(self, cli_runner, tmp_path, monkeypatch):
+        """A 200 body with success: false is a failure, not a pass."""
+        self._patches(monkeypatch, fail="body")
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, self.SHEET),
+                "--datastore-id",
+                "19",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "failed source validation" in result.output
+        assert "Invalid SQL" in result.output
+
+    def test_infra_error_reported_once_not_per_container(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        calls = self._patches(monkeypatch, fail="infra")
+        sheet = (
+            "check_id,kind,rule_type,container,fields,query\n"
+            "CT1,computed_table,,recon_a,,SELECT 1 AS a FROM tpch.ORDERS\n"
+            "CT2,computed_table,,recon_b,,SELECT 2 AS b FROM tpch.ORDERS\n"
+        )
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "19",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "SQL validation unavailable" in result.output
+        assert "not a sheet problem" in result.output
+        assert result.output.count("failed source validation") == 0
+        assert len(calls) == 1  # stopped after the shared failure

@@ -853,7 +853,9 @@ def _unambiguous_lower(names) -> dict:
     return {key: values[0] for key, values in buckets.items() if len(values) == 1}
 
 
-def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
+def _validate_online(
+    plan: SheetPlan, base_ids: list[int], validate_sql: bool = True
+) -> int:
     """Read-only checks against the target instance; returns the error count.
 
     Resolves everything `apply` would need — target containers, field names,
@@ -864,6 +866,7 @@ def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
     from ..api.fields import container_field_names
     from ..services.containers import get_table_ids
     from ..services.datastores import get_datastore_by_name
+    from ..services.migrate import _container_payload
     from ..services.rules import resolve_check_fields
     from .import_flow import field_catalogue
 
@@ -916,6 +919,77 @@ def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
                     f"'{name}' not found in datastore {ds_id}[/red]"
                 )
                 ds_errors += 1
+
+        # Computed SQL is checked server-side (non-persisting) — the raw
+        # query runs on the source database, whose namespace the catalogue
+        # can't vouch for (schema qualification, dialect). A join reading a
+        # table this sheet creates can only be validated at apply time.
+        if validate_sql:
+            from ..api.client import (
+                AuthenticationError,
+                QualyticsAPIError,
+                ServerError,
+            )
+            from ..api.containers import validate_container
+
+            for spec in routed_containers.get(ds_id, []):
+                sources = [
+                    source["container"] for source in spec.spec.get("sources") or []
+                ]
+                if any(name not in tables and name in in_sheet for name in sources):
+                    print(
+                        f"  [dim]row {spec.row} ({spec.check_id}): SQL validated "
+                        "at apply time (reads a table this sheet creates)[/dim]"
+                    )
+                    continue
+                payload, error = _container_payload(spec, ds_id, tables)
+                if error:
+                    print(f"  [red]✗ row {spec.row} ({spec.check_id}): {error}[/red]")
+                    ds_errors += 1
+                    continue
+                try:
+                    result = validate_container(client, payload)
+                    # The endpoint can report failure in a 200 body instead of
+                    # raising — same contract `containers validate` checks.
+                    if isinstance(result, dict) and result.get("success") is False:
+                        message = str(result.get("message") or result)
+                        print(
+                            f"  [red]✗ row {spec.row} ({spec.check_id}): SQL for "
+                            f"'{spec.name}' failed source validation: "
+                            f"{message[:400]}[/red]"
+                        )
+                        ds_errors += 1
+                        continue
+                    print(
+                        f"  [dim]row {spec.row} ({spec.check_id}): SQL for "
+                        f"'{spec.name}' validated against the source[/dim]"
+                    )
+                # The client normalizes SSL/timeout/connection failures
+                # into the builtin ConnectionError.
+                except (AuthenticationError, ServerError, ConnectionError) as e:
+                    # Auth, connectivity and server outages are one shared
+                    # problem, not a per-container SQL finding — report once
+                    # and stop pretending to validate SQL.
+                    message = str(e)
+                    if len(message) > 300:
+                        message = message[:300] + "…"
+                    print(
+                        f"  [red]✗ SQL validation unavailable ({message}) — an "
+                        "instance/connectivity problem, not a sheet problem; "
+                        "skipping remaining SQL validation[/red]"
+                    )
+                    ds_errors += 1
+                    validate_sql = False
+                    break
+                except QualyticsAPIError as e:
+                    message = str(e)
+                    if len(message) > 400:
+                        message = message[:400] + "…"
+                    print(
+                        f"  [red]✗ row {spec.row} ({spec.check_id}): SQL for "
+                        f"'{spec.name}' failed source validation: {message}[/red]"
+                    )
+                    ds_errors += 1
 
         # Target containers exist (or this sheet creates them).
         resolvable: list = []
@@ -1056,19 +1130,26 @@ def migrate_validate(
     datastore_id: list[int] = typer.Option(
         None,
         "--datastore-id",
-        help="Also resolve containers/fields/refs against this datastore, "
-        "read-only (repeat for multiple)",
+        help="Also resolve containers/fields/refs against this datastore and "
+        "validate computed SQL server-side, creating nothing (repeat for "
+        "multiple)",
+    ),
+    validate_sql: bool = typer.Option(
+        True,
+        "--validate-sql/--no-validate-sql",
+        help="Run each computed container's SQL through the platform's "
+        "non-persisting validation endpoint (needs --datastore-id)",
     ),
 ):
-    """Fail-early validation: everything `plan` checks, plus read-only
-    resolution against target datastores when --datastore-id is given.
-    Makes no changes; exits non-zero on any problem."""
+    """Fail-early validation: everything `plan` checks, plus resolution and
+    non-persisting SQL validation against target datastores when
+    --datastore-id is given. Creates nothing; exits non-zero on any problem."""
     plan = _load_plan(sheet_path, None, None, worksheet)
     stats = _print_summary(plan, sheet_path)
 
     total_errors = stats["errors"]
     if datastore_id:
-        total_errors += _validate_online(plan, list(datastore_id))
+        total_errors += _validate_online(plan, list(datastore_id), validate_sql)
     elif any(item.datastore is not None for item in [*plan.checks, *plan.containers]):
         print(
             "[dim]Pass --datastore-id to also resolve containers, fields and "
