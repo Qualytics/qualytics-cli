@@ -487,9 +487,6 @@ def _apply_body(
 
     if emit_yaml:
         _emit_yaml(plan, emit_yaml)
-    if run_dir:
-        # The as-applied YAML is part of the run's audit trail.
-        _emit_yaml(plan, os.path.join(run_dir, "yaml"))
 
     base_ids = list(datastore_id or [])
     needs_base = any(
@@ -611,6 +608,9 @@ def _apply_body(
                     f"({written} check(s))[/cyan]"
                 )
 
+        if not dry_run and run_dir:
+            _archive_applied_yaml(run_dir, outcome["results"], plan)
+
     if not dry_run and stats["by_status"].get("Draft"):
         print(
             "\n[dim]Draft checks activate in the product after review; re-applies "
@@ -621,6 +621,43 @@ def _apply_body(
         stats["errors"] or override_errors or container_failures or total_failed
     ):
         raise typer.Exit(code=1)
+
+
+def _archive_applied_yaml(run_dir: str, results: dict, plan: SheetPlan) -> None:
+    """Write the run's audit YAML from the import outcomes — the definitions
+    as actually applied, after container- and field-casing repair — rather
+    than from the pre-repair sheet conversion."""
+    from ..services.migrate import sheet_check_uid
+
+    root = os.path.realpath(os.path.join(run_dir, "yaml"))
+    written = 0
+    for ds_id, result in results.items():
+        for outcome in result.get("outcomes") or []:
+            check = {
+                key: value
+                for key, value in outcome["check"].items()
+                if key != "_source_file"
+            }
+            container_dir = os.path.join(
+                root,
+                f"datastore-{ds_id}",
+                _safe_dir_name(check.get("container") or ""),
+            )
+            if os.path.commonpath([root, os.path.realpath(container_dir)]) != root:
+                continue
+            os.makedirs(container_dir, exist_ok=True)
+            meta = check.get("additional_metadata") or {}
+            uid = sheet_check_uid(meta.get("legacy_check_id") or outcome["id"])
+            with open(os.path.join(container_dir, f"{uid}.yaml"), "w") as f:
+                yaml.safe_dump(check, f, sort_keys=False, default_flow_style=False)
+            written += 1
+    if plan.containers:
+        os.makedirs(root, exist_ok=True)
+        specs = [{"datastore": spec.datastore, **spec.spec} for spec in plan.containers]
+        with open(os.path.join(root, "_computed_containers.yaml"), "w") as f:
+            yaml.safe_dump(specs, f, sort_keys=False, default_flow_style=False)
+    if written:
+        print(f"[cyan]As-applied YAML archived to {run_dir}/yaml/ ({written})[/cyan]")
 
 
 _RUN_DIR_HELP = (
@@ -731,10 +768,25 @@ def migrate_apply(
 
     effective_run_dir = None
     if not dry_run and run_dir != "":
-        effective_run_dir = run_dir or os.path.join(
-            "migrate-runs", datetime.now(_tz.utc).strftime("%Y%m%d-%H%M%S")
-        )
-        os.makedirs(effective_run_dir, exist_ok=True)
+        if run_dir:
+            # A user-chosen directory is honored exactly.
+            effective_run_dir = run_dir
+            os.makedirs(effective_run_dir, exist_ok=True)
+        else:
+            # One-second timestamps collide when two runs start together, and
+            # a collision silently overwrites the earlier run's audit trail —
+            # claim the directory exclusively and suffix on conflict.
+            stamp = datetime.now(_tz.utc).strftime("%Y%m%d-%H%M%S")
+            candidate = os.path.join("migrate-runs", stamp)
+            attempt = 1
+            while True:
+                try:
+                    os.makedirs(candidate, exist_ok=False)
+                    break
+                except FileExistsError:
+                    attempt += 1
+                    candidate = os.path.join("migrate-runs", f"{stamp}-{attempt}")
+            effective_run_dir = candidate
     if results_csv is None:
         results_csv = (
             os.path.join(effective_run_dir, "results.csv") if effective_run_dir else ""
@@ -788,6 +840,19 @@ def migrate_apply(
 # ── validate ──────────────────────────────────────────────────────────────
 
 
+def _unambiguous_lower(names) -> dict:
+    """lowercase → catalogued name, dropping names whose casing is ambiguous.
+
+    Apply's repair and the API-side name resolution both refuse to guess
+    between e.g. `Orders` and `ORDERS`; validate must mirror that instead of
+    silently picking one and reporting a resolution apply would reject.
+    """
+    buckets: dict[str, list[str]] = {}
+    for name in names:
+        buckets.setdefault(str(name).lower(), []).append(str(name))
+    return {key: values[0] for key, values in buckets.items() if len(values) == 1}
+
+
 def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
     """Read-only checks against the target instance; returns the error count.
 
@@ -837,7 +902,7 @@ def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
         print(f"\n[cyan]Validating against datastore {ds_id} (read-only)...[/cyan]")
         ds_errors = 0
         tables = _tables(ds_id)
-        lower_tables = {name.lower(): name for name in tables}
+        lower_tables = _unambiguous_lower(tables)
         in_sheet = {spec.name for spec in routed_containers.get(ds_id, [])}
 
         # Join sources resolve against the catalogue or earlier sheet rows.
@@ -856,6 +921,15 @@ def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
         resolvable: list = []
         for item in routed_checks.get(ds_id, []):
             name = item.container
+            variants = [t for t in tables if t.lower() == name.lower()]
+            if name not in tables and len(variants) > 1:
+                print(
+                    f"  [red]✗ row {item.row} ({item.check_id}): container "
+                    f"'{name}' is ambiguous in datastore {ds_id} "
+                    f"({', '.join(sorted(variants))}) — use the exact name[/red]"
+                )
+                ds_errors += 1
+                continue
             if name in tables or name.lower() in lower_tables:
                 resolvable.append(item)
             elif name in in_sheet:
@@ -908,7 +982,19 @@ def _validate_online(plan: SheetPlan, base_ids: list[int]) -> int:
                 ds_errors += 1
                 continue
             ref_tables = _tables(ref_ds)
-            ref_lower = {name.lower(): name for name in ref_tables}
+            ref_lower = _unambiguous_lower(ref_tables)
+            if ref_name not in ref_tables and ref_lower.get(ref_name.lower()) is None:
+                variants = [
+                    name for name in ref_tables if name.lower() == ref_name.lower()
+                ]
+                if len(variants) > 1:
+                    print(
+                        f"  [red]✗ row {item.row} ({item.check_id}): ref_container "
+                        f"'{ref_name}' is ambiguous in datastore {ref_ds} "
+                        f"({', '.join(sorted(variants))}) — use the exact name[/red]"
+                    )
+                    ds_errors += 1
+                    continue
             actual = ref_tables.get(ref_name) or ref_tables.get(
                 ref_lower.get(ref_name.lower(), "")
             )

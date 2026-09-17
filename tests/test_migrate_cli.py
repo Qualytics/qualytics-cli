@@ -506,7 +506,12 @@ class TestMigrateApply:
         assert failed and failed[0]["reason"] == "boom: field not found"
         assert failed[0]["check_id"] == "550"
 
-        assert (run_dir / "yaml" / "orders" / "sheet__550.yaml").exists()
+        # As-applied: written from import outcomes, per target datastore.
+        applied = run_dir / "yaml" / "datastore-7" / "orders" / "sheet__550.yaml"
+        assert applied.exists()
+        applied_check = yaml.safe_load(applied.read_text())
+        assert "_source_file" not in applied_check
+        assert (run_dir / "yaml" / "_computed_containers.yaml").exists()
         assert "Run artifacts in" in result.output
 
     def test_dry_run_creates_no_run_dir(self, cli_runner, tmp_path, monkeypatch):
@@ -652,3 +657,63 @@ class TestCsvSafety:
         with open(out, newline="") as f:
             (row,) = list(csv.DictReader(f))
         assert row["check_id"].startswith("'=")
+
+    def test_default_run_dirs_never_collide(self, cli_runner, tmp_path, monkeypatch):
+        _ApplyHarness(monkeypatch, tmp_path)
+        for _ in range(2):
+            result = cli_runner.invoke(
+                app,
+                [
+                    "migrate",
+                    "apply",
+                    "--sheet",
+                    _write(tmp_path, ROUTED_SHEET),
+                    "--datastore-id",
+                    "7",
+                ],
+            )
+            assert result.exit_code == 0, result.output
+        runs = sorted((tmp_path / "migrate-runs").iterdir())
+        assert len(runs) == 2  # same-second runs get a suffixed sibling
+        for run in runs:
+            assert (run / "run.log").exists()
+
+
+class TestValidateAmbiguousCasing:
+    def test_ambiguous_target_and_ref_names_error(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        from unittest.mock import MagicMock
+
+        import qualytics.api.client as client_module
+        import qualytics.cli.import_flow as import_flow
+        import qualytics.services.containers as containers_service
+
+        monkeypatch.setattr(client_module, "get_client", lambda: MagicMock())
+        monkeypatch.setattr(
+            containers_service,
+            "get_table_ids",
+            lambda client, datastore_id: {"Orders": 1, "ORDERS": 2, "region": 3},
+        )
+        monkeypatch.setattr(
+            import_flow, "field_catalogue", lambda client, ds, containers: {}
+        )
+        sheet = (
+            "check_id,rule_type,container,fields,value,ref_container,ref_field\n"
+            "1,freshness,orders,,1d,,\n"
+            "2,existsIn,region,r_key,,orders,O_ID\n"
+        )
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "7",
+            ],
+        )
+        assert result.exit_code == 1
+        assert result.output.count("is ambiguous in datastore 7") == 2
+        assert "use the exact name" in result.output
