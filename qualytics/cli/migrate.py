@@ -925,8 +925,6 @@ def _validate_online(
         # can't vouch for (schema qualification, dialect). A join reading a
         # table this sheet creates can only be validated at apply time.
         if validate_sql:
-            import requests
-
             from ..api.client import (
                 AuthenticationError,
                 QualyticsAPIError,
@@ -966,11 +964,9 @@ def _validate_online(
                         f"  [dim]row {spec.row} ({spec.check_id}): SQL for "
                         f"'{spec.name}' validated against the source[/dim]"
                     )
-                except (
-                    AuthenticationError,
-                    ServerError,
-                    requests.RequestException,
-                ) as e:
+                # The client normalizes SSL/timeout/connection failures
+                # into the builtin ConnectionError.
+                except (AuthenticationError, ServerError, ConnectionError) as e:
                     # Auth, connectivity and server outages are one shared
                     # problem, not a per-container SQL finding — report once
                     # and stop pretending to validate SQL.

@@ -758,9 +758,9 @@ class TestValidateSql:
             if fail == "body":
                 return {"success": False, "message": "Invalid SQL near UNPIVOT"}
             if fail == "infra":
-                from qualytics.api.client import AuthenticationError
-
-                raise AuthenticationError(401, "token expired", "u")
+                # The client wraps SSL/timeout/connection failures in the
+                # BUILTIN ConnectionError — the exact type that must be caught.
+                raise ConnectionError("SSL certificate verification failed")
             return {"success": True, "message": "Validation passed"}
 
         monkeypatch.setattr(containers_api, "validate_container", _validate)
