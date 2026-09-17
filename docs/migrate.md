@@ -165,6 +165,12 @@ sheet's SQL, e.g. Eastern Time:
 WHERE file_date >= from_utc_timestamp(current_timestamp(), 'America/New_York') - INTERVAL 1 DAY
 ```
 
+A computed container's `query` runs raw on the source database, where
+tables usually need a schema prefix (`tpch.ORDERS`, not `ORDERS`) — the
+datastore's configured schema is shown by `qualytics datastores get`.
+`migrate validate --datastore-id N` checks each query server-side (non-
+persisting) and reports `Invalid object name` style failures before apply.
+
 `migrate plan` warns on any `query`, `expression`, `ref_expression` or `filter`
 that uses a now-function without a visible conversion
 (`from_utc_timestamp`, `to_utc_timestamp`, `convert_timezone`, `AT TIME ZONE`).
