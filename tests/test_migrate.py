@@ -1274,3 +1274,63 @@ class TestWorksheetSelection:
         path.write_text("check_id\n1\n")
         with pytest.raises(ValueError, match="single sheet"):
             load_sheet(str(path), "2")
+
+
+class TestDryRunUpdateDiffing:
+    def test_dry_run_update_reports_unchanged_and_updates(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+        import qualytics.api.containers as api
+
+        messages = []
+        monkeypatch.setattr(
+            api,
+            "list_containers_listing",
+            lambda client, ds: [
+                {"id": 9, "name": "calc", "container_type": "computed_table"},
+                {"id": 10, "name": "drifted", "container_type": "computed_table"},
+            ],
+        )
+        monkeypatch.setattr(
+            api,
+            "get_container",
+            lambda client, cid: {"id": cid, "query": "SELECT existing"},
+        )
+        specs = [
+            _spec(name="calc", query="SELECT existing"),
+            _spec(name="drifted", check_id="ct2", row=3, query="SELECT changed"),
+        ]
+        result = ensure_containers(
+            object(),
+            specs,
+            42,
+            on_existing="update",
+            dry_run=True,
+            report=messages.append,
+        )
+        assert result["unchanged"] == 1
+        assert result["updated"] == 1
+        assert any("'calc' unchanged" in m for m in messages)
+        assert any("would update computed_table 'drifted'" in m for m in messages)
+
+    def test_dry_run_update_flags_type_mismatch(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+        import qualytics.api.containers as api
+
+        monkeypatch.setattr(
+            api,
+            "list_containers_listing",
+            lambda client, ds: [{"id": 9, "name": "calc", "container_type": "view"}],
+        )
+        result = ensure_containers(
+            object(), [_spec(name="calc")], 42, on_existing="update", dry_run=True
+        )
+        assert result["failed"] == 1
+        assert "not a computed_table" in result["errors"][0]
+
+
+class TestXlsRejected:
+    def test_legacy_xls_gets_actionable_error(self, tmp_path):
+        path = tmp_path / "legacy.xls"
+        path.write_bytes(b"\xd0\xcf\x11\xe0 fake ole2")
+        with pytest.raises(ValueError, match="re-save the file as"):
+            load_sheet(str(path))

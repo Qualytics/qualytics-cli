@@ -2096,3 +2096,29 @@ class TestCustomUidKey:
         )
         assert result["updated"] == 1
         assert result["created"] == 0
+
+
+class TestCaseInsensitiveResolution:
+    @patch("qualytics.services.containers.list_containers_listing")
+    def test_container_lookup_falls_back_case_insensitively(self, mock_listing):
+        from qualytics.services.containers import get_container_by_name
+
+        mock_listing.return_value = [{"id": 7, "name": "CUSTOMERS"}]
+        assert get_container_by_name(_mock_client(), 1, "customers")["id"] == 7
+
+    @patch("qualytics.services.containers.list_containers_listing")
+    def test_container_lookup_ambiguous_case_stays_miss(self, mock_listing):
+        from qualytics.services.containers import get_container_by_name
+
+        mock_listing.return_value = [
+            {"id": 7, "name": "CUSTOMERS"},
+            {"id": 8, "name": "Customers"},
+        ]
+        assert get_container_by_name(_mock_client(), 1, "customers") is None
+
+    @patch("qualytics.services.datastores.list_datastores")
+    def test_datastore_lookup_falls_back_case_insensitively(self, mock_list):
+        from qualytics.services.datastores import get_datastore_by_name
+
+        mock_list.return_value = {"items": [{"id": 20, "name": "Snowflake TPCH"}]}
+        assert get_datastore_by_name(_mock_client(), "snowflake tpch")["id"] == 20

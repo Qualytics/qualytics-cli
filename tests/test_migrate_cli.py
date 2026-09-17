@@ -623,3 +623,32 @@ class TestMigrateValidate:
         )
         assert result.exit_code == 0
         assert "Validation passed" in result.output
+
+
+class TestCsvSafety:
+    def test_formula_leading_cells_neutralized(self, cli_runner, tmp_path, monkeypatch):
+        import csv
+
+        harness = _ApplyHarness(monkeypatch, tmp_path)
+        sheet = (
+            "check_id,rule_type,container,fields\n"
+            "=HYPERLINK('http://evil'),notNull,orders,order_id\n"
+        )
+        out = tmp_path / "results.csv"
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "apply",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "7",
+                "--results-csv",
+                str(out),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        with open(out, newline="") as f:
+            (row,) = list(csv.DictReader(f))
+        assert row["check_id"].startswith("'=")

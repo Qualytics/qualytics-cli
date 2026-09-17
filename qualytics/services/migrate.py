@@ -213,13 +213,19 @@ def _clean(value):
 def load_sheet(path: str, worksheet: str | None = None) -> list[dict]:
     """Read a check sheet into row dicts keyed by normalized header name.
 
-    Supports ``.xlsx``/``.xls`` and ``.csv``. ``worksheet`` selects a tab of a
+    Supports ``.xlsx`` and ``.csv`` — legacy binary ``.xls`` is rejected with
+    a re-save hint (openpyxl reads OOXML only). ``worksheet`` selects a tab of a
     workbook by name (case-insensitive) or 1-based position; the default is
     the first tab. Each row dict carries ``_row``: its 1-based position in the
     file (header included), so issues can point at the exact spreadsheet line.
     """
     lower = path.lower()
-    if lower.endswith((".xlsx", ".xls")):
+    if lower.endswith(".xls"):
+        raise ValueError(
+            "Legacy .xls workbooks are not supported — re-save the file as "
+            ".xlsx (or export to .csv) and try again"
+        )
+    if lower.endswith(".xlsx"):
         rows = _load_xlsx(path, worksheet)
     elif lower.endswith(".csv"):
         if worksheet is not None:
@@ -229,9 +235,7 @@ def load_sheet(path: str, worksheet: str | None = None) -> list[dict]:
             )
         rows = _load_csv(path)
     else:
-        raise ValueError(
-            f"Unsupported sheet format: {path} (expected .xlsx, .xls or .csv)"
-        )
+        raise ValueError(f"Unsupported sheet format: {path} (expected .xlsx or .csv)")
     # Drop rows with no values at all (spreadsheets love trailing blanks).
     return [r for r in rows if any(v is not None for k, v in r.items() if k != "_row")]
 
@@ -1250,16 +1254,45 @@ def ensure_containers(
         return result
 
     if dry_run:
+        # Read-only, but honest: run the same definition/label comparison the
+        # real update path uses, so an identical container previews as
+        # unchanged rather than "would update" (and a type mismatch surfaces
+        # here instead of at apply time).
         for spec, _payload, _deferred in todo:
-            if spec.name not in name_to_id:
+            existing_id = name_to_id.get(spec.name)
+            if existing_id is None:
                 report(f"[dry-run] would create {spec.kind} '{spec.name}'")
                 result["created"] += 1
-            elif on_existing == "skip":
+                continue
+            if on_existing == "skip":
                 report(f"[dry-run] would skip existing '{spec.name}'")
                 result["skipped"] += 1
-            else:
+                continue
+            if existing_types.get(spec.name) != spec.kind:
+                fail(
+                    spec,
+                    f"existing container is a "
+                    f"{existing_types.get(spec.name)}, not a {spec.kind}",
+                )
+                continue
+            payload, error = _container_payload(spec, datastore_id, name_to_id)
+            if error or payload is None:
                 report(f"[dry-run] would update '{spec.name}'")
                 result["updated"] += 1
+                continue
+            existing = get_container(client, existing_id)
+            if _definition_changed(spec, payload, existing):
+                report(f"[dry-run] would update {spec.kind} '{spec.name}'")
+                result["updated"] += 1
+            elif _labels_changed(payload, existing):
+                report(
+                    f"[dry-run] would update metadata for '{spec.name}' "
+                    "(definition unchanged)"
+                )
+                result["updated"] += 1
+            else:
+                report(f"[dry-run] '{spec.name}' unchanged")
+                result["unchanged"] += 1
         return result
 
     # Validate everything buildable before creating anything — half a

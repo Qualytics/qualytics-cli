@@ -13,6 +13,7 @@ def get_datastore_by_name(client: QualyticsClient, name: str) -> dict | None:
     """
     page = 1
     size = 50
+    case_insensitive: list[dict] = []
 
     while True:
         data = list_datastores(client, name=name, page=page, size=size)
@@ -21,12 +22,17 @@ def get_datastore_by_name(client: QualyticsClient, name: str) -> dict | None:
         for ds in items:
             if ds.get("name") == name:
                 return ds
+            if (ds.get("name") or "").lower() == name.lower():
+                case_insensitive.append(ds)
 
         if len(items) < size:
             break
 
         page += 1
 
+    # Unambiguous case-insensitive fallback, mirroring container resolution.
+    if len(case_insensitive) == 1:
+        return case_insensitive[0]
     return None
 
 

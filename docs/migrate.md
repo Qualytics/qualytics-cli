@@ -29,7 +29,7 @@ instead of applying.
 
 ## The sheet
 
-One workbook can hold several tabs — `--worksheet` picks one by name
+Legacy binary `.xls` isn't supported — re-save as `.xlsx`. One workbook can hold several tabs — `--worksheet` picks one by name
 (case-insensitive) or 1-based position; the default is the first tab.
 
 Column headers are matched case-insensitively with spaces/punctuation

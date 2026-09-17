@@ -291,6 +291,20 @@ def migrate_plan(
         raise typer.Exit(code=1)
 
 
+def _csv_safe(value) -> str:
+    """Neutralize spreadsheet formula injection in sheet-controlled text.
+
+    The receipt is documented as "open it in Excel", and legacy_check_id (and
+    reasons echoing sheet content) are attacker-controllable in a hostile
+    sheet — a cell starting with = + - @ (or a tab/CR smuggle) would execute
+    as a formula. A leading apostrophe forces text; Excel hides it.
+    """
+    text = str(value or "")
+    if text.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + text
+    return text
+
+
 def _write_results_csv(
     path: str,
     outcomes_by_datastore: dict,
@@ -342,13 +356,13 @@ def _write_results_csv(
                     )
                 writer.writerow(
                     [
-                        meta.get("legacy_check_id", ""),
+                        _csv_safe(meta.get("legacy_check_id", "")),
                         outcome["action"],
                         outcome["id"],
                         ds_id,
-                        check.get("container", ""),
-                        check.get("rule_type", ""),
-                        check.get("status", ""),
+                        _csv_safe(check.get("container", "")),
+                        _csv_safe(check.get("rule_type", "")),
+                        _csv_safe(check.get("status", "")),
                         url,
                         "",
                     ]
@@ -360,15 +374,17 @@ def _write_results_csv(
                 meta = check.get("additional_metadata") or {}
                 writer.writerow(
                     [
-                        meta.get("legacy_check_id", failure.get("source", "")),
+                        _csv_safe(
+                            meta.get("legacy_check_id", failure.get("source", ""))
+                        ),
                         "failed",
                         "",
                         ds_id,
-                        check.get("container", ""),
-                        check.get("rule_type", ""),
+                        _csv_safe(check.get("container", "")),
+                        _csv_safe(check.get("rule_type", "")),
                         "",
                         "",
-                        failure.get("reason", ""),
+                        _csv_safe(failure.get("reason", "")),
                     ]
                 )
                 rows += 1
