@@ -75,6 +75,13 @@ order by 1"""
         pytest.param("select 'it\\'s' || x from t", id="backslash-escaped-quote"),
         pytest.param("select 'unterminated from t", id="unterminated-string"),
         pytest.param("select a /* unterminated from t", id="unterminated-comment"),
+        pytest.param(
+            "select count(*) from t where x = 'open", id="unterminated-string-later"
+        ),
+        pytest.param(
+            "select count(*) from t /* unterminated", id="unterminated-comment-later"
+        ),
+        pytest.param("select count(*) from (select 1", id="unclosed-bracket"),
         pytest.param("", id="empty"),
     ],
 )
@@ -183,6 +190,21 @@ def test_query_is_left_unchanged(sql):
             "select expr_1, count(*) from t",
             "select expr_1, count(*) as expr_2 from t",
             id="skips-taken-alias",
+        ),
+        pytest.param(
+            """select 'it''s' || name, "a""b" from t""",
+            """select 'it''s' || name as expr_1, "a""b" from t""",
+            id="doubled-quotes",
+        ),
+        pytest.param(
+            "select $$a, b$$ from t",
+            "select $$a, b$$ as expr_1 from t",
+            id="dollar-quoted-string",
+        ),
+        pytest.param(
+            "select [My Col], upper(`x`) from t",
+            "select [My Col], upper(`x`) as expr_1 from t",
+            id="bracket-and-backtick-names",
         ),
     ],
 )

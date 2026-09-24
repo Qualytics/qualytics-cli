@@ -4,8 +4,8 @@
 satisfiesExpression check built from the profiled fields can reference it.
 Only the outer SELECT list is rewritten, and only by inserting ``as expr_N``
 after an expression that has no alias; every other character of the query is
-kept. When the SELECT list can't be read with confidence the query is returned
-unchanged, which is what the UI would send.
+kept. When the query can't be read with confidence it is returned unchanged,
+which is what the UI would send.
 """
 
 import re
@@ -70,7 +70,7 @@ def add_missing_aliases(sql: str) -> tuple[str, int]:
 
     ``*``, column references and expressions that already have an alias are
     left alone. Returns the query and the number of aliases added; the query
-    comes back unchanged when its SELECT list can't be read with confidence.
+    comes back unchanged when it can't be read with confidence.
     """
     try:
         items = _outer_select_items(sql)
@@ -136,6 +136,10 @@ def _outer_select_items(sql: str) -> list[list[_Token]] | None:
     else:
         return None
 
+    # Read the rest too: a malformed tail, or quoting the tokenizer doesn't know
+    # that knocked it out of step, ends in an unterminated token.
+    for _ in tokens:
+        pass
     items[0] = _without_modifiers(items[0])
     return items
 
@@ -222,8 +226,8 @@ def _word(token: _Token) -> str:
 def _tokens(sql: str) -> Iterator[_Token]:
     """Yield the tokens of ``sql`` with their bracket depth.
 
-    Whitespace and comments are skipped. Tokens are produced lazily, so text
-    after the outer FROM is never read.
+    Whitespace and comments are skipped. Raises _Unreadable for an
+    unterminated string or comment and for unbalanced brackets.
     """
     stack: list[str] = []  # closing brackets still expected
     previous: _Token | None = None
@@ -273,6 +277,8 @@ def _tokens(sql: str) -> Iterator[_Token]:
             stack.append(">")
         previous = token
         i = end
+    if stack:
+        raise _Unreadable
 
 
 def _quoted_end(sql: str, start: int, close: str) -> int:
