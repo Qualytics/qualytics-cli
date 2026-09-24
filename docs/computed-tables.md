@@ -259,7 +259,7 @@ JOIN finance_db.accounting.invoices i ON o.invoice_id = i.id
 WHERE o.status = 'PENDING'
 ```
 
-Columns without aliases get unique aliases added automatically (`expr_1`, `expr_2`, etc.):
+Unnamed expressions in the outer SELECT list get unique aliases added automatically (`expr_1`, `expr_2`, etc.):
 
 ```sql
 -- Original query
@@ -269,7 +269,7 @@ SELECT coalesce(trim(name), 'Blank'), upper(status), id as order_id FROM orders
 SELECT coalesce(trim(name), 'Blank') as expr_1, upper(status) as expr_2, id as order_id FROM orders
 ```
 
-This ensures all fields have proper names for the quality check expression.
+This ensures all fields have proper names for the quality check expression. The alias is the only change: `*`, plain column names, and expressions that already have an alias (with or without `AS`) are left alone, and the rest of the query is sent exactly as written. If the CLI can't read the SELECT list with confidence, for example when the query has no top-level `FROM`, it sends the query unchanged.
 
 ## List and Preview Commands
 

@@ -58,6 +58,7 @@ qualytics-cli/
 │       ├── validation.py     # URL normalization
 │       ├── file_ops.py       # Error logging, file deduplication
 │       ├── secrets.py        # Env var resolution and sensitive field redaction
+│       ├── sql_aliases.py    # expr_N aliases for unnamed SELECT expressions (containers import)
 │       └── serialization.py  # YAML/JSON load, dump, display, format detection
 ├── tests/
 │   ├── conftest.py           # Shared fixtures (cli_runner)
@@ -525,6 +526,7 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 | `test_operations.py` | API layer (run, get, list, list_all, abort), service layer (polling, multi-datastore, background mode, payload construction), CLI commands (sync, profile, scan, materialize, export, get, list, abort), validation |
 | `test_quality_checks.py` | API layer (endpoints, params, pagination), CLI commands (all 9), service import (upsert, dry-run, multi-datastore), promotion workflow, edge cases |
 | `test_serialization.py` | Format detection, YAML/JSON load/dump, datetime preservation, display formatting |
+| `test_sql_aliases.py` | containers import auto-alias: outer SELECT detection, which items get `expr_N`, queries left unchanged, import payload |
 
 ### Conventions
 
