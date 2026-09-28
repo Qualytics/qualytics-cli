@@ -60,6 +60,10 @@ order by 1"""
         pytest.param(
             "select a b, sum(x) total, 'lit' label from t", id="aliases-without-as"
         ),
+        pytest.param(
+            "select interval '1 day' d, interval '1' day e from t",
+            id="aliases-after-interval",
+        ),
         pytest.param("select 'data from sap' as src from t", id="from-in-string"),
         pytest.param("select explode(m) as (k, v) from t", id="multi-alias"),
         pytest.param("select {'a': 1, 'b': 2} as obj from t", id="object-constant"),
@@ -205,6 +209,26 @@ def test_query_is_left_unchanged(sql):
             "select [My Col], upper(`x`) from t",
             "select [My Col], upper(`x`) as expr_1 from t",
             id="bracket-and-backtick-names",
+        ),
+        pytest.param(
+            "select next value for seq from t",
+            "select next value for seq as expr_1 from t",
+            id="next-value-for",
+        ),
+        pytest.param(
+            "select a similar to b from t",
+            "select a similar to b as expr_1 from t",
+            id="similar-to",
+        ),
+        pytest.param(
+            "select interval '1' day, d - interval 2 hour from t",
+            "select interval '1' day as expr_1, d - interval 2 hour as expr_2 from t",
+            id="interval-unit",
+        ),
+        pytest.param(
+            "select interval '1-2' year to month from t",
+            "select interval '1-2' year to month as expr_1 from t",
+            id="interval-range",
         ),
     ],
 )

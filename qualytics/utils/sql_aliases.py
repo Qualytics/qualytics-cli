@@ -22,6 +22,12 @@ _PAIRS = {"(": ")", "{": "}"}
 _TYPE_WORDS = frozenset({"array", "map", "struct"})
 # Words that end an expression but can't be a bare alias.
 _VALUE_WORDS = frozenset({"end", "false", "null", "true"})
+# After `INTERVAL '1'` one of these is the literal's unit, not an alias.
+_INTERVAL_UNITS = frozenset(
+    "year years quarter quarters month months week weeks day days hour hours "
+    "minute minutes second seconds millisecond milliseconds microsecond "
+    "microseconds".split()
+)
 # Words after which the next token is an operand, never an alias.
 _OPERATOR_WORDS = frozenset(
     {
@@ -34,6 +40,7 @@ _OPERATOR_WORDS = frozenset(
         "else",
         "escape",
         "exists",
+        "for",
         "from",
         "ilike",
         "in",
@@ -43,6 +50,7 @@ _OPERATOR_WORDS = frozenset(
         "or",
         "over",
         "then",
+        "to",
         "when",
     }
 )
@@ -159,7 +167,12 @@ def _needs_alias(item: list[_Token]) -> bool:
         for i, token in enumerate(item)
     ):
         return False  # a column reference keeps its own name
-    if len(item) > 1 and _is_name(item[-1]) and _ends_expression(item[-2]):
+    if (
+        len(item) > 1
+        and _is_name(item[-1])
+        and _ends_expression(item[-2])
+        and not _is_interval_unit(item)
+    ):
         return False  # `expr name`, an alias without AS
     return True
 
@@ -200,6 +213,16 @@ def _is_distinct_from(item: list[_Token]) -> bool:
     """Return True when a FROM after ``item`` belongs to IS [NOT] DISTINCT FROM."""
     words = [_word(token) for token in item[-3:]]
     return words[-2:] == ["is", "distinct"] or words == ["is", "not", "distinct"]
+
+
+def _is_interval_unit(item: list[_Token]) -> bool:
+    """Return True for `INTERVAL '1' DAY`, whose last word is the unit."""
+    return (
+        len(item) > 2
+        and _word(item[-3]) == "interval"
+        and item[-2].kind in ("number", "string")
+        and _word(item[-1]) in _INTERVAL_UNITS
+    )
 
 
 def _is_name(token: _Token) -> bool:
