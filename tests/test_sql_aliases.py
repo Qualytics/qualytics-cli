@@ -72,6 +72,12 @@ order by 1"""
             "select case when a then 1 end end from t", id="end-alias-after-case"
         ),
         pytest.param("select x as id, y as id from t", id="repeated-aliases-kept"),
+        pytest.param('select "ID", "id" from t', id="quoted-names-differ-by-case"),
+        pytest.param("select a[1] first_item from t", id="alias-after-subscript"),
+        pytest.param(
+            "select x::struct<a: map<string, int>, b: int> as s from t",
+            id="nested-type",
+        ),
         pytest.param("select 'data from sap' as src from t", id="from-in-string"),
         pytest.param("select explode(m) as (k, v) from t", id="multi-alias"),
         pytest.param("select {'a': 1, 'b': 2} as obj from t", id="object-constant"),
@@ -141,6 +147,21 @@ def test_query_is_left_unchanged(sql):
             "select id, x as id from t",
             "select id as expr_1, x as id from t",
             id="column-name-taken-by-alias",
+        ),
+        pytest.param(
+            "select ARRAY[1, 2], a[1], v['key'] from t",
+            "select ARRAY[1, 2] as expr_1, a[1] as expr_2, v['key'] as expr_3 from t",
+            id="array-and-subscripts",
+        ),
+        pytest.param(
+            "select map < 3, count(*) from t where map < 5",
+            "select map < 3 as expr_1, count(*) as expr_2 from t where map < 5",
+            id="comparison-with-map-column",
+        ),
+        pytest.param(
+            "select ts at time zone tz from t",
+            "select ts at time zone tz as expr_1 from t",
+            id="at-time-zone-column",
         ),
         pytest.param(
             "select a + b, a || b, -a, x::date from t",

@@ -17,7 +17,7 @@ _WORD = re.compile(r"[^\W\d][\w$]*")
 _NUMBER = re.compile(r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
 _DOLLAR_TAG = re.compile(r"\$(?:[^\W\d]\w*)?\$")
 
-_PAIRS = {"(": ")", "{": "}"}
+_PAIRS = {"(": ")", "{": "}", "[": "]"}
 # `array<`, `map<` and `struct<` open a type whose commas don't split columns.
 _TYPE_WORDS = frozenset({"array", "map", "struct"})
 # Words that end an expression themselves (literals, the END of a CASE). After
@@ -171,7 +171,7 @@ def _needs_alias(item: list[_Token]) -> bool:
         len(item) > 1
         and _may_be_alias(item)
         and _ends_expression(item[-2])
-        and not _is_interval_unit(item)
+        and not _ends_with_operand(item)
     ):
         return False  # `expr name`, an alias without AS
     return True
@@ -200,11 +200,15 @@ def _repeated_column_refs(items: list[list[_Token]]) -> set[int]:
 
 
 def _output_name(item: list[_Token]) -> str | None:
-    """Return the lowercased name an item's column keeps, or None if unknown."""
+    """Return the name an item's column keeps, or None if unknown.
+
+    Unquoted names fold to lowercase. Quoted names keep their case: `"ID"` and
+    `"id"` are different columns, and the dataplane reads them case-sensitively.
+    """
     if not item or item[-1].kind not in ("word", "quoted"):
         return None
     last = item[-1]
-    return (last.text[1:-1] if last.kind == "quoted" else last.text).lower()
+    return last.text[1:-1] if last.kind == "quoted" else last.text.lower()
 
 
 def _is_column_ref(item: list[_Token]) -> bool:
@@ -263,14 +267,16 @@ def _may_be_alias(item: list[_Token]) -> bool:
     return _is_name(item[-1]) or word in _VALUE_WORDS
 
 
-def _is_interval_unit(item: list[_Token]) -> bool:
-    """Return True for `INTERVAL '1' DAY`, whose last word is the unit."""
-    return (
-        len(item) > 2
-        and _word(item[-3]) == "interval"
-        and item[-2].kind in ("number", "string")
-        and _word(item[-1]) in _INTERVAL_UNITS
-    )
+def _ends_with_operand(item: list[_Token]) -> bool:
+    """Return True when the item's last word is an operand, not an alias.
+
+    `INTERVAL '1' DAY` ends in the literal's unit, and `ts AT TIME ZONE tz` in
+    the zone it converts to.
+    """
+    words = [_word(token) for token in item[-4:]]
+    if len(item) > 2 and words[-3] == "interval":
+        return item[-2].kind in ("number", "string") and words[-1] in _INTERVAL_UNITS
+    return len(item) > 4 and words[:3] == ["at", "time", "zone"]
 
 
 def _is_name(token: _Token) -> bool:
@@ -287,7 +293,7 @@ def _ends_expression(token: _Token) -> bool:
         return True
     if token.kind == "word":
         return _word(token) not in _OPERATOR_WORDS
-    return token.text in (")", "}")
+    return token.text in (")", "}", "]")
 
 
 def _word(token: _Token) -> str:
@@ -301,6 +307,7 @@ def _tokens(sql: str) -> Iterator[_Token]:
     unterminated string or comment and for unbalanced brackets.
     """
     stack: list[str] = []  # closing brackets still expected
+    earlier: _Token | None = None
     previous: _Token | None = None
     i = 0
     while i < len(sql):
@@ -319,7 +326,17 @@ def _tokens(sql: str) -> Iterator[_Token]:
             continue
 
         char = sql[i]
-        if char in "'\"`[":
+        # `a[1]`, `v['key']`, `ARRAY[1, 2]`: a bracket right after an expression
+        # or ARRAY is a subscript. Anywhere else `[My Col]` is a quoted name.
+        subscript = (
+            char == "["
+            and previous is not None
+            and (
+                _word(previous) == "array"
+                or (previous.end == i and _ends_expression(previous))
+            )
+        )
+        if char in "'\"`" or (char == "[" and not subscript):
             end = _quoted_end(sql, i, "]" if char == "[" else char)
             kind = "string" if char == "'" else "quoted"
         elif tag := _DOLLAR_TAG.match(sql, i):
@@ -337,16 +354,23 @@ def _tokens(sql: str) -> Iterator[_Token]:
         text = sql[i:end]
         if kind == "punct" and stack and text == stack[-1]:
             stack.pop()
-        elif kind == "punct" and text in (")", "}"):
+        elif kind == "punct" and text in (")", "}", "]"):
             raise _Unreadable
         token = _Token(kind, text, i, end, len(stack))
         yield token
 
         if kind == "punct" and text in _PAIRS:
             stack.append(_PAIRS[text])
-        elif text == "<" and previous is not None and _word(previous) in _TYPE_WORDS:
+        elif (
+            text == "<"
+            and previous is not None
+            and _word(previous) in _TYPE_WORDS
+            # a type follows `::`, a struct field's `:`, or an enclosing type;
+            # elsewhere `map < 3` compares a column
+            and (stack[-1:] == [">"] or (earlier is not None and earlier.text == ":"))
+        ):
             stack.append(">")
-        previous = token
+        earlier, previous = previous, token
         i = end
     if stack:
         raise _Unreadable
