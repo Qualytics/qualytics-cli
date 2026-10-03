@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from ..api.client import QualyticsClient, QualyticsAPIError, get_client
+from ..api.datastores import get_datastore
 from ..api.containers import (
     create_container as api_create_container,
     get_field_profiles as api_get_field_profiles,
@@ -315,6 +316,7 @@ def _create_computed_table(
     query: str,
     description: str,
     error_log_path: str,
+    source_type: str | None = None,
 ) -> dict | None:
     """
     Create a computed table in a datastore.
@@ -325,7 +327,7 @@ def _create_computed_table(
     Returns the created computed table response or None if failed.
     """
     # Name unnamed expressions; the rest of the query is sent as written
-    final_query, aliases_added = add_missing_aliases(query)
+    final_query, aliases_added = add_missing_aliases(query, source_type)
     if aliases_added > 0:
         _debug_log(f"Added {aliases_added} aliases to query for {name}")
 
@@ -836,6 +838,12 @@ def import_computed_tables(
         print("\n[bold cyan]No changes were made (dry run).[/bold cyan]")
         raise typer.Exit(code=0)
 
+    # Repeated column names are compared the way this source returns them
+    try:
+        source_type = get_datastore(client, datastore).get("type")
+    except QualyticsAPIError:
+        source_type = None
+
     # Import records
     created_tables = 0
     skipped_tables = 0
@@ -868,6 +876,7 @@ def import_computed_tables(
                 query=query,
                 description=description,
                 error_log_path=error_log_path,
+                source_type=source_type,
             )
 
             if computed_table:

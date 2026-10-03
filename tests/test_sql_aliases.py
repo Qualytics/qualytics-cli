@@ -4,7 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from qualytics.cli.computed_tables import _create_computed_table
+from qualytics.cli.computed_tables import (
+    _create_computed_table,
+    import_computed_tables,
+)
 from qualytics.utils import add_missing_aliases
 
 # A Redshift query from a customer bulk import. The UI accepted it, but the
@@ -151,8 +154,8 @@ def test_query_is_left_unchanged(sql):
         ),
         pytest.param(
             'select "ID", id, ID from t',
-            'select "ID", id as expr_1, ID as expr_2 from t',
-            id="names-equal-ignoring-case",
+            'select "ID", id, ID as expr_1 from t',
+            id="unquoted-names-fold-together",
         ),
         pytest.param(
             "select ARRAY[1, 2], a[1], v['key'] from t",
@@ -309,3 +312,67 @@ def test_import_payload_query(mock_create, query, sent, tmp_path):
     )
 
     assert mock_create.call_args.args[1]["query"] == sent
+
+
+@pytest.mark.parametrize(
+    ("source_type", "sql", "sent"),
+    [
+        pytest.param(
+            "postgresql",
+            'select "ID", id from t',
+            'select "ID", id from t',
+            id="postgresql-folds-lower",
+        ),
+        pytest.param(
+            "snowflake",
+            'select "ID", id from t',
+            'select "ID", id as expr_1 from t',
+            id="snowflake-folds-upper",
+        ),
+        pytest.param(
+            "sqlserver",
+            "select id, ID from t",
+            "select id, ID from t",
+            id="sqlserver-keeps-case",
+        ),
+        pytest.param(
+            "redshift",
+            "select id, ID from t",
+            "select id, ID as expr_1 from t",
+            id="redshift-folds-lower",
+        ),
+    ],
+)
+def test_repeated_names_follow_source_case(source_type, sql, sent):
+    assert add_missing_aliases(sql, source_type)[0] == sent
+
+
+@patch("qualytics.cli.computed_tables.distinct_file_content")
+@patch("qualytics.cli.computed_tables.api_create_container")
+@patch("qualytics.cli.computed_tables._get_existing_computed_tables")
+@patch("qualytics.cli.computed_tables.get_datastore")
+@patch("qualytics.cli.computed_tables.get_client")
+def test_import_compares_names_with_datastore_type(
+    mock_client, mock_get_datastore, mock_existing, mock_create, _distinct, tmp_path
+):
+    mock_get_datastore.return_value = {"id": 7, "type": "snowflake"}
+    mock_existing.return_value = {}
+    mock_create.return_value = {"id": 1}
+    source = tmp_path / "tables.csv"
+    source.write_text('name,description,query\nct1,,"select ""ID"", id from t"\n')
+
+    import_computed_tables(
+        datastore=7,
+        input_file=str(source),
+        delimiter=None,
+        prefix="ct_",
+        as_draft=True,
+        skip_checks=True,
+        skip_profile_wait=True,
+        tags=None,
+        dry_run=False,
+        debug=False,
+    )
+
+    mock_get_datastore.assert_called_once_with(mock_client.return_value, 7)
+    assert mock_create.call_args.args[1]["query"] == 'select "ID", id as expr_1 from t'

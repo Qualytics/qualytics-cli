@@ -58,6 +58,13 @@ _OPERATOR_WORDS = frozenset(
 # Reaching one of these before the outer FROM means the SELECT list is not a
 # plain one (set operation, SELECT INTO, ...), so the query is left alone.
 _STOP_WORDS = frozenset({"except", "intersect", "into", "minus", "select", "union"})
+# How a source names an unquoted column in its results; quoted names keep their
+# case. Unlisted types return names as written, and an unknown source counts as
+# lowercase.
+_UPPERCASE_SOURCES = frozenset({"db2", "hana", "oracle", "snowflake"})
+_LOWERCASE_SOURCES = frozenset(
+    {"athena", "hive", "postgresql", "presto", "redshift", "timescale", "trino"}
+)
 # After these `[` opens a quoted name even with no space: `SELECT[My Col]`.
 _CLAUSE_WORDS = _STOP_WORDS | {"all"}
 # Characters besides letters and digits that would join onto an inserted alias.
@@ -76,13 +83,15 @@ class _Unreadable(Exception):
     """The query can't be tokenized unambiguously."""
 
 
-def add_missing_aliases(sql: str) -> tuple[str, int]:
+def add_missing_aliases(sql: str, source_type: str | None = None) -> tuple[str, int]:
     """Give unnamed expressions in the outer SELECT list ``expr_N`` aliases.
 
     ``*``, column references and expressions that already have an alias are
     left alone, except that a column reference whose name another column
-    already has gets an alias too. Returns the query and the number of aliases
-    added; the query comes back unchanged when it can't be read with confidence.
+    already has gets an alias too. ``source_type`` is the datastore type
+    (``postgresql``, ``snowflake``, ...), which decides how unquoted names
+    compare. Returns the query and the number of aliases added; the query comes
+    back unchanged when it can't be read with confidence.
     """
     try:
         items = _outer_select_items(sql)
@@ -97,7 +106,7 @@ def add_missing_aliases(sql: str) -> tuple[str, int]:
         for token in item
         if token.kind in ("word", "quoted")
     }
-    repeated = _repeated_column_refs(items)
+    repeated = _repeated_column_refs(items, source_type)
     pieces: list[str] = []
     position = number = added = 0
     for index, item in enumerate(items):
@@ -179,48 +188,41 @@ def _needs_alias(item: list[_Token]) -> bool:
     return True
 
 
-def _repeated_column_refs(items: list[list[_Token]]) -> set[int]:
+def _repeated_column_refs(
+    items: list[list[_Token]], source_type: str | None
+) -> set[int]:
     """Return the indexes of column references whose name is already in use.
 
     `a.id, b.id` would give two `id` columns, so the second one needs an alias.
     Names the query's own aliases give are never changed, so a column
-    reference that shares one gets the alias instead.
-
-    How the source folds unquoted names isn't known here, so two quoted names
-    compare exactly (`"ID"` and `"id"` are different columns, and the dataplane
-    reads them case-sensitively) while any pair with an unquoted name compares
-    ignoring case (`"ID"` and `id` are the same column on Snowflake).
+    reference that shares one gets the alias instead. Names compare the way
+    the source returns them: `"ID"` and `id` clash on Snowflake, not Postgres.
     """
-    quoted: set[str] = set()  # quoted names as written
-    folded: set[str] = set()  # every name, lowercased
-    unquoted: set[str] = set()  # unquoted names, lowercased
-
-    def clashes(name: tuple[str, bool]) -> bool:
-        text, is_quoted = name
-        if is_quoted:
-            return text in quoted or text.lower() in unquoted
-        return text.lower() in folded
-
-    def add(name: tuple[str, bool]) -> None:
-        text, is_quoted = name
-        if is_quoted:
-            quoted.add(text)
-        else:
-            unquoted.add(text.lower())
-        folded.add(text.lower())
-
+    used = set()
     for item in items:
         name = _output_name(item)
         if name and not _is_column_ref(item) and not _needs_alias(item):
-            add(name)
+            used.add(_result_name(name, source_type))
     repeated = set()
     for i, item in enumerate(items):
         if _is_column_ref(item):
-            name = _output_name(item)
-            if clashes(name):
+            name = _result_name(_output_name(item), source_type)
+            if name in used:
                 repeated.add(i)
-            add(name)
+            used.add(name)
     return repeated
+
+
+def _result_name(name: tuple[str, bool], source_type: str | None) -> str:
+    """Return the column name the source gives a quoted or unquoted name."""
+    text, quoted = name
+    if quoted:
+        return text
+    if source_type in _UPPERCASE_SOURCES:
+        return text.upper()
+    if source_type is None or source_type in _LOWERCASE_SOURCES:
+        return text.lower()
+    return text
 
 
 def _output_name(item: list[_Token]) -> tuple[str, bool] | None:
