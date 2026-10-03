@@ -58,6 +58,8 @@ _OPERATOR_WORDS = frozenset(
 # Reaching one of these before the outer FROM means the SELECT list is not a
 # plain one (set operation, SELECT INTO, ...), so the query is left alone.
 _STOP_WORDS = frozenset({"except", "intersect", "into", "minus", "select", "union"})
+# After these `[` opens a quoted name even with no space: `SELECT[My Col]`.
+_CLAUSE_WORDS = _STOP_WORDS | {"all"}
 # Characters besides letters and digits that would join onto an inserted alias.
 _GLUED = frozenset({"_", "$", "'", '"', "`", "["})
 
@@ -183,32 +185,52 @@ def _repeated_column_refs(items: list[list[_Token]]) -> set[int]:
     `a.id, b.id` would give two `id` columns, so the second one needs an alias.
     Names the query's own aliases give are never changed, so a column
     reference that shares one gets the alias instead.
+
+    How the source folds unquoted names isn't known here, so two quoted names
+    compare exactly (`"ID"` and `"id"` are different columns, and the dataplane
+    reads them case-sensitively) while any pair with an unquoted name compares
+    ignoring case (`"ID"` and `id` are the same column on Snowflake).
     """
-    used = {
-        _output_name(item)
-        for item in items
-        if not _is_column_ref(item) and not _needs_alias(item)
-    } - {None}
+    quoted: set[str] = set()  # quoted names as written
+    folded: set[str] = set()  # every name, lowercased
+    unquoted: set[str] = set()  # unquoted names, lowercased
+
+    def clashes(name: tuple[str, bool]) -> bool:
+        text, is_quoted = name
+        if is_quoted:
+            return text in quoted or text.lower() in unquoted
+        return text.lower() in folded
+
+    def add(name: tuple[str, bool]) -> None:
+        text, is_quoted = name
+        if is_quoted:
+            quoted.add(text)
+        else:
+            unquoted.add(text.lower())
+        folded.add(text.lower())
+
+    for item in items:
+        name = _output_name(item)
+        if name and not _is_column_ref(item) and not _needs_alias(item):
+            add(name)
     repeated = set()
     for i, item in enumerate(items):
         if _is_column_ref(item):
             name = _output_name(item)
-            if name in used:
+            if clashes(name):
                 repeated.add(i)
-            used.add(name)
+            add(name)
     return repeated
 
 
-def _output_name(item: list[_Token]) -> str | None:
-    """Return the name an item's column keeps, or None if unknown.
-
-    Unquoted names fold to lowercase. Quoted names keep their case: `"ID"` and
-    `"id"` are different columns, and the dataplane reads them case-sensitively.
-    """
+def _output_name(item: list[_Token]) -> tuple[str, bool] | None:
+    """Return the name an item's column keeps and whether it is quoted."""
     if not item or item[-1].kind not in ("word", "quoted"):
         return None
     last = item[-1]
-    return last.text[1:-1] if last.kind == "quoted" else last.text.lower()
+    if last.kind == "quoted":
+        return last.text[1:-1], True
+    return last.text, False
 
 
 def _is_column_ref(item: list[_Token]) -> bool:
@@ -333,7 +355,11 @@ def _tokens(sql: str) -> Iterator[_Token]:
             and previous is not None
             and (
                 _word(previous) == "array"
-                or (previous.end == i and _ends_expression(previous))
+                or (
+                    previous.end == i
+                    and _ends_expression(previous)
+                    and _word(previous) not in _CLAUSE_WORDS
+                )
             )
         )
         if char in "'\"`" or (char == "[" and not subscript):

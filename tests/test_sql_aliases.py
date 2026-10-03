@@ -73,6 +73,7 @@ order by 1"""
         ),
         pytest.param("select x as id, y as id from t", id="repeated-aliases-kept"),
         pytest.param('select "ID", "id" from t', id="quoted-names-differ-by-case"),
+        pytest.param("select[My Col] from t", id="bracket-name-after-select"),
         pytest.param("select a[1] first_item from t", id="alias-after-subscript"),
         pytest.param(
             "select x::struct<a: map<string, int>, b: int> as s from t",
@@ -147,6 +148,11 @@ def test_query_is_left_unchanged(sql):
             "select id, x as id from t",
             "select id as expr_1, x as id from t",
             id="column-name-taken-by-alias",
+        ),
+        pytest.param(
+            'select "ID", id, ID from t',
+            'select "ID", id as expr_1, ID as expr_2 from t',
+            id="names-equal-ignoring-case",
         ),
         pytest.param(
             "select ARRAY[1, 2], a[1], v['key'] from t",
