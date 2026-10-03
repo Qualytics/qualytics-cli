@@ -64,6 +64,13 @@ order by 1"""
             "select interval '1 day' d, interval '1' day e from t",
             id="aliases-after-interval",
         ),
+        pytest.param(
+            "select min(d) start, max(d) end, 1 + 1 null from t",
+            id="end-and-null-aliases-without-as",
+        ),
+        pytest.param(
+            "select case when a then 1 end end from t", id="end-alias-after-case"
+        ),
         pytest.param("select 'data from sap' as src from t", id="from-in-string"),
         pytest.param("select explode(m) as (k, v) from t", id="multi-alias"),
         pytest.param("select {'a': 1, 'b': 2} as obj from t", id="object-constant"),
@@ -117,6 +124,11 @@ def test_query_is_left_unchanged(sql):
             "select case when a > 0 then 'pos' else 'neg' end from t",
             "select case when a > 0 then 'pos' else 'neg' end as expr_1 from t",
             id="case",
+        ),
+        pytest.param(
+            "select case when a then case when b then 1 end end from t",
+            "select case when a then case when b then 1 end end as expr_1 from t",
+            id="nested-case",
         ),
         pytest.param(
             "select a + b, a || b, -a, x::date from t",
@@ -238,17 +250,23 @@ def test_unnamed_expressions_get_aliases(sql, expected):
     assert added == expected.count("expr_") - sql.count("expr_")
 
 
+@pytest.mark.parametrize(
+    ("query", "sent"),
+    [
+        pytest.param(CUSTOMER_QUERY, CUSTOMER_QUERY, id="customer-query-unchanged"),
+        pytest.param(
+            "select count(*) from t",
+            "select count(*) as expr_1 from t",
+            id="unnamed-expression-aliased",
+        ),
+    ],
+)
 @patch("qualytics.cli.computed_tables.api_create_container")
-def test_import_sends_customer_query_unchanged(mock_create, tmp_path):
+def test_import_payload_query(mock_create, query, sent, tmp_path):
     mock_create.return_value = {"id": 1}
 
     _create_computed_table(
-        MagicMock(),
-        20,
-        "DQT_srcods_PO_Qty_By_Posting_Yr",
-        CUSTOMER_QUERY,
-        "",
-        str(tmp_path / "errors.log"),
+        MagicMock(), 20, "ct_import", query, "", str(tmp_path / "errors.log")
     )
 
-    assert mock_create.call_args.args[1]["query"] == CUSTOMER_QUERY
+    assert mock_create.call_args.args[1]["query"] == sent

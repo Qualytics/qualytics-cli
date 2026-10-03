@@ -20,7 +20,8 @@ _DOLLAR_TAG = re.compile(r"\$(?:[^\W\d]\w*)?\$")
 _PAIRS = {"(": ")", "{": "}"}
 # `array<`, `map<` and `struct<` open a type whose commas don't split columns.
 _TYPE_WORDS = frozenset({"array", "map", "struct"})
-# Words that end an expression but can't be a bare alias.
+# Words that end an expression themselves (literals, the END of a CASE). After
+# a complete expression they are an alias without AS instead: `max(d) end`.
 _VALUE_WORDS = frozenset({"end", "false", "null", "true"})
 # After `INTERVAL '1'` one of these is the literal's unit, not an alias.
 _INTERVAL_UNITS = frozenset(
@@ -169,7 +170,7 @@ def _needs_alias(item: list[_Token]) -> bool:
         return False  # a column reference keeps its own name
     if (
         len(item) > 1
-        and _is_name(item[-1])
+        and _may_be_alias(item)
         and _ends_expression(item[-2])
         and not _is_interval_unit(item)
     ):
@@ -213,6 +214,16 @@ def _is_distinct_from(item: list[_Token]) -> bool:
     """Return True when a FROM after ``item`` belongs to IS [NOT] DISTINCT FROM."""
     words = [_word(token) for token in item[-3:]]
     return words[-2:] == ["is", "distinct"] or words == ["is", "not", "distinct"]
+
+
+def _may_be_alias(item: list[_Token]) -> bool:
+    """Return True when the item's last token could be an alias without AS."""
+    word = _word(item[-1])
+    if word == "end":
+        # END closes a CASE unless the item has more ENDs than CASEs
+        words = [_word(token) for token in item if token.depth == 0]
+        return words.count("end") > words.count("case")
+    return _is_name(item[-1]) or word in _VALUE_WORDS
 
 
 def _is_interval_unit(item: list[_Token]) -> bool:
