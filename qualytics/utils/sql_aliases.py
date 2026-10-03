@@ -78,8 +78,9 @@ def add_missing_aliases(sql: str) -> tuple[str, int]:
     """Give unnamed expressions in the outer SELECT list ``expr_N`` aliases.
 
     ``*``, column references and expressions that already have an alias are
-    left alone. Returns the query and the number of aliases added; the query
-    comes back unchanged when it can't be read with confidence.
+    left alone, except that a column reference whose name another column
+    already has gets an alias too. Returns the query and the number of aliases
+    added; the query comes back unchanged when it can't be read with confidence.
     """
     try:
         items = _outer_select_items(sql)
@@ -94,10 +95,11 @@ def add_missing_aliases(sql: str) -> tuple[str, int]:
         for token in item
         if token.kind in ("word", "quoted")
     }
+    repeated = _repeated_column_refs(items)
     pieces: list[str] = []
     position = number = added = 0
-    for item in items:
-        if not _needs_alias(item):
+    for index, item in enumerate(items):
+        if not (_needs_alias(item) or index in repeated):
             continue
         number += 1
         while f"expr_{number}" in taken:
@@ -163,10 +165,7 @@ def _needs_alias(item: list[_Token]) -> bool:
             return False  # `expr AS name`, `expr AS (a, b)`
         if token.text == "*" and (i == 0 or outer[i - 1].text == "."):
             return False  # `*`, `t.*`, `* EXCLUDE (...)`
-    if len(item) % 2 and all(
-        _is_name(token) if i % 2 == 0 else token.text == "."
-        for i, token in enumerate(item)
-    ):
+    if _is_column_ref(item):
         return False  # a column reference keeps its own name
     if (
         len(item) > 1
@@ -176,6 +175,44 @@ def _needs_alias(item: list[_Token]) -> bool:
     ):
         return False  # `expr name`, an alias without AS
     return True
+
+
+def _repeated_column_refs(items: list[list[_Token]]) -> set[int]:
+    """Return the indexes of column references whose name is already in use.
+
+    `a.id, b.id` would give two `id` columns, so the second one needs an alias.
+    Names the query's own aliases give are never changed, so a column
+    reference that shares one gets the alias instead.
+    """
+    used = {
+        _output_name(item)
+        for item in items
+        if not _is_column_ref(item) and not _needs_alias(item)
+    } - {None}
+    repeated = set()
+    for i, item in enumerate(items):
+        if _is_column_ref(item):
+            name = _output_name(item)
+            if name in used:
+                repeated.add(i)
+            used.add(name)
+    return repeated
+
+
+def _output_name(item: list[_Token]) -> str | None:
+    """Return the lowercased name an item's column keeps, or None if unknown."""
+    if not item or item[-1].kind not in ("word", "quoted"):
+        return None
+    last = item[-1]
+    return (last.text[1:-1] if last.kind == "quoted" else last.text).lower()
+
+
+def _is_column_ref(item: list[_Token]) -> bool:
+    """Return True for a plain column reference such as `id` or `t."Col"`."""
+    return len(item) % 2 == 1 and all(
+        _is_name(token) if i % 2 == 0 else token.text == "."
+        for i, token in enumerate(item)
+    )
 
 
 def _without_modifiers(item: list[_Token]) -> list[_Token]:

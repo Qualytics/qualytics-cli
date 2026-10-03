@@ -71,6 +71,7 @@ order by 1"""
         pytest.param(
             "select case when a then 1 end end from t", id="end-alias-after-case"
         ),
+        pytest.param("select x as id, y as id from t", id="repeated-aliases-kept"),
         pytest.param("select 'data from sap' as src from t", id="from-in-string"),
         pytest.param("select explode(m) as (k, v) from t", id="multi-alias"),
         pytest.param("select {'a': 1, 'b': 2} as obj from t", id="object-constant"),
@@ -129,6 +130,17 @@ def test_query_is_left_unchanged(sql):
             "select case when a then case when b then 1 end end from t",
             "select case when a then case when b then 1 end end as expr_1 from t",
             id="nested-case",
+        ),
+        pytest.param(
+            "select a.id, b.id, count(*) from a join b on a.k = b.k group by 1, 2",
+            "select a.id, b.id as expr_1, count(*) as expr_2 "
+            "from a join b on a.k = b.k group by 1, 2",
+            id="repeated-column-name",
+        ),
+        pytest.param(
+            "select id, x as id from t",
+            "select id as expr_1, x as id from t",
+            id="column-name-taken-by-alias",
         ),
         pytest.param(
             "select a + b, a || b, -a, x::date from t",

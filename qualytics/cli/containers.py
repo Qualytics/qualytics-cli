@@ -523,8 +523,9 @@ def containers_import(
       - Any rows returned = FAIL (each row is an anomaly)
 
     SQL QUERIES:
-      Queries are sent as written, except that unnamed expressions in the
-      outer SELECT list get an alias (expr_1, expr_2, ...).
+      Queries are sent as written, except that unnamed expressions and
+      repeated column names in the outer SELECT list get an alias
+      (expr_1, expr_2, ...).
       Cross-catalog/schema references (e.g., catalog.schema.table) are preserved.
 
     Example:

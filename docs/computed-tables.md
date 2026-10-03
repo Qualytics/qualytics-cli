@@ -269,7 +269,7 @@ SELECT coalesce(trim(name), 'Blank'), upper(status), id as order_id FROM orders
 SELECT coalesce(trim(name), 'Blank') as expr_1, upper(status) as expr_2, id as order_id FROM orders
 ```
 
-This ensures all fields have proper names for the quality check expression. The alias is the only change: `*`, plain column names, and expressions that already have an alias (with or without `AS`) are left alone, and the rest of the query is sent exactly as written. If the CLI can't read the query with confidence, for example when it has no top-level `FROM` or an unterminated string or comment, it sends the query unchanged.
+This ensures all fields have proper names for the quality check expression. The alias is the only change: `*`, plain column names, and expressions that already have an alias (with or without `AS`) are left alone, and the rest of the query is sent exactly as written. The one exception is a plain column whose name another column already uses, such as the second `id` in `SELECT a.id, b.id`: it gets an alias too, so every field name is unique. If the CLI can't read the query with confidence, for example when it has no top-level `FROM` or an unterminated string or comment, it sends the query unchanged.
 
 ## List and Preview Commands
 
