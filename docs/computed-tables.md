@@ -259,7 +259,7 @@ JOIN finance_db.accounting.invoices i ON o.invoice_id = i.id
 WHERE o.status = 'PENDING'
 ```
 
-Columns without aliases get unique aliases added automatically (`expr_1`, `expr_2`, etc.):
+Unnamed expressions in the outer SELECT list get unique aliases added automatically (`expr_1`, `expr_2`, etc.):
 
 ```sql
 -- Original query
@@ -269,7 +269,7 @@ SELECT coalesce(trim(name), 'Blank'), upper(status), id as order_id FROM orders
 SELECT coalesce(trim(name), 'Blank') as expr_1, upper(status) as expr_2, id as order_id FROM orders
 ```
 
-This ensures all fields have proper names for the quality check expression.
+This ensures all fields have proper names for the quality check expression. The alias is the only change: `*`, plain column names, and expressions that already have an alias (with or without `AS`) are left alone, and the rest of the query is sent exactly as written. The one exception is a plain column whose name another column already uses, such as the second `id` in `SELECT a.id, b.id`: it gets an alias too, so every field name is unique. Names are compared the way the datastore returns them (Snowflake reads unquoted `id` as `ID`, Postgres as `id`), so the import reads the datastore's type before creating anything and stops if it can't (`--dry-run` doesn't need it). If the CLI can't read the query with confidence, for example when it has no top-level `FROM` or an unterminated string or comment, it sends the query unchanged.
 
 ## List and Preview Commands
 

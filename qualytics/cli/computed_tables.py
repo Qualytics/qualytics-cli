@@ -5,7 +5,6 @@ These functions power the 'containers import' and 'containers preview' CLI comma
 
 import csv
 import json
-import re
 import time
 import typer
 from datetime import datetime
@@ -17,6 +16,7 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from ..api.client import QualyticsClient, QualyticsAPIError, get_client
+from ..api.datastores import get_datastore
 from ..api.containers import (
     create_container as api_create_container,
     get_field_profiles as api_get_field_profiles,
@@ -27,7 +27,7 @@ from ..services.containers import build_update_container_payload
 from ..api.operations import get_operation, list_operations
 from ..api.quality_checks import create_quality_check
 from ..config import BASE_PATH
-from ..utils import distinct_file_content, log_error
+from ..utils import add_missing_aliases, distinct_file_content, log_error
 
 
 console = Console()
@@ -124,139 +124,6 @@ def _write_debug_log(
             f.write("\n")
 
     return log_file
-
-
-def _split_select_columns(select_clause: str) -> list[str]:
-    """
-    Split SELECT clause into individual column expressions.
-    Handles nested parentheses and quotes properly.
-    """
-    columns = []
-    current = []
-    depth = 0
-    in_string = False
-    string_char = None
-
-    for char in select_clause:
-        if char in ('"', "'") and not in_string:
-            in_string = True
-            string_char = char
-            current.append(char)
-        elif char == string_char and in_string:
-            in_string = False
-            string_char = None
-            current.append(char)
-        elif char == "(" and not in_string:
-            depth += 1
-            current.append(char)
-        elif char == ")" and not in_string:
-            depth -= 1
-            current.append(char)
-        elif char == "," and depth == 0 and not in_string:
-            columns.append("".join(current).strip())
-            current = []
-        else:
-            current.append(char)
-
-    if current:
-        columns.append("".join(current).strip())
-
-    return columns
-
-
-def _has_alias(column_expr: str) -> bool:
-    """
-    Check if a column expression already has an alias.
-    """
-    expr = column_expr.strip()
-
-    # Check for explicit AS keyword
-    if re.search(r"\s+[Aa][Ss]\s+\w+\s*$", expr):
-        return True
-
-    # Check for implicit alias after closing paren
-    match = re.search(r"\)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$", expr)
-    if match:
-        potential_alias = match.group(1).upper()
-        sql_keywords = {
-            "FROM",
-            "WHERE",
-            "AND",
-            "OR",
-            "JOIN",
-            "ON",
-            "LEFT",
-            "RIGHT",
-            "INNER",
-            "OUTER",
-            "GROUP",
-            "ORDER",
-            "BY",
-            "HAVING",
-            "UNION",
-            "DISTINCT",
-        }
-        if potential_alias not in sql_keywords:
-            return True
-
-    return False
-
-
-def _add_aliases_to_query(sql: str) -> tuple[str, int]:
-    """
-    Add aliases to SELECT columns that don't have them.
-
-    Columns without aliases get unique aliases like: expr_1, expr_2, etc.
-
-    Returns: (modified_sql, count_of_aliases_added)
-    """
-    if not isinstance(sql, str):
-        return sql, 0
-
-    # Find SELECT ... FROM pattern
-    select_match = re.search(
-        r"\bSELECT\s+(DISTINCT\s+)?(.*?)\s+FROM\b", sql, re.IGNORECASE | re.DOTALL
-    )
-
-    if not select_match:
-        return sql, 0
-
-    distinct_keyword = select_match.group(1) or ""
-    select_clause = select_match.group(2)
-    select_start = select_match.start()
-    select_end = select_match.end()
-
-    columns = _split_select_columns(select_clause)
-
-    modified_columns = []
-    alias_counter = 1
-    aliases_added = 0
-
-    for col in columns:
-        col = col.strip()
-        if not col:
-            continue
-
-        if _has_alias(col):
-            modified_columns.append(col)
-        else:
-            alias = f"expr_{alias_counter}"
-            modified_columns.append(f"{col} as {alias}")
-            alias_counter += 1
-            aliases_added += 1
-
-    if aliases_added == 0:
-        return sql, 0
-
-    new_select_clause = ", ".join(modified_columns)
-    before_select = sql[:select_start]
-    after_from = sql[select_end - 4 :]  # Keep "FROM" and everything after
-
-    new_sql = (
-        f"{before_select}SELECT {distinct_keyword}{new_select_clause} {after_from}"
-    )
-
-    return new_sql, aliases_added
 
 
 def _read_xlsx_file(file_path: str) -> list[dict]:
@@ -449,17 +316,18 @@ def _create_computed_table(
     query: str,
     description: str,
     error_log_path: str,
+    source_type: str | None = None,
 ) -> dict | None:
     """
     Create a computed table in a datastore.
 
-    Adds aliases to SELECT columns without them (e.g., expr_1, expr_2).
+    Unnamed expressions in the outer SELECT list get aliases (expr_1, expr_2).
     The description is stored in additional_metadata.
 
     Returns the created computed table response or None if failed.
     """
-    # Add aliases to columns without them
-    final_query, aliases_added = _add_aliases_to_query(query)
+    # Name unnamed expressions; the rest of the query is sent as written
+    final_query, aliases_added = add_missing_aliases(query, source_type)
     if aliases_added > 0:
         _debug_log(f"Added {aliases_added} aliases to query for {name}")
 
@@ -868,7 +736,9 @@ def import_computed_tables(
       This is ideal for error detection queries where results indicate problems.
 
     SQL QUERIES:
-      Queries are used exactly as provided in the input file.
+      Queries are sent as written, except that unnamed expressions and
+      repeated column names in the outer SELECT list get an alias
+      (expr_1, expr_2, ...).
       Cross-catalog/schema references (e.g., catalog.schema.table) are preserved.
 
     Example:
@@ -968,6 +838,20 @@ def import_computed_tables(
         print("\n[bold cyan]No changes were made (dry run).[/bold cyan]")
         raise typer.Exit(code=0)
 
+    # Repeated column names are compared the way this source returns them, so
+    # stop rather than guess when its type can't be read.
+    try:
+        source_type = get_datastore(client, datastore).get("type")
+    except QualyticsAPIError as e:
+        print(
+            f"[bold red]Could not read datastore {datastore}: "
+            f"{e.status_code} - {e.message}[/bold red]"
+        )
+        raise typer.Exit(code=1)
+    if not source_type:
+        print(f"[bold red]Datastore {datastore} has no type; cannot import.[/bold red]")
+        raise typer.Exit(code=1)
+
     # Import records
     created_tables = 0
     skipped_tables = 0
@@ -1000,6 +884,7 @@ def import_computed_tables(
                 query=query,
                 description=description,
                 error_log_path=error_log_path,
+                source_type=source_type,
             )
 
             if computed_table:
