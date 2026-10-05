@@ -227,38 +227,6 @@ public class JdbcProbe {
         if (tryQuery(conn, "SELECT APPROX_COUNT_DISTINCT(1)", 5)) approxFn = "\"APPROX_COUNT_DISTINCT\"";
         else if (tryQuery(conn, "SELECT APPROX_DISTINCT(1)", 5)) approxFn = "\"APPROX_DISTINCT\"";
 
-        // dateArithmeticStyle + interval templates
-        String dateArith = "\"STANDARD\"";
-        String intervalTs = "null";
-        String intervalDt = "null";
-        String upperTs = "null";
-        String upperDt = "null";
-
-        if (tryQuery(conn, "SELECT TIMESTAMPADD(SECOND, 1, '2000-01-01')", 5)) {
-            dateArith = "\"STANDARD\"";
-            intervalTs = jq("TIMESTAMPADD(SECOND, TIMESTAMPDIFF(SECOND, MIN_{col}, MAX_{col}) / 3, MIN_{col})");
-            intervalDt = jq("TIMESTAMPADD(DAY, TIMESTAMPDIFF(DAY, MIN_{col}, MAX_{col}) / 3, MIN_{col})");
-            upperTs = jq("TIMESTAMPADD(SECOND, TIMESTAMPDIFF(SECOND, MIN_{col}, {interval}), {interval})");
-            upperDt = jq("TIMESTAMPADD(DAY, TIMESTAMPDIFF(DAY, MIN_{col}, {interval}), {interval})");
-        } else if (tryQuery(conn, "SELECT DATEADD(second, 1, '2000-01-01')", 5)) {
-            dateArith = "\"DATEADD_DATEDIFF\"";
-            intervalTs = jq("DATEADD(second, DATEDIFF(second, MIN_{col}, MAX_{col}) / 3, MIN_{col})");
-            intervalDt = jq("DATEADD(day, DATEDIFF(day, MIN_{col}, MAX_{col}) / 3, MIN_{col})");
-            upperTs = jq("DATEADD(second, DATEDIFF(second, MIN_{col}, {interval}), {interval})");
-            upperDt = jq("DATEADD(day, DATEDIFF(day, MIN_{col}, {interval}), {interval})");
-        } else if (tryQuery(conn, "SELECT NUMTODSINTERVAL(1, 'SECOND') FROM DUAL", 5)) {
-            dateArith = "\"NUMTODSINTERVAL\"";
-            intervalTs = jq("MIN_{col} + NUMTODSINTERVAL(EXTRACT(SECOND FROM (MAX_{col} - MIN_{col}))/3, 'SECOND')");
-            intervalDt = jq("MIN_{col} + NUMTODSINTERVAL((MAX_{col} - MIN_{col})/3, 'DAY')");
-            upperTs = jq("MIN_{col} + NUMTODSINTERVAL(EXTRACT(SECOND FROM ({interval} - MIN_{col})), 'SECOND')");
-            upperDt = jq("MIN_{col} + NUMTODSINTERVAL({interval} - MIN_{col}, 'DAY')");
-        } else if (tryQuery(conn, "SELECT TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 1 SECOND)", 5)) {
-            dateArith = "\"TIMESTAMP_ADD\"";
-            intervalTs = jq("TIMESTAMP_ADD(MIN_{col}, INTERVAL TIMESTAMP_DIFF(MAX_{col}, MIN_{col}, SECOND)/3 SECOND)");
-            intervalDt = jq("DATE_ADD(MIN_{col}, INTERVAL DATE_DIFF(MAX_{col}, MIN_{col}, DAY)/3 DAY)");
-            upperTs = jq("TIMESTAMP_ADD({interval}, INTERVAL TIMESTAMP_DIFF({interval}, MIN_{col}, SECOND) SECOND)");
-            upperDt = jq("DATE_ADD({interval}, INTERVAL DATE_DIFF({interval}, MIN_{col}, DAY) DAY)");
-        }
 
         // rowLimitStyle — find a real accessible table first
         String rowLimit = "null";
@@ -391,13 +359,8 @@ public class JdbcProbe {
         out.append("  \"supportsSchemas\": ").append(supportsSchemas).append(",\n");
         out.append("  \"subqueryAlias\": ").append(subAlias).append(",\n");
         out.append("  \"approxCountDistinctFunction\": ").append(approxFn).append(",\n");
-        out.append("  \"dateArithmeticStyle\": ").append(dateArith).append(",\n");
         out.append("  \"rowLimitStyle\": ").append(rowLimit).append(",\n");
         out.append("  \"tableSampleTemplate\": ").append(sampleTemplate).append(",\n");
-        out.append("  \"intervalCalcDatetimeTimestampTemplate\": ").append(intervalTs).append(",\n");
-        out.append("  \"intervalCalcDatetimeDateTemplate\": ").append(intervalDt).append(",\n");
-        out.append("  \"upperBoundDatetimeTimestampTemplate\": ").append(upperTs).append(",\n");
-        out.append("  \"upperBoundDatetimeDateTemplate\": ").append(upperDt).append(",\n");
         out.append("  \"viewSampleFallback\": ").append(viewSampleFallback).append(",\n");
         out.append("  \"timestampLiteralStyle\": ").append(timestampLiteralStyle).append(",\n");
         out.append("  \"dateLiteralStyle\": ").append(dateLiteralStyle).append(",\n");
@@ -591,17 +554,24 @@ def _derive_url_metadata(jdbc_url: str) -> tuple[int | None, str, set[str]]:
     return None, "", url_components
 
 
-# Known Spark built-in JdbcDialect implementations (Spark 3.x, package org.apache.spark.sql.jdbc)
+# Known Spark built-in JdbcDialect implementations (package org.apache.spark.sql.jdbc).
+#
+# NO trailing '$' on these. Spark's built-in dialects are case CLASSES, so `PostgresDialect$`
+# resolves to the companion object (a scala.runtime.AbstractFunction0 factory) which does NOT
+# extend JdbcDialect — CatalogValidation.dialectClassErrors rejects it with "class does not
+# extend org.apache.spark.sql.jdbc.JdbcDialect" and the whole driver catalog fails to load.
+# Qualytics' own dialects (io.qualytics.dataplane.datastores.dialects.*) ARE Scala objects and
+# do require the '$'; the two conventions are not interchangeable.
 _SPARK_BUILTIN_DIALECTS: dict[str, str] = {
-    "postgresql": "org.apache.spark.sql.jdbc.PostgresDialect$",
-    "mysql": "org.apache.spark.sql.jdbc.MySQLDialect$",
-    "mariadb": "org.apache.spark.sql.jdbc.MySQLDialect$",
-    "oracle": "org.apache.spark.sql.jdbc.OracleDialect$",
-    "sqlserver": "org.apache.spark.sql.jdbc.MsSqlServerDialect$",
-    "jtds": "org.apache.spark.sql.jdbc.MsSqlServerDialect$",
-    "db2": "org.apache.spark.sql.jdbc.DB2Dialect$",
-    "derby": "org.apache.spark.sql.jdbc.DerbyDialect$",
-    "teradata": "org.apache.spark.sql.jdbc.TeradataDialect$",
+    "postgresql": "org.apache.spark.sql.jdbc.PostgresDialect",
+    "mysql": "org.apache.spark.sql.jdbc.MySQLDialect",
+    "mariadb": "org.apache.spark.sql.jdbc.MySQLDialect",
+    "oracle": "org.apache.spark.sql.jdbc.OracleDialect",
+    "sqlserver": "org.apache.spark.sql.jdbc.MsSqlServerDialect",
+    "jtds": "org.apache.spark.sql.jdbc.MsSqlServerDialect",
+    "db2": "org.apache.spark.sql.jdbc.DB2Dialect",
+    "derby": "org.apache.spark.sql.jdbc.DerbyDialect",
+    "teradata": "org.apache.spark.sql.jdbc.TeradataDialect",
 }
 
 # Mapping from a detected row-limit idiom to its sql.clauses closed-vocab token.
@@ -609,7 +579,7 @@ _SPARK_BUILTIN_DIALECTS: dict[str, str] = {
 # sampling on BOTH a function (RANDOM/RAND/NEWID/DBMS_RANDOM_VALUE) AND the matching row-limit
 # clause, so the idiom must be declared in sql.clauses in addition to the rowLimitStyle config
 # field. Mirrors the built-in drivers: postgresql/redshift/mysql/snowflake → LIMIT, sqlserver →
-# OFFSET_FETCH, oracle → ROWNUM.
+# OFFSET_FETCH, oracle → ROWNUM, db2 → OFFSET_FETCH.
 _ROW_LIMIT_CLAUSE_TOKEN: dict[str, str] = {
     "LIMIT": "LIMIT",
     "FETCH_FIRST": "OFFSET_FETCH",
@@ -634,7 +604,9 @@ VALID_TRANSACTION_ISOLATION: frozenset[str] = frozenset(
     {"NONE", "READ_UNCOMMITTED", "READ_COMMITTED", "REPEATABLE_READ", "SERIALIZABLE"}
 )
 VALID_TABLE_NAME_CASING: frozenset[str] = frozenset({"UPPER", "LOWER", "AS_IS"})
-VALID_ROW_LIMIT_STYLE: frozenset[str] = frozenset({"LIMIT", "TOP", "ROWNUM"})
+VALID_ROW_LIMIT_STYLE: frozenset[str] = frozenset(
+    {"LIMIT", "TOP", "ROWNUM", "FETCH_FIRST"}
+)
 VALID_TIMESTAMP_LITERAL_STYLE: frozenset[str] = frozenset(
     {
         "PLAIN",
@@ -689,15 +661,6 @@ VALID_ROW_COUNT: frozenset[str] = frozenset(
         "INFORMATION_SCHEMA_ROW_COUNT",
         "INFORMATION_SCHEMA_TABLES_WITH_SIZE",
         "ALL_TABLES",
-    }
-)
-VALID_DATE_ARITHMETIC_STYLE: frozenset[str] = frozenset(
-    {
-        "STANDARD",
-        "DATEADD_DATEDIFF",
-        "NUMTODSINTERVAL",
-        "TIMESTAMP_ADD",
-        "TIMESTAMPDIFF_DB2",
     }
 )
 
@@ -813,6 +776,17 @@ def _build_yaml(
 
     # ── Derive URL metadata ─────────────────────────────────────────────────
     default_port, jdbc_url_template, url_components = _derive_url_metadata(jdbc_url)
+    # `config.url.template` is required and its placeholders must be backed by
+    # connectionSpec fields. When the probe URL doesn't fit either recognised shape (e.g.
+    # Oracle's `jdbc:oracle:thin:@host:port/service`), fall back to the conventional
+    # host/port/database triple so the template and the form fields stay in agreement —
+    # a TODO the operator corrects, rather than an unparseable file.
+    if not jdbc_url_template:
+        jdbc_url_template = f"jdbc:{prefix}://{{host}}:{{port}}/{{database}}"
+        url_components |= {"host", "port", "database"}
+        url_template_is_guess = True
+    else:
+        url_template_is_guess = False
     db_product_name = probes.get("dbProductName")
     display_name = (
         db_product_name
@@ -832,32 +806,18 @@ def _build_yaml(
         #
         # Custom JDBC drivers in Qualytics support SOURCE datastores only (read access).
         # Excluded write-only field: insertBatchSize.
-        # Keys equal to their DriverDefinition default are omitted to keep this file concise.
+        # Optional keys equal to their DriverDefinition default are omitted to keep this file
+        # concise; required keys are always emitted. An optional key is omitted (or shown
+        # commented out) rather than set to null — an explicit null is a parse error.
         #
         # Deploy this file to:  META-INF/jdbc-drivers/{prefix}.yaml
         """)
     )
 
-    # ── Identity ─────────────────────────────────────────────────────────────
-    lines.append(
-        field(
-            "prefix",
-            prefix,
-            "review — must match the jdbc:<prefix>: scheme in the JDBC URL",
-        )
-    )
-    todo_fields.append("prefix")
-    lines.append(
-        field(
-            "className",
-            probes.get("className"),
-            "auto-detected — fully-qualified JDBC Driver class name",
-        )
-    )
-    detected_fields.append("className")
-    lines.append("")
-
     # ── Spark JdbcDialect (top-level) ────────────────────────────────────────
+    # Only `config`, `sql` and `dialectClass` are accepted at the top level, and
+    # `dialectClass` must be a non-empty FQCN when present — an explicit null is a parse
+    # error, so the undetected case emits a commented-out stub instead of `null`.
     lines.append(
         "# ── Spark JdbcDialect ────────────────────────────────────────────────"
     )
@@ -872,13 +832,19 @@ def _build_yaml(
         detected_fields.append("dialectClass")
     else:
         lines.append(
-            field(
-                "dialectClass",
-                None,
-                "TODO: fully-qualified JdbcDialect Scala object class to register with Spark "
-                "(e.g. com.example.MyDialect$); null if no custom Spark dialect is needed",
-            )
+            "# TODO: dialectClass — fully-qualified Spark JdbcDialect implementation. A Scala"
         )
+        lines.append(
+            "# `object` needs the trailing '$' (com.example.MyDialect$); a class does NOT"
+        )
+        lines.append(
+            "# (com.example.MyDialect). The wrong form fails catalog load with 'class does not"
+        )
+        lines.append(
+            "# extend org.apache.spark.sql.jdbc.JdbcDialect'. Leave commented out if the driver"
+        )
+        lines.append("# needs no custom Spark dialect.")
+        lines.append("# dialectClass: com.example.MyDialect$")
         todo_fields.append("dialectClass")
     lines.append("")
 
@@ -887,6 +853,29 @@ def _build_yaml(
     # ══════════════════════════════════════════════════════════════════════════
     lines.append("config:")
     _indent[0] = "  "
+
+    # ── Identity ─────────────────────────────────────────────────────────────
+    # prefix and className are config fields, not top-level keys.
+    lines.append(
+        _sec("# ── Identity ─────────────────────────────────────────────────────────")
+    )
+    lines.append(
+        field(
+            "prefix",
+            prefix,
+            "review — must match the jdbc:<prefix>: scheme in the JDBC URL, and the "
+            "filename must be <prefix>.yaml",
+        )
+    )
+    todo_fields.append("prefix")
+    lines.append(
+        field(
+            "className",
+            probes.get("className"),
+            "auto-detected — fully-qualified JDBC Driver class name",
+        )
+    )
+    detected_fields.append("className")
 
     # ── SQL dialect (config fields) ──────────────────────────────────────────
     lines.append(
@@ -916,31 +905,28 @@ def _build_yaml(
         )
         detected_fields.append("defaultPort")
     else:
+        # `defaultPort: null` is a parse error ("omit the key to use the default"), so the
+        # undetected case is emitted commented out.
         lines.append(
-            field(
-                "defaultPort",
-                None,
-                "TODO: default TCP port for this driver "
-                "(e.g. 5432 PostgreSQL, 3306 MySQL, 1521 Oracle, 1433 SQL Server). "
-                "Omit this key entirely if the driver does not use TCP ports.",
-            )
+            f"{_indent[0]}# defaultPort: 5432"
+            "  # TODO: default TCP port (e.g. 5432 PostgreSQL, 3306 MySQL, "
+            "1521 Oracle, 1433 SQL Server); leave commented out if this driver "
+            "does not use TCP ports"
         )
         todo_fields.append("defaultPort")
 
-    # transactionIsolation — omit if READ_UNCOMMITTED (default)
-    tx = probes.get("transactionIsolation")
-    if tx and tx != "READ_UNCOMMITTED":
-        lines.append(
-            field(
-                "transactionIsolation",
-                tx,
-                "auto-detected — valid: NONE, READ_UNCOMMITTED (default), "
-                "READ_COMMITTED, SERIALIZABLE",
-            )
+    # transactionIsolation — REQUIRED by the parser, so always emit it even when it equals
+    # the DriverConfig default.
+    tx = probes.get("transactionIsolation") or "READ_UNCOMMITTED"
+    lines.append(
+        field(
+            "transactionIsolation",
+            tx,
+            "auto-detected — valid: NONE, READ_UNCOMMITTED, READ_COMMITTED, "
+            "REPEATABLE_READ, SERIALIZABLE",
         )
-        detected_fields.append("transactionIsolation")
-    elif tx:
-        detected_fields.append("transactionIsolation")  # default — omitted
+    )
+    detected_fields.append("transactionIsolation")
 
     # identifierQuoteChar — omit if " (default)
     quote_char = probes.get("identifierQuoteChar")
@@ -956,35 +942,30 @@ def _build_yaml(
     elif quote_char:
         detected_fields.append("identifierQuoteChar")  # default — omitted
 
-    # tableNameCasing — omit if AS_IS (default)
+    # tableNameCasing — REQUIRED by the parser, so always emit it even when it equals the
+    # DriverConfig default.
     casing = probes.get("tableNameCasing", "AS_IS")
-    if casing != "AS_IS":
-        lines.append(
-            field(
-                "tableNameCasing",
-                casing,
-                "auto-detected — valid: UPPER (DB2/Oracle), LOWER (PostgreSQL), "
-                "AS_IS (default, most others)",
-            )
+    lines.append(
+        field(
+            "tableNameCasing",
+            casing,
+            "auto-detected — valid: UPPER (DB2/Oracle), LOWER (PostgreSQL), "
+            "AS_IS (most others)",
         )
-        detected_fields.append("tableNameCasing")
-    else:
-        detected_fields.append("tableNameCasing")  # default — omitted
+    )
+    detected_fields.append("tableNameCasing")
 
-    # rowLimitStyle — omit if LIMIT (default); TODO if probe couldn't determine
-    # FETCH_FIRST is NOT a rowLimitStyle — it maps to OFFSET_FETCH in sql.clauses
+    # rowLimitStyle — omit if LIMIT (default); TODO if probe couldn't determine.
+    # FETCH_FIRST is a rowLimitStyle arm in its own right; it additionally maps to the
+    # OFFSET_FETCH sql.clauses token (see _ROW_LIMIT_CLAUSE_TOKEN below).
     row_limit = probes.get("rowLimitStyle")
-    _fetch_first_detected = row_limit == "FETCH_FIRST"
-    if _fetch_first_detected:
-        # FETCH_FIRST → OFFSET_FETCH clause (handled in sql.clauses below)
-        detected_fields.append("rowLimitStyle")  # default LIMIT — omitted
-    elif row_limit and row_limit != "LIMIT":
+    if row_limit and row_limit != "LIMIT":
         lines.append(
             field(
                 "rowLimitStyle",
                 row_limit,
                 "auto-detected — valid: LIMIT (default), TOP (SQL Server), "
-                "ROWNUM (Oracle)",
+                "ROWNUM (Oracle), FETCH_FIRST (Db2)",
             )
         )
         detected_fields.append("rowLimitStyle")
@@ -996,7 +977,7 @@ def _build_yaml(
                 "rowLimitStyle",
                 "LIMIT",
                 "TODO: valid: LIMIT (default, MySQL/PG/SQLite), TOP (SQL Server), "
-                "ROWNUM (Oracle)",
+                "ROWNUM (Oracle), FETCH_FIRST (Db2)",
             )
         )
         todo_fields.append("rowLimitStyle")
@@ -1146,10 +1127,12 @@ def _build_yaml(
             "(2^31-1); needed for databases with very large tables",
         )
     )
+    # An explicit `null` is a parse error ("omit the key to use the default"), so the
+    # unset case is emitted commented out.
     lines.append(
-        f"{_indent[0]}defaultInsertBatchSize: null"
-        "         # optional: override the default JDBC batch size for INSERT statements "
-        "(e.g. 1000); null uses the platform default"
+        f"{_indent[0]}# defaultInsertBatchSize: 1000"
+        "  # optional: override the default JDBC batch size for INSERT "
+        "statements; omit the key entirely to use the platform default"
     )
     lines.append(
         f"{_indent[0]}connectionProperties: {{}}"
@@ -1181,19 +1164,21 @@ def _build_yaml(
     ind = _indent[0]  # shorthand — currently "  " inside config:
     url_ind = ind + "  "  # one level deeper for url: sub-keys
     lines.append(f"{ind}url:")
-    if jdbc_url_template:
+    if url_template_is_guess:
+        lines.append(
+            f"{url_ind}template: {_render(jdbc_url_template)}"
+            "  # TODO: could not derive a template from the probe URL — this is a "
+            "conventional guess. Correct it to this driver's real URL shape "
+            "(e.g. jdbc:oracle:thin:@{host}:{port}/{database}); every placeholder "
+            "must match a connectionSpec field name"
+        )
+        todo_fields.append("template")
+    else:
         lines.append(
             f"{url_ind}template: {_render(jdbc_url_template)}"
             "  # auto-detected from probe URL — verify all placeholders are correct"
         )
         detected_fields.append("template")
-    else:
-        lines.append(
-            f"{url_ind}template: {_render('')}"
-            "  # TODO: URL template with {host}, {port}, {database} substitution tokens. "
-            "Example: jdbc:mydb://{host}:{port}/{database}"
-        )
-        todo_fields.append("template")
     lines.append(
         f"{url_ind}staticParams: []"
         "      # TODO: query params always appended to every URL "
@@ -1208,9 +1193,11 @@ def _build_yaml(
         f"{url_ind}authVariants: {{}}"
         "      # optional: auth_type -> full URL template override; leave empty if not needed"
     )
+    # paramSeparator only accepts ';' or ','. Query style (`?` then `&`) is the default and
+    # is NOT declarable — emitting '&' is a parse error, so the default case stays commented.
     lines.append(
-        f"{url_ind}paramSeparator: '&'"
-        "  # URL parameter separator character (default '&')"
+        f"{url_ind}# paramSeparator: ';'"
+        "  # optional: only ';' or ',' — omit for the default query style (?/&)"
     )
     todo_fields += ["staticParams", "conditionalParams"]
     lines.append("")
@@ -1378,151 +1365,44 @@ def _build_yaml(
     else:
         lines.append(f"{ind_sql}clauses: []")
 
-    # ── sql.queries — query construction strategies ─────────────────────────
+    # ── sql.queries — per-slot SQL overrides ────────────────────────────────
+    # Every slot value is a FULL, single-statement, read-only SQL string using only that
+    # slot's placeholders — not a strategy token. The parser validates placeholders and
+    # rejects DML/DDL keywords and ';', but it cannot tell a token from SQL: emitting a
+    # bare token like `schemaOnly: PG_CTE` parses cleanly and then ships that literal
+    # string to the database at query time. So the probed style is carried as a comment
+    # hint and every slot is emitted commented out — omitting a slot uses the dataplane's
+    # composed default, which is correct for most drivers.
+    schema_only = probes.get("schemaOnly", "CTE")
+    row_count_style = probes.get("rowCount", "COUNT_STAR")
+    detected_fields += ["schemaOnly", "rowCount"]
+
     lines.append(
         _sec("# ── SQL queries ──────────────────────────────────────────────────")
     )
-    lines.append(
-        _sec(
-            "# QuerySlot keys: nullCheck, schemaOnly, rowCount, volume, "
-            "freshness, partitionColumn, lineage"
-        )
-    )
-    lines.append(_sec("queries:"))
+    for line in (
+        "# Optional per-slot overrides of the vendor metadata fast-paths. Each value is a",
+        "# full read-only SQL statement (single statement, no ';'). Omit a slot to use the",
+        "# dataplane's composed default. Allowed placeholders per slot:",
+        "#   schemaOnly      {query}                        wrap a query to return 0 rows",
+        "#   rowCount        {schema} {table}               -> one numeric column",
+        "#   volume          {schema} {database} {table}    -> row_count, size_bytes",
+        "#   freshness       {schema} {table} {qualifiedTable} -> one timestamp",
+        "#   partitionColumn {schema} {table}               -> partitioning_column",
+        "#   lineage         {schema}                       -> source/target edges",
+        "#",
+        f"# Probe hints (NOT valid SQL — do not paste verbatim): schemaOnly={schema_only},",
+        f"# rowCount={row_count_style}. Translate these into real SQL for this engine, or",
+        "# leave every slot out and take the defaults.",
+        "#",
+        "# schemaOnly: SELECT TOP 0 QUERYA.* FROM ({query}) AS QUERYA",
+        "# rowCount: SELECT NUM_ROWS FROM ALL_TABLES WHERE OWNER = '{schema}' AND TABLE_NAME = '{table}'",
+        "# volume: SELECT ROW_COUNT, BYTES FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table}'",
+        "# freshness: SELECT LAST_ALTERED FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table}'",
+    ):
+        lines.append(_sec(line))
+    lines.append(_sec("queries: {}"))
     _indent[0] = "    "
-
-    # schemaOnly — if CTE (probe fallback, unconfirmed) → TODO; else emit as detected
-    schema_only = probes.get("schemaOnly", "CTE")
-    if schema_only != "CTE":
-        lines.append(
-            field(
-                "schemaOnly",
-                schema_only,
-                "auto-detected — how to wrap a query to return 0 rows for schema inspection. "
-                "Valid: CTE (default), PG_CTE (PostgreSQL), SQLSERVER_TOP0 (SQL Server), "
-                "WHERE_FALSE_QUERYA (generic WHERE 1=0), ORACLE_WHERE_FALSE (Oracle), "
-                "HIVE_LIMIT0 (Hive/Spark)",
-            )
-        )
-        detected_fields.append("schemaOnly")
-    else:
-        lines.append(
-            field(
-                "schemaOnly",
-                "CTE",
-                "TODO: how to wrap a query to return 0 rows for schema inspection. "
-                "Valid: CTE (default, most modern DBs with WITH support), PG_CTE (PostgreSQL), "
-                "SQLSERVER_TOP0 (SQL Server/Synapse), WHERE_FALSE_QUERYA (generic WHERE 1=0), "
-                "ORACLE_WHERE_FALSE (Oracle), HIVE_LIMIT0 (Hive/Spark)",
-            )
-        )
-        todo_fields.append("schemaOnly")
-
-    # rowCount — emit as TODO if COUNT_STAR (default/unconfirmed), else auto-detected
-    row_count_style = probes.get("rowCount", "COUNT_STAR")
-    if row_count_style and row_count_style != "COUNT_STAR":
-        lines.append(
-            field(
-                "rowCount",
-                row_count_style,
-                "auto-detected — row count strategy",
-            )
-        )
-        detected_fields.append("rowCount")
-    else:
-        lines.append(
-            field(
-                "rowCount",
-                "COUNT_STAR",
-                "TODO: row count strategy. Valid: COUNT_STAR (default, always works), "
-                "BQ_TABLES (BigQuery), INFORMATION_SCHEMA_ROW_COUNT (MySQL/MariaDB), "
-                "ALL_TABLES (Oracle), INFORMATION_SCHEMA_TABLES_WITH_SIZE (MySQL/MariaDB)",
-            )
-        )
-        todo_fields.append("rowCount")
-    # countStarNullSizeBytesExpr — almost always null (default); omit; user adds manually for Dremio
-
-    # ── freshness — date arithmetic style + templates ───────────────────────
-    date_arith = probes.get("dateArithmeticStyle", "STANDARD")
-    int_ts = probes.get("intervalCalcDatetimeTimestampTemplate")
-    int_dt = probes.get("intervalCalcDatetimeDateTemplate")
-    up_ts = probes.get("upperBoundDatetimeTimestampTemplate")
-    up_dt = probes.get("upperBoundDatetimeDateTemplate")
-    has_templates = any(v and v != "null" for v in [int_ts, int_dt, up_ts, up_dt])
-    has_freshness = date_arith != "STANDARD" or has_templates
-
-    if has_freshness:
-        lines.append(
-            _sec("# ── Freshness query slot ──────────────────────────────────────")
-        )
-        lines.append(field("freshness", None, ""))  # emit "freshness:" as a mapping key
-        # Remove the "freshness: null" line we just added and replace with bare key
-        lines[-1] = f"{_indent[0]}freshness:"
-        # Indent one level deeper for freshness sub-fields
-        saved_indent = _indent[0]
-        _indent[0] = saved_indent + "  "
-
-        if date_arith != "STANDARD":
-            lines.append(
-                field(
-                    "style",
-                    date_arith,
-                    "auto-detected — date arithmetic strategy. "
-                    "Valid: STANDARD (default, ANSI fallback), DATEADD_DATEDIFF (SQL Server), "
-                    "NUMTODSINTERVAL (Oracle), TIMESTAMP_ADD (BigQuery), TIMESTAMPDIFF_DB2 (Db2)",
-                )
-            )
-            detected_fields.append("freshness.style")
-        else:
-            detected_fields.append("freshness.style")  # default — omitted
-
-        if has_templates:
-            lines.append(
-                _sec(
-                    "# Placeholders: {col} = column name, MIN_{col} = min value, "
-                    "MAX_{col} = max value, {interval} = midpoint expression"
-                )
-            )
-            if int_ts and int_ts != "null":
-                lines.append(
-                    field(
-                        "intervalCalcDatetimeTimestampTemplate",
-                        int_ts,
-                        "auto-detected",
-                    )
-                )
-                detected_fields.append("intervalCalcDatetimeTimestampTemplate")
-            if int_dt and int_dt != "null":
-                lines.append(
-                    field(
-                        "intervalCalcDatetimeDateTemplate",
-                        int_dt,
-                        "auto-detected",
-                    )
-                )
-                detected_fields.append("intervalCalcDatetimeDateTemplate")
-            if up_ts and up_ts != "null":
-                lines.append(
-                    field(
-                        "upperBoundDatetimeTimestampTemplate",
-                        up_ts,
-                        "auto-detected",
-                    )
-                )
-                detected_fields.append("upperBoundDatetimeTimestampTemplate")
-            if up_dt and up_dt != "null":
-                lines.append(
-                    field(
-                        "upperBoundDatetimeDateTemplate",
-                        up_dt,
-                        "auto-detected",
-                    )
-                )
-                detected_fields.append("upperBoundDatetimeDateTemplate")
-
-        _indent[0] = saved_indent  # restore queries-level indent
-    else:
-        detected_fields.append("freshness.style")  # default STANDARD — omitted
 
     # ══════════════════════════════════════════════════════════════════════════
     # End of sql: section — reset indentation
@@ -1955,28 +1835,11 @@ def generate_driver(
         ("approxCountDistinctFunction", probes.get("approxCountDistinctFunction")),
         ("rowCount", probes.get("rowCount")),
         ("schemaOnly", probes.get("schemaOnly")),
-        ("dateArithmeticStyle", probes.get("dateArithmeticStyle")),
         ("rowLimitStyle", probes.get("rowLimitStyle")),
         ("tableSampleTemplate", probes.get("tableSampleTemplate")),
         ("viewSampleFallback", probes.get("viewSampleFallback")),
         ("timestampLiteralStyle", probes.get("timestampLiteralStyle")),
         ("dateLiteralStyle", probes.get("dateLiteralStyle")),
-        (
-            "intervalCalcDatetimeTimestampTemplate",
-            probes.get("intervalCalcDatetimeTimestampTemplate"),
-        ),
-        (
-            "intervalCalcDatetimeDateTemplate",
-            probes.get("intervalCalcDatetimeDateTemplate"),
-        ),
-        (
-            "upperBoundDatetimeTimestampTemplate",
-            probes.get("upperBoundDatetimeTimestampTemplate"),
-        ),
-        (
-            "upperBoundDatetimeDateTemplate",
-            probes.get("upperBoundDatetimeDateTemplate"),
-        ),
     ]
 
     for name, value in probe_display:
