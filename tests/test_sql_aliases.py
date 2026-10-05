@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from qualytics.api.client import QualyticsAPIError
 from qualytics.cli.computed_tables import (
     _create_computed_table,
     import_computed_tables,
@@ -154,8 +155,8 @@ def test_query_is_left_unchanged(sql):
         ),
         pytest.param(
             'select "ID", id, ID from t',
-            'select "ID", id, ID as expr_1 from t',
-            id="unquoted-names-fold-together",
+            'select "ID", id as expr_1, ID as expr_2 from t',
+            id="unknown-source-flags-any-clash",
         ),
         pytest.param(
             "select ARRAY[1, 2], a[1], v['key'] from t",
@@ -347,15 +348,45 @@ def test_repeated_names_follow_source_case(source_type, sql, sent):
     assert add_missing_aliases(sql, source_type)[0] == sent
 
 
+@pytest.mark.parametrize(
+    ("datastore", "sent"),
+    [
+        pytest.param(
+            {"id": 7, "type": "postgresql"},
+            'select "ID", id from t',
+            id="postgresql-datastore",
+        ),
+        pytest.param(
+            {"id": 7, "type": "snowflake"},
+            'select "ID", id as expr_1 from t',
+            id="snowflake-datastore",
+        ),
+        pytest.param(
+            QualyticsAPIError(403, "Forbidden"),
+            'select "ID", id as expr_1 from t',
+            id="datastore-lookup-fails",
+        ),
+    ],
+)
 @patch("qualytics.cli.computed_tables.distinct_file_content")
 @patch("qualytics.cli.computed_tables.api_create_container")
 @patch("qualytics.cli.computed_tables._get_existing_computed_tables")
 @patch("qualytics.cli.computed_tables.get_datastore")
 @patch("qualytics.cli.computed_tables.get_client")
 def test_import_compares_names_with_datastore_type(
-    mock_client, mock_get_datastore, mock_existing, mock_create, _distinct, tmp_path
+    mock_client,
+    mock_get_datastore,
+    mock_existing,
+    mock_create,
+    _distinct,
+    datastore,
+    sent,
+    tmp_path,
 ):
-    mock_get_datastore.return_value = {"id": 7, "type": "snowflake"}
+    if isinstance(datastore, Exception):
+        mock_get_datastore.side_effect = datastore
+    else:
+        mock_get_datastore.return_value = datastore
     mock_existing.return_value = {}
     mock_create.return_value = {"id": 1}
     source = tmp_path / "tables.csv"
@@ -375,4 +406,4 @@ def test_import_compares_names_with_datastore_type(
     )
 
     mock_get_datastore.assert_called_once_with(mock_client.return_value, 7)
-    assert mock_create.call_args.args[1]["query"] == 'select "ID", id as expr_1 from t'
+    assert mock_create.call_args.args[1]["query"] == sent

@@ -59,8 +59,8 @@ _OPERATOR_WORDS = frozenset(
 # plain one (set operation, SELECT INTO, ...), so the query is left alone.
 _STOP_WORDS = frozenset({"except", "intersect", "into", "minus", "select", "union"})
 # How a source names an unquoted column in its results; quoted names keep their
-# case. Unlisted types return names as written, and an unknown source counts as
-# lowercase.
+# case. Unlisted types return names as written. When the source is unknown,
+# every rule is checked.
 _UPPERCASE_SOURCES = frozenset({"db2", "hana", "oracle", "snowflake"})
 _LOWERCASE_SOURCES = frozenset(
     {"athena", "hive", "postgresql", "presto", "redshift", "timescale", "trino"}
@@ -197,32 +197,41 @@ def _repeated_column_refs(
     Names the query's own aliases give are never changed, so a column
     reference that shares one gets the alias instead. Names compare the way
     the source returns them: `"ID"` and `id` clash on Snowflake, not Postgres.
+    With an unknown source, a clash under any rule counts.
     """
-    used = set()
-    for item in items:
-        name = _output_name(item)
-        if name and not _is_column_ref(item) and not _needs_alias(item):
-            used.add(_result_name(name, source_type))
     repeated = set()
-    for i, item in enumerate(items):
-        if _is_column_ref(item):
-            name = _result_name(_output_name(item), source_type)
-            if name in used:
-                repeated.add(i)
-            used.add(name)
+    for rule in _name_rules(source_type):
+        used = set()
+        for item in items:
+            name = _output_name(item)
+            if name and not _is_column_ref(item) and not _needs_alias(item):
+                used.add(_result_name(name, rule))
+        for i, item in enumerate(items):
+            if _is_column_ref(item):
+                name = _result_name(_output_name(item), rule)
+                if name in used:
+                    repeated.add(i)
+                used.add(name)
     return repeated
 
 
-def _result_name(name: tuple[str, bool], source_type: str | None) -> str:
-    """Return the column name the source gives a quoted or unquoted name."""
-    text, quoted = name
-    if quoted:
-        return text
+def _name_rules(source_type: str | None) -> tuple[str, ...]:
+    """Return how the source names unquoted columns: upper, lower or exact."""
+    if source_type is None:
+        return ("upper", "lower", "exact")
     if source_type in _UPPERCASE_SOURCES:
-        return text.upper()
-    if source_type is None or source_type in _LOWERCASE_SOURCES:
-        return text.lower()
-    return text
+        return ("upper",)
+    if source_type in _LOWERCASE_SOURCES:
+        return ("lower",)
+    return ("exact",)
+
+
+def _result_name(name: tuple[str, bool], rule: str) -> str:
+    """Return the column name a source using ``rule`` gives a name."""
+    text, quoted = name
+    if quoted or rule == "exact":
+        return text
+    return text.upper() if rule == "upper" else text.lower()
 
 
 def _output_name(item: list[_Token]) -> tuple[str, bool] | None:
