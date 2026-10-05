@@ -792,20 +792,6 @@ def import_computed_tables(
 
     print(f"[bold green]{len(valid_records)} valid records to import.[/bold green]")
 
-    # Repeated column names are compared the way this source returns them, so
-    # stop rather than guess when its type can't be read.
-    try:
-        source_type = get_datastore(client, datastore).get("type")
-    except QualyticsAPIError as e:
-        print(
-            f"[bold red]Could not read datastore {datastore}: "
-            f"{e.status_code} - {e.message}[/bold red]"
-        )
-        raise typer.Exit(code=1)
-    if not source_type:
-        print(f"[bold red]Datastore {datastore} has no type; cannot import.[/bold red]")
-        raise typer.Exit(code=1)
-
     # Get existing computed tables
     print("[dim]Checking for existing computed tables...[/dim]")
     existing_tables = _get_existing_computed_tables(client, datastore)
@@ -851,6 +837,20 @@ def import_computed_tables(
         console.print(table)
         print("\n[bold cyan]No changes were made (dry run).[/bold cyan]")
         raise typer.Exit(code=0)
+
+    # Repeated column names are compared the way this source returns them, so
+    # stop rather than guess when its type can't be read.
+    try:
+        source_type = get_datastore(client, datastore).get("type")
+    except QualyticsAPIError as e:
+        print(
+            f"[bold red]Could not read datastore {datastore}: "
+            f"{e.status_code} - {e.message}[/bold red]"
+        )
+        raise typer.Exit(code=1)
+    if not source_type:
+        print(f"[bold red]Datastore {datastore} has no type; cannot import.[/bold red]")
+        raise typer.Exit(code=1)
 
     # Import records
     created_tables = 0

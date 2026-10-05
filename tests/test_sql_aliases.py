@@ -438,3 +438,32 @@ def test_import_stops_without_datastore_type(
 
     assert stopped.value.exit_code == 1
     mock_create.assert_not_called()
+
+
+@patch("qualytics.cli.computed_tables._get_existing_computed_tables")
+@patch("qualytics.cli.computed_tables.get_datastore")
+@patch("qualytics.cli.computed_tables.get_client")
+def test_dry_run_does_not_read_datastore(
+    _client, mock_get_datastore, mock_existing, tmp_path
+):
+    mock_get_datastore.side_effect = QualyticsAPIError(403, "Forbidden")
+    mock_existing.return_value = {}
+    source = tmp_path / "tables.csv"
+    source.write_text('name,description,query\nct1,,"select count(*) from t"\n')
+
+    with pytest.raises(typer.Exit) as stopped:
+        import_computed_tables(
+            datastore=7,
+            input_file=str(source),
+            delimiter=None,
+            prefix="ct_",
+            as_draft=True,
+            skip_checks=True,
+            skip_profile_wait=True,
+            tags=None,
+            dry_run=True,
+            debug=False,
+        )
+
+    assert stopped.value.exit_code == 0
+    mock_get_datastore.assert_not_called()
