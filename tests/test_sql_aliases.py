@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import typer
 
 from qualytics.api.client import QualyticsAPIError
 from qualytics.cli.computed_tables import (
@@ -361,11 +362,6 @@ def test_repeated_names_follow_source_case(source_type, sql, sent):
             'select "ID", id as expr_1 from t',
             id="snowflake-datastore",
         ),
-        pytest.param(
-            QualyticsAPIError(403, "Forbidden"),
-            'select "ID", id as expr_1 from t',
-            id="datastore-lookup-fails",
-        ),
     ],
 )
 @patch("qualytics.cli.computed_tables.distinct_file_content")
@@ -383,10 +379,7 @@ def test_import_compares_names_with_datastore_type(
     sent,
     tmp_path,
 ):
-    if isinstance(datastore, Exception):
-        mock_get_datastore.side_effect = datastore
-    else:
-        mock_get_datastore.return_value = datastore
+    mock_get_datastore.return_value = datastore
     mock_existing.return_value = {}
     mock_create.return_value = {"id": 1}
     source = tmp_path / "tables.csv"
@@ -407,3 +400,41 @@ def test_import_compares_names_with_datastore_type(
 
     mock_get_datastore.assert_called_once_with(mock_client.return_value, 7)
     assert mock_create.call_args.args[1]["query"] == sent
+
+
+@pytest.mark.parametrize(
+    "lookup",
+    [
+        pytest.param(QualyticsAPIError(403, "Forbidden"), id="lookup-fails"),
+        pytest.param({"id": 7}, id="no-type"),
+    ],
+)
+@patch("qualytics.cli.computed_tables.api_create_container")
+@patch("qualytics.cli.computed_tables.get_datastore")
+@patch("qualytics.cli.computed_tables.get_client")
+def test_import_stops_without_datastore_type(
+    _client, mock_get_datastore, mock_create, lookup, tmp_path
+):
+    if isinstance(lookup, Exception):
+        mock_get_datastore.side_effect = lookup
+    else:
+        mock_get_datastore.return_value = lookup
+    source = tmp_path / "tables.csv"
+    source.write_text('name,description,query\nct1,,"select ""ID"", id from t"\n')
+
+    with pytest.raises(typer.Exit) as stopped:
+        import_computed_tables(
+            datastore=7,
+            input_file=str(source),
+            delimiter=None,
+            prefix="ct_",
+            as_draft=True,
+            skip_checks=True,
+            skip_profile_wait=True,
+            tags=None,
+            dry_run=False,
+            debug=False,
+        )
+
+    assert stopped.value.exit_code == 1
+    mock_create.assert_not_called()
