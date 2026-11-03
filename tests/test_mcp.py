@@ -124,7 +124,7 @@ class TestMCPCommand:
             result = cli_runner.invoke(app, ["mcp", "serve"])
             assert result.exit_code != 0
 
-    def test_mcp_serve_builds_proxy_with_correct_url(self, cli_runner):
+    def test_mcp_serve_builds_proxy_with_correct_url(self, cli_runner, tmp_path):
         """Test that mcp serve constructs the proxy URL from config."""
         import jwt as _jwt
 
@@ -139,7 +139,10 @@ class TestMCPCommand:
             "ssl_verify": True,
         }
 
-        with patch("qualytics.cli.mcp_cmd.load_config", return_value=config):
+        with (
+            patch("qualytics.cli.mcp_cmd.load_config", return_value=config),
+            patch("qualytics.cli.mcp_cmd.BASE_PATH", str(tmp_path)),
+        ):
             with patch("qualytics.cli.mcp_cmd.create_proxy") as mock_proxy:
                 with patch("qualytics.cli.mcp_cmd.Client"):
                     with patch(
@@ -159,9 +162,12 @@ class TestMCPCommand:
                             call_kwargs.kwargs["url"]
                             == "https://demo.qualytics.io/api/mcp"
                         )  # config url already includes /api
-                        assert call_kwargs.kwargs["auth"] == token
+                        auth = call_kwargs.kwargs["auth"]
+                        assert auth is not token
+                        assert auth.__class__.__name__ == "OAuth"
+                        assert auth._scopes == ["read", "write"]
 
-    def test_mcp_serve_forwards_ssl_verify_false(self, cli_runner):
+    def test_mcp_serve_forwards_ssl_verify_false(self, cli_runner, tmp_path):
         """Test that ssl_verify=False is wired into the httpx client factory."""
         import jwt as _jwt
 
@@ -176,7 +182,10 @@ class TestMCPCommand:
             "ssl_verify": False,
         }
 
-        with patch("qualytics.cli.mcp_cmd.load_config", return_value=config):
+        with (
+            patch("qualytics.cli.mcp_cmd.load_config", return_value=config),
+            patch("qualytics.cli.mcp_cmd.BASE_PATH", str(tmp_path)),
+        ):
             with patch("qualytics.cli.mcp_cmd.create_proxy") as mock_proxy:
                 with patch("qualytics.cli.mcp_cmd.Client"):
                     with patch(
