@@ -42,6 +42,7 @@ dependencies = [
     "urllib3>=2.7.0",
     "openpyxl>=3.1.0",
     "fastmcp>=3.0.2",
+    "py-key-value-aio[filetree]>=0.4.5",
     "httpx>=0.27.0",
 ]
 

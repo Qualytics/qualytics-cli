@@ -1,11 +1,14 @@
 """Tests for the Qualytics MCP server."""
 
+import asyncio
 import time
+from stat import S_IMODE
 from unittest.mock import patch, MagicMock
 
 import jwt
 import pytest
 from fastmcp.exceptions import ToolError
+from mcp.shared.auth import OAuthToken
 
 from qualytics.mcp.server import auth_status
 
@@ -208,3 +211,50 @@ class TestMCPCommand:
                         ) as mock_async:
                             factory()
                             mock_async.assert_called_once_with(verify=False)
+
+
+def test_mcp_grant_survives_restart_and_is_separate_per_url(tmp_path):
+    """Persist a grant, reload it, and keep other MCP deployments isolated."""
+    from qualytics.cli.mcp_cmd import mcp_serve
+
+    config = {
+        "url": "https://demo.qualytics.io/api",
+        "token": "rest-pat",
+        "ssl_verify": True,
+    }
+    transports = []
+
+    def capture_transport(**kwargs):
+        transports.append(kwargs)
+        return MagicMock()
+
+    with (
+        patch("qualytics.cli.mcp_cmd.load_config", return_value=config),
+        patch("qualytics.cli.mcp_cmd.BASE_PATH", str(tmp_path)),
+        patch(
+            "qualytics.cli.mcp_cmd.StreamableHttpTransport",
+            side_effect=capture_transport,
+        ),
+        patch("qualytics.cli.mcp_cmd.Client"),
+        patch("qualytics.cli.mcp_cmd.create_proxy"),
+    ):
+        mcp_serve(transport="stdio")
+        first = transports[-1]["auth"]
+        assert transports[-1]["auth"] != config["token"]
+        grant = OAuthToken(
+            access_token="mcp-access", token_type="Bearer", refresh_token="mcp-refresh"
+        )
+        asyncio.run(first.token_storage_adapter.set_tokens(grant))
+
+        mcp_serve(transport="stdio")
+        same_url = transports[-1]["auth"]
+        restored = asyncio.run(same_url.token_storage_adapter.get_tokens())
+        assert restored is not None
+        assert restored.refresh_token == "mcp-refresh"
+
+        config["url"] = "https://other.qualytics.io/api"
+        mcp_serve(transport="stdio")
+        other_url = transports[-1]["auth"]
+        assert asyncio.run(other_url.token_storage_adapter.get_tokens()) is None
+
+    assert S_IMODE((tmp_path / "mcp-oauth").stat().st_mode) == 0o700
