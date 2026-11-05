@@ -52,6 +52,12 @@ qualytics mcp serve
 qualytics mcp serve --transport streamable-http --port 8000
 ```
 
+The first MCP connection opens a browser authorization flow. Approve the MCP client there
+with a Qualytics API token. The CLI stores a separate MCP grant in
+`~/.qualytics/mcp-oauth/` and refreshes it as needed; it does not send the saved
+REST token to the MCP endpoint. Revoking the source API token also revokes access
+through the MCP grant. Reauthorize if that token is revoked or the grant expires.
+
 ## Available Tools
 
 35 tools across 8 groups covering the full Qualytics API:

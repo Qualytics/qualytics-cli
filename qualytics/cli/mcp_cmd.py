@@ -1,14 +1,22 @@
 """CLI command to start the Qualytics MCP server."""
 
+from pathlib import Path
+
 import httpx
 import typer
 from fastmcp.client import Client
+from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server import create_proxy
+from key_value.aio.stores.filetree import (
+    FileTreeStore,
+    FileTreeV1CollectionSanitizationStrategy,
+    FileTreeV1KeySanitizationStrategy,
+)
 
-from . import add_suggestion_callback
-from ..config import load_config, CONFIG_PATH
+from ..config import BASE_PATH, CONFIG_PATH, load_config
 from ..mcp.server import auth_status
+from . import add_suggestion_callback
 
 mcp_app = typer.Typer(name="mcp", help="Start an MCP server for LLM integrations")
 add_suggestion_callback(mcp_app, "mcp")
@@ -73,12 +81,36 @@ def mcp_serve(
             param_hint="authentication",
         )
 
-    remote_transport = StreamableHttpTransport(
-        url=f"{url}/mcp",
-        auth=token,
-        httpx_client_factory=lambda **kwargs: httpx.AsyncClient(
-            verify=ssl_verify, **kwargs
+    mcp_url = f"{url}/mcp"
+    # OAuth grants are scoped to MCP and refresh without reusing the REST PAT as
+    # a transport bearer. A browser opens on first use to authorize this client.
+    storage_directory = Path(BASE_PATH) / "mcp-oauth"
+    storage_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    storage_directory.chmod(0o700)
+
+    def client_factory(**kwargs):
+        return httpx.AsyncClient(verify=ssl_verify, **kwargs)
+
+    mcp_auth = OAuth(
+        mcp_url=mcp_url,
+        scopes=["read", "write"],
+        client_name="Qualytics CLI MCP bridge",
+        callback_host="127.0.0.1",
+        token_storage=FileTreeStore(
+            data_directory=storage_directory,
+            key_sanitization_strategy=FileTreeV1KeySanitizationStrategy(
+                storage_directory
+            ),
+            collection_sanitization_strategy=FileTreeV1CollectionSanitizationStrategy(
+                storage_directory
+            ),
         ),
+        httpx_client_factory=client_factory,
+    )
+    remote_transport = StreamableHttpTransport(
+        url=mcp_url,
+        auth=mcp_auth,
+        httpx_client_factory=client_factory,
     )
     proxy = create_proxy(Client(remote_transport), name="Qualytics")
     proxy.add_tool(auth_status)
