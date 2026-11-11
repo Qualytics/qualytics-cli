@@ -6,6 +6,8 @@ import requests
 import urllib3
 from rich import print
 
+from ..config import __version__
+
 DEFAULT_TIMEOUT = 30
 
 
@@ -89,6 +91,8 @@ class QualyticsClient:
             {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
+                # The controlplane counts CLI usage by this product token; keep the "qualytics-cli/" prefix.
+                "User-Agent": f"qualytics-cli/{__version__}",
             }
         )
         self._session.verify = ssl_verify

@@ -13,6 +13,7 @@ from qualytics.api.client import (
     ServerError,
     get_client,
 )
+from qualytics.config import __version__
 from qualytics.utils.validation import validate_and_format_url
 
 
@@ -34,6 +35,10 @@ class TestQualyticsClient:
     def test_init_sets_content_type(self):
         client = QualyticsClient("https://example.com/api", "token")
         assert client._session.headers["Content-Type"] == "application/json"
+
+    def test_init_identifies_cli_in_user_agent(self):
+        client = QualyticsClient("https://example.com/api", "token")
+        assert client._session.headers["User-Agent"] == f"qualytics-cli/{__version__}"
 
     def test_init_ssl_verify_default_true(self):
         client = QualyticsClient("https://example.com/api", "token")
