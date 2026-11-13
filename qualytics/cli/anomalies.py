@@ -15,6 +15,7 @@ from ..api.anomalies import (
 from ..utils import OutputFormat, format_for_display
 
 from . import add_suggestion_callback
+from .output import err_console
 from . import progress
 
 anomalies_app = typer.Typer(name="anomalies", help="Manage anomalies")
@@ -46,7 +47,7 @@ def anomalies_get(
     """Get a single anomaly by ID."""
     client = get_client()
     result = get_anomaly(client, anomaly_id)
-    print(format_for_display(result, fmt))
+    typer.echo(format_for_display(result, fmt))
 
 
 # ── list ─────────────────────────────────────────────────────────────────
@@ -124,8 +125,8 @@ def anomalies_list(
             source_enriched=source_enriched,
         )
 
-    print(f"[green]Found {len(all_anomalies)} anomalies.[/green]")
-    print(format_for_display(all_anomalies, fmt))
+    err_console.print(f"[green]Found {len(all_anomalies)} anomalies.[/green]")
+    typer.echo(format_for_display(all_anomalies, fmt))
 
 
 # ── update ───────────────────────────────────────────────────────────────

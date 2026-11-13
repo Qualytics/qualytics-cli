@@ -23,6 +23,7 @@ def get_table_ids(
             typer.secho(
                 f"Attempt {attempt + 1} failed with status code {e.status_code}. Retrying...",
                 fg=typer.colors.RED,
+                err=True,
             )
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
@@ -30,12 +31,14 @@ def get_table_ids(
             typer.secho(
                 f"Request error during attempt {attempt + 1}: {e}. Retrying...",
                 fg=typer.colors.RED,
+                err=True,
             )
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
     typer.secho(
         f"Failed getting the table ids after {max_retries} attempts.",
         fg=typer.colors.RED,
+        err=True,
     )
     return None
 
