@@ -1,13 +1,13 @@
 """CLI commands for user management."""
 
 import typer
-from rich import print
 
 from ..api.client import get_client
 from ..api.users import get_user, list_all_users
 from ..utils.serialization import OutputFormat, format_for_display
 
 from . import add_suggestion_callback
+from .output import err_console
 from .progress import status
 
 users_app = typer.Typer(
@@ -29,12 +29,12 @@ def users_list(
     with status("[bold cyan]Fetching users...[/bold cyan]"):
         all_users = list_all_users(client)
 
+    # An empty result still prints [] so stdout stays parseable.
     if not all_users:
-        print("[yellow]No users found.[/yellow]")
-        raise typer.Exit()
-
-    print(f"[bold]Found {len(all_users)} user(s).[/bold]\n")
-    print(format_for_display(all_users, fmt))
+        err_console.print("[yellow]No users found.[/yellow]")
+    else:
+        err_console.print(f"[bold]Found {len(all_users)} user(s).[/bold]\n")
+    typer.echo(format_for_display(all_users, fmt))
 
 
 @users_app.command("get")
@@ -50,4 +50,4 @@ def users_get(
     with status("[bold cyan]Fetching user...[/bold cyan]"):
         result = get_user(client, user_id)
 
-    print(format_for_display(result, fmt))
+    typer.echo(format_for_display(result, fmt))

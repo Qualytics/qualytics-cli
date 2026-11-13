@@ -4,9 +4,12 @@ import os
 
 import requests
 import urllib3
-from rich import print
+from rich.console import Console
 
 DEFAULT_TIMEOUT = 30
+
+# Diagnostics go to stderr so they never mix into --format output on stdout.
+_stderr = Console(stderr=True)
 
 
 def _resolve_timeout(config: dict | None) -> int:
@@ -196,7 +199,7 @@ def get_client(config: dict | None = None) -> QualyticsClient:
         config = load_config()
 
     if config is None:
-        print(
+        _stderr.print(
             "[bold red]Configuration not found. "
             "Run 'qualytics auth login --url <your-url>' "
             "or 'qualytics auth init --url <url> --token <token>'.[/bold red]"

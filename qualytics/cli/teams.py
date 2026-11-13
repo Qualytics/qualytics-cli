@@ -1,13 +1,13 @@
 """CLI commands for team management."""
 
 import typer
-from rich import print
 
 from ..api.client import get_client
 from ..api.teams import get_team, list_all_teams
 from ..utils.serialization import OutputFormat, format_for_display
 
 from . import add_suggestion_callback
+from .output import err_console
 from .progress import status
 
 teams_app = typer.Typer(
@@ -29,12 +29,12 @@ def teams_list(
     with status("[bold cyan]Fetching teams...[/bold cyan]"):
         all_teams = list_all_teams(client)
 
+    # An empty result still prints [] so stdout stays parseable.
     if not all_teams:
-        print("[yellow]No teams found.[/yellow]")
-        raise typer.Exit()
-
-    print(f"[bold]Found {len(all_teams)} team(s).[/bold]\n")
-    print(format_for_display(all_teams, fmt))
+        err_console.print("[yellow]No teams found.[/yellow]")
+    else:
+        err_console.print(f"[bold]Found {len(all_teams)} team(s).[/bold]\n")
+    typer.echo(format_for_display(all_teams, fmt))
 
 
 @teams_app.command("get")
@@ -50,4 +50,4 @@ def teams_get(
     with status("[bold cyan]Fetching team...[/bold cyan]"):
         result = get_team(client, team_id)
 
-    print(format_for_display(result, fmt))
+    typer.echo(format_for_display(result, fmt))

@@ -23,6 +23,7 @@ from ..services.containers import (
 from ..utils import OutputFormat, format_for_display
 
 from . import add_suggestion_callback
+from .output import err_console
 
 containers_app = typer.Typer(
     name="containers",
@@ -117,13 +118,13 @@ def containers_create(
 ):
     """Create a computed container (computed_table, computed_file, or computed_join)."""
     if container_type not in _COMPUTED_TYPES:
-        print(
+        err_console.print(
             f"[red]--type must be one of: {', '.join(sorted(_COMPUTED_TYPES))}.[/red]"
         )
         raise typer.Exit(code=1)
 
     if join_type is not None and join_type not in _VALID_JOIN_TYPES:
-        print(
+        err_console.print(
             f"[red]--join-type must be one of: {', '.join(sorted(_VALID_JOIN_TYPES))}.[/red]"
         )
         raise typer.Exit(code=1)
@@ -150,14 +151,16 @@ def containers_create(
             tags=tag_list,
         )
     except ValueError as e:
-        print(f"[red]{e}[/red]")
+        err_console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
 
-    print("[bold]Container Create Payload:[/bold]")
-    print(format_for_display(payload, fmt))
+    err_console.print("[bold]Container Create Payload:[/bold]")
+    typer.echo(format_for_display(payload, fmt))
 
     if dry_run:
-        print("[green]Dry run successful. No HTTP request was made.[/green]")
+        err_console.print(
+            "[green]Dry run successful. No HTTP request was made.[/green]"
+        )
         raise typer.Exit(code=0)
 
     client = get_client()
@@ -174,10 +177,10 @@ def containers_create(
         update_payload = build_update_container_payload(result, **needs_update)
         result = update_container(client, container_id, update_payload)
 
-    print("[green]Container created successfully![/green]")
-    print(f"[green]Container ID: {container_id}[/green]")
-    print(f"[green]Container Name: {result.get('name')}[/green]")
-    print(f"[green]Container Type: {result.get('container_type')}[/green]")
+    err_console.print("[green]Container created successfully![/green]")
+    err_console.print(f"[green]Container ID: {container_id}[/green]")
+    err_console.print(f"[green]Container Name: {result.get('name')}[/green]")
+    err_console.print(f"[green]Container Type: {result.get('container_type')}[/green]")
 
 
 # ── update ───────────────────────────────────────────────────────────────
@@ -215,7 +218,7 @@ def containers_update(
     """Update an existing container (GET-merge-PUT)."""
     client = get_client()
 
-    print(f"[cyan]Fetching container {container_id}...[/cyan]")
+    err_console.print(f"[cyan]Fetching container {container_id}...[/cyan]")
     existing = get_container(client, container_id)
 
     changes: dict = {}
@@ -235,7 +238,9 @@ def containers_update(
         changes["tags"] = _parse_comma_list(tags)
 
     if not changes:
-        print("[yellow]No fields to update. Provide at least one option.[/yellow]")
+        err_console.print(
+            "[yellow]No fields to update. Provide at least one option.[/yellow]"
+        )
         raise typer.Exit(code=1)
 
     payload = build_update_container_payload(existing, **changes)
@@ -244,19 +249,23 @@ def containers_update(
         result = update_container(
             client, container_id, payload, force_drop_fields=force_drop_fields
         )
-        print(f"[green]Container {container_id} updated successfully.[/green]")
-        print(format_for_display(result, fmt))
+        err_console.print(
+            f"[green]Container {container_id} updated successfully.[/green]"
+        )
+        typer.echo(format_for_display(result, fmt))
     except QualyticsAPIError as e:
         if e.status_code == 409:
-            print(
+            err_console.print(
                 "[red]409 Conflict: Updating this container would drop fields "
                 "that have associated quality checks or anomalies.[/red]"
             )
-            print("[yellow]Re-run with --force-drop-fields to proceed.[/yellow]")
+            err_console.print(
+                "[yellow]Re-run with --force-drop-fields to proceed.[/yellow]"
+            )
             try:
                 detail = e.detail
                 if detail:
-                    print(f"[yellow]Details: {detail}[/yellow]")
+                    err_console.print(f"[yellow]Details: {detail}[/yellow]")
             except Exception:
                 pass
             raise typer.Exit(code=1)
@@ -280,13 +289,12 @@ def containers_get(
     client = get_client()
     result = get_container(client, container_id)
 
-    print("[green]Container found:[/green]")
-    print(format_for_display(result, fmt))
-
+    # One document on stdout: profiles ride along under "field_profiles".
     if include_profiles:
-        profiles = get_field_profiles(client, container_id)
-        print("\n[bold]Field Profiles:[/bold]")
-        print(format_for_display(profiles, fmt))
+        result = {**result, "field_profiles": get_field_profiles(client, container_id)}
+
+    err_console.print("[green]Container found:[/green]")
+    typer.echo(format_for_display(result, fmt))
 
 
 # ── list ─────────────────────────────────────────────────────────────────
@@ -325,7 +333,7 @@ def containers_list(
         type_list = _parse_comma_list(container_type)
         invalid = [t for t in type_list if t not in _ALL_CONTAINER_TYPES]
         if invalid:
-            print(
+            err_console.print(
                 f"[red]Invalid container type(s): {', '.join(invalid)}. "
                 f"Valid: {', '.join(sorted(_ALL_CONTAINER_TYPES))}.[/red]"
             )
@@ -343,8 +351,8 @@ def containers_list(
         archived=archived,
     )
 
-    print(f"[green]Found {len(all_containers)} containers.[/green]")
-    print(format_for_display(all_containers, fmt))
+    err_console.print(f"[green]Found {len(all_containers)} containers.[/green]")
+    typer.echo(format_for_display(all_containers, fmt))
 
 
 # ── delete ───────────────────────────────────────────────────────────────

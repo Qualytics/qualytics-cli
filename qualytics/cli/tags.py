@@ -8,6 +8,7 @@ from ..api.tags import create_tag, delete_tag, get_tag, list_all_tags
 from ..utils.serialization import OutputFormat, format_for_display
 
 from . import add_suggestion_callback
+from .output import err_console
 from .progress import status
 
 tags_app = typer.Typer(
@@ -29,12 +30,12 @@ def tags_list(
     with status("[bold cyan]Fetching tags...[/bold cyan]"):
         all_tags = list_all_tags(client)
 
+    # An empty result still prints [] so stdout stays parseable.
     if not all_tags:
-        print("[yellow]No tags found.[/yellow]")
-        raise typer.Exit()
-
-    print(f"[bold]Found {len(all_tags)} tag(s).[/bold]\n")
-    print(format_for_display(all_tags, fmt))
+        err_console.print("[yellow]No tags found.[/yellow]")
+    else:
+        err_console.print(f"[bold]Found {len(all_tags)} tag(s).[/bold]\n")
+    typer.echo(format_for_display(all_tags, fmt))
 
 
 @tags_app.command("get")
@@ -50,7 +51,7 @@ def tags_get(
     with status("[bold cyan]Fetching tag...[/bold cyan]"):
         result = get_tag(client, name)
 
-    print(format_for_display(result, fmt))
+    typer.echo(format_for_display(result, fmt))
 
 
 @tags_app.command("create")
@@ -83,9 +84,9 @@ def tags_create(
         payload["weight_modifier"] = weight_modifier
 
     result = create_tag(client, payload)
-    print("[green]Tag created successfully![/green]")
-    print(f"[green]Tag name: {result.get('name')}[/green]\n")
-    print(format_for_display(result, fmt))
+    err_console.print("[green]Tag created successfully![/green]")
+    err_console.print(f"[green]Tag name: {result.get('name')}[/green]\n")
+    typer.echo(format_for_display(result, fmt))
 
 
 @tags_app.command("delete")

@@ -28,6 +28,7 @@ from ..utils import (
 )
 
 from . import add_suggestion_callback
+from .output import err_console
 from .progress import status
 
 connections_app = typer.Typer(
@@ -75,7 +76,7 @@ def _resolve_sensitive_flags(
         try:
             resolved[key] = resolve_env_vars(value)
         except ValueError as e:
-            print(f"[red]{e}[/red]")
+            err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(code=1)
     return resolved
 
@@ -186,7 +187,7 @@ def connections_create(
           --username '${DB_USER}' --password '${DB_PASSWORD}'
     """
     if connection_type is None:
-        print("[red]--type is required.[/red]")
+        err_console.print("[red]--type is required.[/red]")
         raise typer.Exit(code=1)
 
     # Resolve env vars in sensitive fields
@@ -205,10 +206,10 @@ def connections_create(
         try:
             extra_params = _resolve_parameter_secrets(json.loads(parameters))
         except json.JSONDecodeError as e:
-            print(f"[red]Invalid JSON in --parameters: {e}[/red]")
+            err_console.print(f"[red]Invalid JSON in --parameters: {e}[/red]")
             raise typer.Exit(code=1)
         except ValueError as e:
-            print(f"[red]{e}[/red]")
+            err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(code=1)
 
     try:
@@ -231,22 +232,24 @@ def connections_create(
             parameters=extra_params,
         )
     except ValueError as e:
-        print(f"[red]{e}[/red]")
+        err_console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
 
-    print("[bold]Connection Create Payload (secrets redacted):[/bold]")
-    print(format_for_display(redact_payload(payload), fmt))
+    err_console.print("[bold]Connection Create Payload (secrets redacted):[/bold]")
+    typer.echo(format_for_display(redact_payload(payload), fmt))
 
     if dry_run:
-        print("[green]Dry run successful. No HTTP request was made.[/green]")
+        err_console.print(
+            "[green]Dry run successful. No HTTP request was made.[/green]"
+        )
         raise typer.Exit(code=0)
 
     client = get_client()
     result = create_connection(client, payload)
-    print("[green]Connection created successfully![/green]")
-    print(f"[green]Connection ID: {result.get('id')}[/green]")
-    print(f"[green]Connection Name: {result.get('name')}[/green]")
-    print(f"[green]Connection Type: {result.get('type')}[/green]")
+    err_console.print("[green]Connection created successfully![/green]")
+    err_console.print(f"[green]Connection ID: {result.get('id')}[/green]")
+    err_console.print(f"[green]Connection Name: {result.get('name')}[/green]")
+    err_console.print(f"[green]Connection Type: {result.get('type')}[/green]")
 
 
 # ── update ───────────────────────────────────────────────────────────────
@@ -311,10 +314,10 @@ def connections_update(
         try:
             extra_params = _resolve_parameter_secrets(json.loads(parameters))
         except json.JSONDecodeError as e:
-            print(f"[red]Invalid JSON in --parameters: {e}[/red]")
+            err_console.print(f"[red]Invalid JSON in --parameters: {e}[/red]")
             raise typer.Exit(code=1)
         except ValueError as e:
-            print(f"[red]{e}[/red]")
+            err_console.print(f"[red]{e}[/red]")
             raise typer.Exit(code=1)
 
     try:
@@ -333,19 +336,23 @@ def connections_update(
             parameters=extra_params,
         )
     except ValueError as e:
-        print(f"[red]{e}[/red]")
+        err_console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
 
     if not changes:
-        print("[yellow]No fields to update. Provide at least one option.[/yellow]")
+        err_console.print(
+            "[yellow]No fields to update. Provide at least one option.[/yellow]"
+        )
         raise typer.Exit(code=1)
 
     client = get_client()
     existing = get_connection_api(client, connection_id)
     full_payload = complete_connection_update_payload(existing, changes)
     result = update_connection(client, connection_id, full_payload)
-    print(f"[green]Connection {connection_id} updated successfully.[/green]")
-    print(format_for_display(redact_payload(result), fmt))
+    err_console.print(
+        f"[green]Connection {connection_id} updated successfully.[/green]"
+    )
+    typer.echo(format_for_display(redact_payload(result), fmt))
 
 
 # ── get ──────────────────────────────────────────────────────────────────
@@ -361,13 +368,13 @@ def connections_get(
 ):
     """Get a connection by ID or name. Secrets are masked in the response."""
     if connection_id and name:
-        print(
+        err_console.print(
             "[red]Error: Cannot specify both --id and --name. Please use only one.[/red]"
         )
         raise typer.Exit(code=1)
 
     if not connection_id and not name:
-        print("[red]Error: Must specify either --id or --name.[/red]")
+        err_console.print("[red]Error: Must specify either --id or --name.[/red]")
         raise typer.Exit(code=1)
 
     client = get_client()
@@ -379,11 +386,11 @@ def connections_get(
 
     if result is None:
         identifier = f"ID {connection_id}" if connection_id else f"name '{name}'"
-        print(f"[red]Connection with {identifier} not found.[/red]")
+        err_console.print(f"[red]Connection with {identifier} not found.[/red]")
         raise typer.Exit(code=1)
 
-    print("[green]Connection found:[/green]")
-    print(format_for_display(redact_payload(result), fmt))
+    err_console.print("[green]Connection found:[/green]")
+    typer.echo(format_for_display(redact_payload(result), fmt))
 
 
 # ── list ─────────────────────────────────────────────────────────────────
@@ -419,8 +426,8 @@ def connections_list(
     # Redact each connection in the list
     redacted = [redact_payload(c) for c in all_conns]
 
-    print(f"[green]Found {len(all_conns)} connections.[/green]")
-    print(format_for_display(redacted, fmt))
+    err_console.print(f"[green]Found {len(all_conns)} connections.[/green]")
+    typer.echo(format_for_display(redacted, fmt))
 
 
 # ── delete ───────────────────────────────────────────────────────────────
@@ -489,9 +496,11 @@ def connections_test(
 
     connected = result.get("connected", result.get("success", False))
     if connected:
-        print(f"[green]Connection {connection_id}: test passed successfully.[/green]")
+        err_console.print(
+            f"[green]Connection {connection_id}: test passed successfully.[/green]"
+        )
     else:
         msg = result.get("message", "Unknown error")
-        print(f"[red]Connection {connection_id}: test failed — {msg}[/red]")
+        err_console.print(f"[red]Connection {connection_id}: test failed — {msg}[/red]")
 
-    print(format_for_display(redact_payload(result), fmt))
+    typer.echo(format_for_display(redact_payload(result), fmt))

@@ -1,6 +1,7 @@
 """Tests for containers — API, service, and CLI."""
 
 import pytest
+import yaml
 from unittest.mock import MagicMock, patch
 
 from qualytics.api.containers import (
@@ -893,7 +894,9 @@ class TestContainersGetCLI:
             app, ["containers", "get", "--id", "42", "--profiles"]
         )
         assert result.exit_code == 0
-        assert "Field Profiles" in result.output
+        assert yaml.safe_load(result.stdout)["field_profiles"] == {
+            "items": [{"name": "col1"}]
+        }
         mock_profiles.assert_called_once_with(mock_gc.return_value, 42)
 
 

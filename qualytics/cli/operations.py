@@ -19,6 +19,7 @@ from ..services.operations import (
 from ..utils import OutputFormat, format_for_display
 
 from . import add_suggestion_callback
+from .output import err_console
 from . import progress
 
 operations_app = typer.Typer(
@@ -532,7 +533,7 @@ def operations_get(
     """Get full details for a single operation."""
     client = get_client()
     result = get_operation(client, operation_id)
-    print(format_for_display(result, fmt))
+    typer.echo(format_for_display(result, fmt))
 
 
 # ── list ─────────────────────────────────────────────────────────────────
@@ -578,8 +579,8 @@ def operations_list(
             end_date=end_date,
             sort_created="desc",
         )
-    print(f"[green]Found {len(all_ops)} operations.[/green]")
-    print(format_for_display(all_ops, fmt))
+    err_console.print(f"[green]Found {len(all_ops)} operations.[/green]")
+    typer.echo(format_for_display(all_ops, fmt))
 
 
 # ── abort ────────────────────────────────────────────────────────────────

@@ -8,12 +8,15 @@ from pathlib import Path
 import jwt
 import yaml
 from datetime import datetime, timezone
-from rich import print
+from rich.console import Console
 
 try:
     __version__ = version("qualytics-cli")
 except PackageNotFoundError:
     __version__ = "1.0.0"
+
+# Diagnostics go to stderr so they never mix into --format output on stdout.
+_stderr = Console(stderr=True)
 
 # Get the home directory
 home = Path.home()
@@ -61,7 +64,7 @@ def _config_from_env():
         return None
     if not (url and token):
         missing = "QUALYTICS_TOKEN" if url else "QUALYTICS_URL"
-        print(
+        _stderr.print(
             f"[bold red]QUALYTICS_URL and QUALYTICS_TOKEN must be set together; "
             f"{missing} is missing.[/bold red]"
         )
@@ -94,7 +97,7 @@ def load_config():
         with open(CONFIG_PATH_LEGACY) as f:
             data = json.load(f)
         save_config(data)
-        print(
+        _stderr.print(
             f"[bold yellow] Migrated config from {CONFIG_PATH_LEGACY} to {CONFIG_PATH}. "
             f"You can safely remove the old config.json file. [/bold yellow]"
         )
@@ -114,7 +117,7 @@ def is_token_valid(token: str):
         if expiration_time is not None:
             current_time = datetime.now(timezone.utc).timestamp()
             if not expiration_time >= current_time:
-                print(
+                _stderr.print(
                     '[bold red] WARNING: Your token is expired, please setup with a new token by running: qualytics auth init --url "your-qualytics.io" --token "my-token" [/bold red]'
                 )
                 return None
@@ -124,6 +127,6 @@ def is_token_valid(token: str):
             # Token has no expiration claim - still valid
             return token
     except Exception as e:
-        print("[bold red] WARNING: Your token is not valid [/bold red]")
-        print(f"[bold red] {e} [/bold red]")
+        _stderr.print("[bold red] WARNING: Your token is not valid [/bold red]")
+        _stderr.print(f"[bold red] {e} [/bold red]")
         return None

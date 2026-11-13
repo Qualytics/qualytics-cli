@@ -25,6 +25,7 @@ from ..services.datastores import (
 from ..utils import OutputFormat, format_for_display, redact_payload
 
 from . import add_suggestion_callback
+from .output import err_console
 from .progress import status
 
 datastores_app = typer.Typer(name="datastores", help="Manage datastores")
@@ -105,30 +106,32 @@ def datastores_create(
 
     try:
         if connection_name and connection_id:
-            print(
+            err_console.print(
                 "[red]Error: Cannot specify both --connection-name and --connection-id. Please use only one.[/red]"
             )
             raise typer.Exit(code=1)
 
         if not connection_name and not connection_id:
-            print(
+            err_console.print(
                 "[red]Error: Must specify either --connection-name or --connection-id.[/red]"
             )
             raise typer.Exit(code=1)
 
         if connection_name:
-            print(f"[cyan]Looking up connection '{connection_name}'...[/cyan]")
+            err_console.print(
+                f"[cyan]Looking up connection '{connection_name}'...[/cyan]"
+            )
             existing_connection = get_connection_by(
                 client, connection_name=connection_name
             )
 
             if existing_connection:
                 connection_id = existing_connection["id"]
-                print(
+                err_console.print(
                     f"[green]Found existing connection with ID: {connection_id}[/green]"
                 )
             else:
-                print(
+                err_console.print(
                     f"[red]Connection '{connection_name}' not found. "
                     "Create it first with: qualytics connections create[/red]"
                 )
@@ -149,41 +152,45 @@ def datastores_create(
             schema=schema,
         )
 
-        print("[bold]Datastore Create Payload (preview with redacted secrets):[/bold]")
-        print(format_for_display(redact_payload(payload), fmt))
+        err_console.print(
+            "[bold]Datastore Create Payload (preview with redacted secrets):[/bold]"
+        )
+        typer.echo(format_for_display(redact_payload(payload), fmt))
 
         if dry_run:
-            print("[green]Dry run successful. No HTTP request was made.[/green]")
+            err_console.print(
+                "[green]Dry run successful. No HTTP request was made.[/green]"
+            )
             raise typer.Exit(code=0)
 
-        print("[cyan]POSTing datastore to API...[/cyan]")
+        err_console.print("[cyan]POSTing datastore to API...[/cyan]")
         result = create_datastore(client, payload)
-        print("[green]Datastore created successfully![/green]")
-        print(f"[green]Datastore ID: {result.get('id')}[/green]")
-        print(f"[green]Datastore Name: {result.get('name')}[/green]")
+        err_console.print("[green]Datastore created successfully![/green]")
+        err_console.print(f"[green]Datastore ID: {result.get('id')}[/green]")
+        err_console.print(f"[green]Datastore Name: {result.get('name')}[/green]")
         if result.get("connection"):
-            print(
+            err_console.print(
                 f"[green]Connection ID: {result.get('connection', {}).get('id')}[/green]"
             )
     except ConfigError as e:
-        print(f"[red]Config error:[/red] {e}")
+        err_console.print(f"[red]Config error:[/red] {e}")
         raise typer.Exit(code=2)
     except QualyticsAPIError as e:
         if e.status_code == 409 or "conflict" in e.message.lower():
-            print(
+            err_console.print(
                 "[red]Error: A connection with these credentials already exists.[/red]"
             )
-            print(
+            err_console.print(
                 "[yellow]Suggestion: Use the --connection-id flag to reference the existing connection instead.[/yellow]"
             )
-            print(f"[yellow]Details: {e.message}[/yellow]")
+            err_console.print(f"[yellow]Details: {e.message}[/yellow]")
         else:
-            print(f"[red]{e}[/red]")
+            err_console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=5)
     except typer.Exit:
         raise
     except Exception as e:
-        print(f"[red]Unexpected error:[/red] {e}")
+        err_console.print(f"[red]Unexpected error:[/red] {e}")
         raise typer.Exit(code=1)
 
 
@@ -227,7 +234,7 @@ def datastores_update(
         enrichment_remediation_strategy
         and enrichment_remediation_strategy not in _VALID_REMEDIATION
     ):
-        print(
+        err_console.print(
             f"[red]--enrichment-remediation-strategy must be one of: {', '.join(sorted(_VALID_REMEDIATION))}.[/red]"
         )
         raise typer.Exit(code=1)
@@ -247,7 +254,9 @@ def datastores_update(
     )
 
     if not payload:
-        print("[yellow]No fields to update. Provide at least one option.[/yellow]")
+        err_console.print(
+            "[yellow]No fields to update. Provide at least one option.[/yellow]"
+        )
         raise typer.Exit(code=1)
 
     client = get_client()
@@ -259,8 +268,8 @@ def datastores_update(
     full_payload = {**flatten_datastore_for_put(current), **payload}
 
     result = update_datastore(client, datastore_id, full_payload)
-    print(f"[green]Datastore {datastore_id} updated successfully.[/green]")
-    print(format_for_display(result, fmt))
+    err_console.print(f"[green]Datastore {datastore_id} updated successfully.[/green]")
+    typer.echo(format_for_display(result, fmt))
 
 
 # ── get ──────────────────────────────────────────────────────────────────
@@ -276,13 +285,13 @@ def datastores_get(
 ):
     """Get a datastore by ID or name."""
     if id and name:
-        print(
+        err_console.print(
             "[red]Error: Cannot specify both --id and --name. Please use only one.[/red]"
         )
         raise typer.Exit(code=1)
 
     if not id and not name:
-        print("[red]Error: Must specify either --id or --name.[/red]")
+        err_console.print("[red]Error: Must specify either --id or --name.[/red]")
         raise typer.Exit(code=1)
 
     client = get_client()
@@ -294,11 +303,11 @@ def datastores_get(
 
     if result is None:
         identifier = f"ID {id}" if id else f"name '{name}'"
-        print(f"[red]Datastore with {identifier} not found.[/red]")
+        err_console.print(f"[red]Datastore with {identifier} not found.[/red]")
         raise typer.Exit(code=1)
 
-    print("[green]Datastore found:[/green]")
-    print(format_for_display(result, fmt))
+    err_console.print("[green]Datastore found:[/green]")
+    typer.echo(format_for_display(result, fmt))
 
 
 # ── list ─────────────────────────────────────────────────────────────────
@@ -340,8 +349,8 @@ def datastores_list(
             enrichment_only=enrichment_only,
         )
 
-    print(f"[green]Found {len(all_ds)} datastores.[/green]")
-    print(format_for_display(all_ds, fmt))
+    err_console.print(f"[green]Found {len(all_ds)} datastores.[/green]")
+    typer.echo(format_for_display(all_ds, fmt))
 
 
 # ── delete ───────────────────────────────────────────────────────────────
@@ -375,12 +384,14 @@ def datastores_verify(
 
     connected = result.get("connected", False)
     if connected:
-        print(f"[green]Datastore {id}: connection verified successfully.[/green]")
+        err_console.print(
+            f"[green]Datastore {id}: connection verified successfully.[/green]"
+        )
     else:
         msg = result.get("message", "Unknown error")
-        print(f"[red]Datastore {id}: connection failed — {msg}[/red]")
+        err_console.print(f"[red]Datastore {id}: connection failed — {msg}[/red]")
 
-    print(format_for_display(result, fmt))
+    typer.echo(format_for_display(result, fmt))
 
 
 # ── enrichment ───────────────────────────────────────────────────────────

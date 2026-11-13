@@ -40,6 +40,7 @@ from ..services.containers import get_table_ids
 from ..utils.failure_log import failure_entry, write_failures_log
 
 from . import add_suggestion_callback
+from .output import err_console
 
 # Create Typer instance for checks
 checks_app = typer.Typer(name="checks", help="Manage quality checks")
@@ -148,7 +149,7 @@ def checks_get(
     """Get a single quality check by ID."""
     client = get_client()
     result = get_quality_check(client, check_id)
-    print(format_for_display(result, fmt))
+    typer.echo(format_for_display(result, fmt))
 
 
 def _resolve_container_filter(client, datastore_id: int, containers: str) -> list[int]:
@@ -172,7 +173,7 @@ def _resolve_container_filter(client, datastore_id: int, containers: str) -> lis
             else:
                 resolved.append(container_id)
         if missing:
-            print(
+            err_console.print(
                 f"[red]Container(s) not found in datastore {datastore_id}: "
                 f"{', '.join(missing)}[/red]"
             )
@@ -233,8 +234,8 @@ def checks_list(
         archived=archived,
     )
 
-    print(f"[green]Found {len(all_checks)} quality checks.[/green]")
-    print(format_for_display(all_checks, fmt))
+    err_console.print(f"[green]Found {len(all_checks)} quality checks.[/green]")
+    typer.echo(format_for_display(all_checks, fmt))
 
 
 # ── CRUD: update ──────────────────────────────────────────────────────────
