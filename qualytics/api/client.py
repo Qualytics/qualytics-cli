@@ -6,6 +6,8 @@ import requests
 import urllib3
 from rich.console import Console
 
+from ..config import __version__
+
 DEFAULT_TIMEOUT = 30
 
 # Diagnostics go to stderr so they never mix into --format output on stdout.
@@ -92,6 +94,8 @@ class QualyticsClient:
             {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
+                # The controlplane counts CLI usage by this product token; keep the "qualytics-cli/" prefix.
+                "User-Agent": f"qualytics-cli/{__version__}",
             }
         )
         self._session.verify = ssl_verify
