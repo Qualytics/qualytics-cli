@@ -3,6 +3,12 @@
 from ..api.client import QualyticsClient
 
 
+def get_current_user(client: QualyticsClient) -> dict:
+    """Get the user the token belongs to (includes ``role``)."""
+    response = client.get("users/me")
+    return response.json()
+
+
 def get_user(client: QualyticsClient, user_id: int) -> dict:
     """Get a single user by ID."""
     response = client.get(f"users/{user_id}")

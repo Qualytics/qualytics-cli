@@ -8,12 +8,15 @@ audit workbook) where the checks do not yet exist in any Qualytics instance, so
 there is nothing to export.
 
 ```bash
+# Exact container and field names on the target, to fill the sheet from
+qualytics containers fields --datastore-id 12 --container orders,customers
+
 # Offline: validate the sheet, see what it would produce (no auth needed)
 qualytics migrate plan --sheet week1.xlsx --show-checks
 
 # Fail-early: everything plan checks, plus read-only resolution of containers,
-# fields and cross-references against the target (nothing is created)
-qualytics migrate validate --sheet week1.xlsx --datastore-id 12
+# fields, cross-references and tags against the target (nothing is created)
+qualytics migrate validate --sheet week1.xlsx --datastore-id 12 --tag "client-uat"
 
 # Create everything on the target (checks land as Draft by default)
 qualytics migrate apply --sheet week1.xlsx --datastore-id 12 --tag "client-uat"
@@ -73,7 +76,7 @@ them from `check_id`); a `metadata:` column naming them is a plan error.
 | `description` | Check description (generated from `check_id` + rule when blank). |
 | `filter` | Row-scope SparkSQL predicate (dropped with a warning on rules that reject filters, e.g. `freshness`). |
 | `coverage` | 0–1 (omitted on rules without coverage support). |
-| `tags` | Comma/semicolon-separated tag names; `apply --tag X` appends `X` to every row. Tags auto-create on the target. |
+| `tags` | Comma/semicolon-separated tag names; `apply --tag X` appends `X` to every row. Names match exactly. A tag missing on the target is created on apply, which needs the Admin role (older platform versions also allow Managers) — `migrate validate --datastore-id N` flags missing tags, fails for Members, warns for Managers, and suggests near matches (`UAT testing` → `UAT-TESTING`). |
 | `status` | `Active` or `Draft` per row; default is **Draft** so everything is reviewed before it fires. |
 | `anomaly_message_field` | Field whose value becomes the anomaly message. |
 
@@ -104,7 +107,7 @@ Required columns are validated offline per rule at `plan` time — e.g.
 | Column | Meaning |
 |---|---|
 | `query` | The container's SQL. For `computed_table` this runs on the source datastore. For `computed_join` it is the join query written against the source aliases. |
-| `sources` | `computed_join` only: the joined containers as `orders=o; customers=c` pairs (alias defaults to the name), or a JSON list `[{"container": "orders", "alias": "o", "where_clause": "..."}]`. Names resolve to container ids on the target at apply time. |
+| `sources` | `computed_join` only: the joined containers as `orders=o; customers=c` pairs (alias defaults to the name), or a JSON list `[{"container": "orders", "alias": "o", "where_clause": "..."}]`. Names resolve to container ids on the target at apply time (casing auto-corrected against the catalogue when only one container matches). |
 | `description` | Container description. |
 
 A check row that targets a computed container declared in the same sheet just
@@ -219,6 +222,13 @@ row's `ref_datastore` column when it's filled, otherwise the row's own target
 datastore — never globally. `ref_field` is then a field of that resolved
 container. `migrate validate --datastore-id N` resolves and prints every
 reference before anything is created.
+
+**Apply failed with "Permission denied" — is my token expired?** No: an
+expired or revoked token fails with "Authentication failed … run qualytics auth
+login". "Permission denied: …" carries the platform's own reason — most often a
+sheet tag that doesn't exist on the target while your role can't create tags.
+Use the existing tag's exact name (`qualytics tags list`) or ask an Admin to
+create it; `migrate validate --datastore-id N --tag …` catches this up front.
 
 **What metadata do created checks carry?** Exactly `legacy_check_id` (the
 sheet's `check_id`, verbatim — also the upsert identity) plus whatever

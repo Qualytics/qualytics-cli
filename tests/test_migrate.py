@@ -1106,6 +1106,148 @@ class TestEnsureContainers:
         assert "not found in datastore 42: ghost, phantom" in result["errors"][0]
         assert not calls["create"]
 
+    def test_join_source_casing_repaired_like_validate(self, monkeypatch):
+        """validate accepts `orders` for `ORDERS`; apply must resolve it too."""
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[
+                {"id": 5, "name": "ORDERS", "container_type": "table"},
+                {"id": 6, "name": "customers", "container_type": "table"},
+            ],
+        )
+        self._no_wait(monkeypatch)
+        specs = [
+            _spec(
+                kind="computed_join",
+                name="j",
+                sources=[
+                    {"container": "orders", "alias": "o"},
+                    {"container": "CUSTOMERS", "alias": "c"},
+                ],
+            )
+        ]
+        result = ensure_containers(object(), specs, 42)
+        assert result["failed"] == 0, result["errors"]
+        assert [s["container_id"] for s in calls["create"][0]["sources"]] == [5, 6]
+
+    def test_join_source_ambiguous_casing_fails(self, monkeypatch):
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[
+                {"id": 5, "name": "ORDERS", "container_type": "table"},
+                {"id": 6, "name": "Orders", "container_type": "table"},
+            ],
+        )
+        self._no_wait(monkeypatch)
+        specs = [
+            _spec(
+                kind="computed_join",
+                name="j",
+                sources=[
+                    {"container": "orders", "alias": "o"},
+                    {"container": "ORDERS", "alias": "p"},
+                ],
+            )
+        ]
+        result = ensure_containers(object(), specs, 42)
+        assert result["failed"] == 1
+        assert "not found in datastore 42: orders" in result["errors"][0]
+        assert not calls["create"]
+
+    def test_sheet_source_never_binds_to_lookalike(self):
+        """A name the sheet creates resolves exactly, not to another casing."""
+        from qualytics.services.migrate import _container_payload
+
+        spec = _spec(
+            kind="computed_join",
+            name="j",
+            sources=[
+                {"container": "orders", "alias": "o"},
+                {"container": "CUSTOMERS", "alias": "c"},
+            ],
+        )
+        name_to_id = {"ORDERS": 5, "customers": 6}
+        payload, error = _container_payload(spec, 42, name_to_id, {"orders"})
+        assert payload is None
+        assert "source container 'orders' not found" in error
+
+        payload, error = _container_payload(spec, 42, name_to_id)
+        assert error is None
+        assert [s["container_id"] for s in payload["sources"]] == [5, 6]
+
+    def test_dry_run_sheet_source_beats_catalogue_casing(self, monkeypatch):
+        """An existing join re-pointed at a table the sheet creates previews
+        as an update — not as unchanged via the lookalike `ORDERS`."""
+        from qualytics.services.migrate import ensure_containers
+        import qualytics.api.containers as api
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[
+                {"id": 9, "name": "j", "container_type": "computed_join"},
+                {"id": 5, "name": "ORDERS", "container_type": "table"},
+            ],
+        )
+        self._no_wait(monkeypatch)
+        monkeypatch.setattr(
+            api,
+            "get_container",
+            lambda client, cid: {
+                "id": cid,
+                "query": "SELECT 1",
+                "sources": [{"container_id": 5, "alias": "o", "ordinal": 0}],
+            },
+        )
+        specs = [
+            _spec(name="orders"),
+            _spec(
+                kind="computed_join",
+                name="j",
+                check_id="cj1",
+                row=3,
+                sources=[{"container": "orders", "alias": "o"}],
+            ),
+        ]
+        result = ensure_containers(
+            object(), specs, 42, on_existing="update", dry_run=True
+        )
+        assert result["failed"] == 0, result["errors"]
+        assert result["created"] == 1
+        assert result["updated"] == 1
+        assert result["unchanged"] == 0
+        assert not calls["create"] and not calls["update"]
+
+    def test_casing_collision_with_pending_sheet_name_fails_before_writes(
+        self, monkeypatch
+    ):
+        """`orders` matches catalogued `ORDERS` and the sheet's own `Orders`:
+        ambiguous up front, not after `Orders` is created mid-apply."""
+        from qualytics.services.migrate import ensure_containers
+
+        calls = self._patches(
+            monkeypatch,
+            listing=[{"id": 5, "name": "ORDERS", "container_type": "table"}],
+        )
+        self._no_wait(monkeypatch)
+        specs = [
+            _spec(name="Orders"),
+            _spec(
+                kind="computed_join",
+                name="j",
+                check_id="cj1",
+                row=3,
+                sources=[{"container": "orders", "alias": "o"}],
+            ),
+        ]
+        result = ensure_containers(object(), specs, 42)
+        assert result["failed"] == 1
+        assert "not found in datastore 42: orders" in result["errors"][0]
+        assert not calls["validate"] and not calls["create"]
+
     def test_profile_failure_stops_the_phase(self, monkeypatch):
         from qualytics.services.migrate import ensure_containers
         import qualytics.services.migrate as migrate

@@ -8,6 +8,7 @@ from qualytics.api.client import (
     QualyticsClient,
     QualyticsAPIError,
     AuthenticationError,
+    PermissionDeniedError,
     NotFoundError,
     ConflictError,
     ServerError,
@@ -94,6 +95,45 @@ class TestRaiseForStatus:
         with pytest.raises(AuthenticationError):
             QualyticsClient._raise_for_status(resp)
 
+    def test_401_keeps_relogin_hint_and_server_detail(self):
+        resp = self._make_response(
+            401, '{"detail": "The presented token has been revoked"}'
+        )
+        with pytest.raises(AuthenticationError) as exc_info:
+            QualyticsClient._raise_for_status(resp)
+        assert not isinstance(exc_info.value, PermissionDeniedError)
+        assert "qualytics auth login" in exc_info.value.message
+        assert "The presented token has been revoked" in exc_info.value.message
+
+    def test_403_carries_server_detail_without_relogin_hint(self):
+        """A role denial must not send the user to re-authenticate."""
+        detail = (
+            "You must have the Manager role to create a new global tag "
+            "(wafra-greenlight). Assign an existing tag instead."
+        )
+        resp = self._make_response(403, f'{{"detail": "{detail}"}}')
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            QualyticsClient._raise_for_status(resp)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.message == f"Permission denied: {detail}"
+        assert "auth login" not in exc_info.value.message
+        assert "expired" not in exc_info.value.message
+
+    def test_403_non_json_and_empty_bodies(self):
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            QualyticsClient._raise_for_status(self._make_response(403, "Forbidden"))
+        assert exc_info.value.message == "Permission denied: Forbidden"
+
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            QualyticsClient._raise_for_status(self._make_response(403, ""))
+        assert "lacks the role or permission" in exc_info.value.message
+
+    def test_403_structured_detail_is_serialized(self):
+        resp = self._make_response(403, '{"detail": [{"msg": "no access"}]}')
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            QualyticsClient._raise_for_status(resp)
+        assert "no access" in exc_info.value.message
+
     def test_404_raises_not_found(self):
         resp = self._make_response(404)
         with pytest.raises(NotFoundError) as exc_info:
@@ -141,6 +181,7 @@ class TestQualyticsAPIError:
 
     def test_auth_error_is_api_error(self):
         assert issubclass(AuthenticationError, QualyticsAPIError)
+        assert issubclass(PermissionDeniedError, AuthenticationError)
 
     def test_not_found_is_api_error(self):
         assert issubclass(NotFoundError, QualyticsAPIError)

@@ -1040,3 +1040,114 @@ class TestContainersValidateCLI:
         assert result.exit_code == 0
         _, kwargs = mock_validate.call_args
         assert kwargs["timeout"] == 120
+
+
+class TestContainersFieldsCLI:
+    LISTING = [
+        {"id": 2, "name": "REGION", "container_type": "table"},
+        {"id": 1, "name": "NATION", "container_type": "table"},
+        {"id": 3, "name": "recon", "container_type": "computed_table"},
+    ]
+    FIELDS = {
+        1: [
+            {"name": "N_NATIONKEY"},
+            {"name": "N_NAME"},
+            {"name": "N_REGIONKEY"},
+        ],
+        2: [{"name": "R_REGIONKEY"}, {"name": "R_NAME"}],
+        3: [],
+    }
+
+    def _invoke(self, cli_runner, *args):
+        calls = []
+
+        def _fields(client, container_id, **kw):
+            calls.append((container_id, kw))
+            return self.FIELDS[container_id]
+
+        with (
+            patch("qualytics.cli.containers.get_client", return_value=_mock_client()),
+            patch(
+                "qualytics.cli.containers.list_containers_listing",
+                return_value=self.LISTING,
+            ),
+            patch("qualytics.api.fields.list_container_fields", side_effect=_fields),
+        ):
+            result = cli_runner.invoke(
+                app, ["containers", "fields", "--datastore-id", "844", *args]
+            )
+        return result, calls
+
+    def test_one_line_per_container_sorted_case_insensitively(self, cli_runner):
+        result, calls = self._invoke(cli_runner)
+        assert result.exit_code == 0, result.output
+        assert result.output.splitlines() == [
+            "NATION [table]: N_NATIONKEY, N_NAME, N_REGIONKEY",
+            "recon [computed_table]: (no fields catalogued yet)",
+            "REGION [table]: R_REGIONKEY, R_NAME",
+        ]
+        # Active fields only, in source-column order.
+        assert all(
+            kw == {"status": ["active"], "sort_natural_order": "asc"} for _, kw in calls
+        )
+
+    def test_container_filter_is_case_insensitive(self, cli_runner):
+        result, calls = self._invoke(cli_runner, "--container", "nation, REGION")
+        assert result.exit_code == 0, result.output
+        assert [cid for cid, _ in calls] == [1, 2]
+        assert "recon" not in result.output
+
+    def test_unknown_container_fails_before_fetching_fields(self, cli_runner):
+        result, calls = self._invoke(cli_runner, "--container", "NATION,GHOST")
+        assert result.exit_code == 1
+        assert "GHOST" in result.output
+        assert calls == []
+
+    def test_json_format(self, cli_runner):
+        import json
+
+        result, _ = self._invoke(cli_runner, "--container", "REGION", "-f", "json")
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == [
+            {
+                "name": "REGION",
+                "id": 2,
+                "container_type": "table",
+                "fields": ["R_REGIONKEY", "R_NAME"],
+            }
+        ]
+
+    def test_structured_output_survives_long_names_and_brackets(
+        self, cli_runner, monkeypatch
+    ):
+        """Long values must not be line-wrapped inside JSON strings, and
+        "[...]" in a name must not be eaten as rich markup."""
+        import json
+
+        import yaml
+
+        long_name = "F_" + "X" * 105
+        monkeypatch.setitem(self.FIELDS, 2, [{"name": long_name}, {"name": "a[b]"}])
+
+        result, _ = self._invoke(cli_runner, "--container", "REGION", "-f", "json")
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)[0]["fields"] == [long_name, "a[b]"]
+
+        result, _ = self._invoke(cli_runner, "--container", "REGION", "-f", "yaml")
+        assert result.exit_code == 0, result.output
+        assert yaml.safe_load(result.stdout)[0]["fields"] == [long_name, "a[b]"]
+
+
+class TestResolveContainerNames:
+    def test_ambiguous_casing_is_unresolved(self):
+        from qualytics.services.containers import resolve_container_names
+
+        listing = [
+            {"id": 1, "name": "Orders"},
+            {"id": 2, "name": "ORDERS"},
+        ]
+        matched, unresolved = resolve_container_names(
+            listing, ["orders", "Orders", "Orders"]
+        )
+        assert [item["id"] for item in matched] == [1]
+        assert unresolved == ["orders"]

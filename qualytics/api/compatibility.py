@@ -70,6 +70,7 @@ KNOWN_API_OPERATIONS = frozenset(
         ("GET", "/api/teams"),
         ("GET", "/api/teams/{team_id}"),
         ("GET", "/api/users"),
+        ("GET", "/api/users/me"),
         ("GET", "/api/users/{user_id}"),
         ("POST", "/api/agent/chat"),
         ("GET", "/api/agent/llm-config/status"),
@@ -85,6 +86,8 @@ OPTIONAL_API_OPERATIONS = frozenset(
         ("POST", "/api/datastores/connection"),
         ("POST", "/api/agent/chat"),
         ("GET", "/api/agent/llm-config/status"),
+        # migrate validate's tag check degrades to a warning without it.
+        ("GET", "/api/users/me"),
     }
 )
 

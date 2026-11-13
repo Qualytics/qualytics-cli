@@ -37,7 +37,7 @@ qualytics-cli/
 │   │   ├── checks.py         # checks CRUD + git-friendly export/import
 │   │   ├── auth.py           # auth login/status/init commands
 │   │   ├── connections.py    # connections create/update/get/list/delete/test commands
-│   │   ├── containers.py     # containers create/update/get/list/delete/validate/import/preview commands
+│   │   ├── containers.py     # containers create/update/get/list/fields/delete/validate/import/preview commands
 │   │   ├── datastores.py     # datastores create/update/get/list/delete/verify/enrichment commands
 │   │   ├── export_import.py  # config export/import (config-as-code)
 │   │   ├── operations.py     # operations sync/profile/scan/materialize/export/get/list/abort commands
@@ -125,7 +125,8 @@ Non-2xx responses raise typed exceptions:
 
 ```
 QualyticsAPIError (base)
-├── AuthenticationError  ← 401, 403
+├── AuthenticationError  ← 401 (re-login hint + server detail)
+│   └── PermissionDeniedError ← 403 (server detail, no re-login hint)
 ├── NotFoundError        ← 404
 ├── ConflictError        ← 409
 └── ServerError          ← 5xx
@@ -317,8 +318,8 @@ Full container lifecycle management — create computed containers, update, get,
 
 **Architecture:**
 - `api/containers.py` — 9 thin HTTP wrappers: `create_container`, `update_container`, `get_container`, `list_containers`, `list_all_containers`, `delete_container`, `validate_container`, `get_field_profiles`, `list_containers_listing`
-- `services/containers.py` — business logic: `get_table_ids`, `get_container_by_name`, `build_create_container_payload`, `build_update_container_payload`
-- `cli/containers.py` — 8 CLI commands under `qualytics containers`
+- `services/containers.py` — business logic: `get_table_ids`, `get_container_by_name`, `resolve_container_names`, `container_field_listing`, `build_create_container_payload`, `build_update_container_payload`
+- `cli/containers.py` — 9 CLI commands under `qualytics containers`
 
 **Polymorphic create:** The `--type` flag discriminates between computed types, each requiring different fields:
 - `computed_table`: `--datastore-id`, `--name`, `--query`
@@ -334,6 +335,7 @@ Full container lifecycle management — create computed containers, update, get,
 - `update` — GET-merge-PUT with `--force-drop-fields` for 409 conflicts
 - `get` — by `--id`, optional `--profiles` to include field profiles
 - `list` — requires `--datastore-id`, filterable by `--type`, `--name`, `--tag`, `--search`, `--archived`
+- `fields` — active field names per container, one `NAME [type]: f1, f2` line each (sheet authoring); `--container` narrows by name (case-insensitive when unambiguous), `--format yaml|json` for structured output. One GET per container — no datastore-wide field endpoint exists
 - `delete` — by `--id` (cascades to fields, checks, anomalies)
 - `validate` — dry-run validation of computed container definitions against the API
 - `import` — bulk import computed tables from file (.xlsx, .csv, .txt) with auto-check creation
@@ -521,7 +523,7 @@ uv run pytest --cov --cov-report=term-missing  # With coverage
 | `test_anomalies.py` | API layer (list, get, update, bulk update, delete, bulk delete), CLI commands (get, list, update, archive, delete), status validation, bulk operations |
 | `test_connections.py` | API layer (create, update, get, list, list_all, delete, test), service layer (get_connection_by, build payloads), secrets (env var resolution, redaction), CLI commands (create, update, get, list, delete, test), 409 handling |
 | `test_export_import.py` | Helpers (slugify, write_yaml, env var names), strip functions (connections, datastores, containers), import functions (connections, datastores, containers with upsert), export orchestrator (full, filtered, deduplication), import orchestrator (full, filtered), CLI commands (export, import, dry-run, error display) |
-| `test_containers.py` | API layer (create, update, get, list, list_all, delete, validate, field_profiles, listing), service layer (get_container_by_name, build payloads), CLI commands (create, update, get, list, delete, validate), polymorphic create, 409 handling |
+| `test_containers.py` | API layer (create, update, get, list, list_all, delete, validate, field_profiles, listing), service layer (get_container_by_name, resolve_container_names, build payloads), CLI commands (create, update, get, list, fields, delete, validate), polymorphic create, 409 handling |
 | `test_datastores.py` | API layer (create, update, get, list, list_all, delete, verify, validate, enrichment connect/disconnect), service layer (get_datastore_by, build payloads), CLI commands (create, update, get, list, delete, verify, enrichment), validation |
 | `test_operations.py` | API layer (run, get, list, list_all, abort), service layer (polling, multi-datastore, background mode, payload construction), CLI commands (sync, profile, scan, materialize, export, get, list, abort), validation |
 | `test_quality_checks.py` | API layer (endpoints, params, pagination), CLI commands (all 9), service import (upsert, dry-run, multi-datastore), promotion workflow, edge cases |

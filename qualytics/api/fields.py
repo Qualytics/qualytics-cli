@@ -3,13 +3,24 @@
 from .client import QualyticsClient
 
 
-def list_container_fields(client: QualyticsClient, container_id: int) -> list[dict]:
+def list_container_fields(
+    client: QualyticsClient,
+    container_id: int,
+    *,
+    status: list[str] | None = None,
+    sort_natural_order: str | None = None,
+) -> list[dict]:
     """Retrieve the fields catalogued for a container.
 
     Returns active and missing fields by default, matching the endpoint's
     behaviour when no status filter is supplied.
     """
-    response = client.get(f"containers/{container_id}/fields")
+    params: dict = {}
+    if status:
+        params["status"] = status
+    if sort_natural_order:
+        params["sort_natural_order"] = sort_natural_order
+    response = client.get(f"containers/{container_id}/fields", params=params or None)
     return response.json()
 
 
