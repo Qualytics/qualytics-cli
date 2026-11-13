@@ -890,3 +890,164 @@ class TestValidateSql:
         assert "not a sheet problem" in result.output
         assert result.output.count("failed source validation") == 0
         assert len(calls) == 1  # stopped after the shared failure
+
+
+class TestValidateTags:
+    SHEET = (
+        "check_id,rule_type,container,fields,value,tags\n"
+        '550,freshness,orders,,36h,"UAT testing, finance"\n'
+        "551,freshness,invoices,,36h,finance\n"
+    )
+
+    def _patches(self, monkeypatch, *, role="Member", tags=("UAT-TESTING", "finance")):
+        import qualytics.api.tags as tags_api
+        import qualytics.api.users as users_api
+
+        TestMigrateValidate._online_patches(TestMigrateValidate(), monkeypatch)
+
+        def _tags(client):
+            if tags is None:
+                raise ConnectionError("tags endpoint unreachable")
+            return [{"name": name} for name in tags]
+
+        def _me(client):
+            if role is None:
+                raise ConnectionError("users/me unreachable")
+            return {"role": role}
+
+        monkeypatch.setattr(tags_api, "list_all_tags", _tags)
+        monkeypatch.setattr(users_api, "get_current_user", _me)
+
+    def _validate(self, cli_runner, tmp_path, *extra):
+        return cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, self.SHEET),
+                "--datastore-id",
+                "7",
+                *extra,
+            ],
+        )
+
+    def test_member_fails_on_missing_tag_with_near_match_hint(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        self._patches(monkeypatch)
+        result = self._validate(cli_runner, tmp_path)
+        assert result.exit_code == 1
+        output = " ".join(result.output.split())
+        assert "tag 'UAT testing' (checks 550) does not exist" in output
+        assert "needs the Admin role (you are Member)" in output
+        assert "did you mean 'UAT-TESTING'?" in output
+        assert "Validation failed — 1 problem(s)" in output
+
+    def test_admin_passes_with_new_tag_warning(self, cli_runner, tmp_path, monkeypatch):
+        self._patches(monkeypatch, role="Admin")
+        result = self._validate(cli_runner, tmp_path)
+        assert result.exit_code == 0, result.output
+        output = " ".join(result.output.split())
+        assert "apply creates it as a new tag" in output
+        assert "did you mean 'UAT-TESTING'?" in output
+
+    def test_manager_warns_tag_creation_depends_on_version(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        """Current platforms limit new global tags to Admins; older ones
+        also allowed Managers — the CLI can't tell, so it warns."""
+        self._patches(monkeypatch, role="Manager")
+        result = self._validate(cli_runner, tmp_path)
+        assert result.exit_code == 0, result.output
+        output = " ".join(result.output.split())
+        assert "let a Manager create global tags (current ones need Admin)" in output
+        assert "did you mean 'UAT-TESTING'?" in output
+
+    def test_unknown_role_warns_without_failing(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        self._patches(monkeypatch, role=None)
+        result = self._validate(cli_runner, tmp_path)
+        assert result.exit_code == 0, result.output
+        assert "your role could not be read" in " ".join(result.output.split())
+
+    def test_tag_listing_failure_skips_check(self, cli_runner, tmp_path, monkeypatch):
+        self._patches(monkeypatch, tags=None)
+        result = self._validate(cli_runner, tmp_path)
+        assert result.exit_code == 0, result.output
+        assert "tag check skipped" in result.output
+
+    def test_existing_tags_pass_and_cli_tag_is_checked(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        self._patches(monkeypatch, tags=("UAT testing", "finance"))
+        result = self._validate(cli_runner, tmp_path)
+        assert result.exit_code == 0, result.output
+        assert "all 2 tag(s) exist" in result.output
+
+        result = self._validate(cli_runner, tmp_path, "--tag", "wafra-greenlight")
+        assert result.exit_code == 1
+        output = " ".join(result.output.split())
+        assert "tag 'wafra-greenlight' (checks 550, 551) does not exist" in output
+
+
+class TestValidateBrokenJoin:
+    def test_missing_join_source_reported_once(self, cli_runner, tmp_path, monkeypatch):
+        calls = TestValidateSql()._patches(monkeypatch)
+        sheet = (
+            "check_id,kind,rule_type,container,fields,query,sources\n"
+            "CJ1,computed_join,,joined,,SELECT g.a FROM g JOIN o ON g.a = o.a,"
+            '"GHOST_LEFT=g; ORDERS=o"\n'
+        )
+        result = cli_runner.invoke(
+            app,
+            [
+                "migrate",
+                "validate",
+                "--sheet",
+                _write(tmp_path, sheet),
+                "--datastore-id",
+                "19",
+            ],
+        )
+        assert result.exit_code == 1
+        assert result.output.count("GHOST_LEFT") == 1
+        assert "Validation failed — 1 problem(s)" in " ".join(result.output.split())
+        assert calls == []  # no SQL validation for a join that can't resolve
+
+    def test_join_source_casing_resolves_and_collisions_flagged(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        """Validate resolves join sources exactly like apply: `orders` binds
+        to catalogued `ORDERS`, unless the sheet also creates `Orders`."""
+        calls = TestValidateSql()._patches(monkeypatch)
+        join = (
+            "CJ1,computed_join,,joined,,SELECT o.a FROM o JOIN p ON o.a = p.a,"
+            '"orders=o; ORDERS=p"\n'
+        )
+        header = "check_id,kind,rule_type,container,fields,query,sources\n"
+
+        def _validate(sheet):
+            return cli_runner.invoke(
+                app,
+                [
+                    "migrate",
+                    "validate",
+                    "--sheet",
+                    _write(tmp_path, sheet),
+                    "--datastore-id",
+                    "19",
+                ],
+            )
+
+        result = _validate(header + join)
+        assert result.exit_code == 0, result.output
+        assert [p["sources"][0]["container_id"] for p in calls] == [1]
+
+        calls.clear()
+        result = _validate(header + "CT1,computed_table,,Orders,,SELECT 1\n" + join)
+        assert result.exit_code == 1
+        output = " ".join(result.output.split())
+        assert "join source 'orders' matches ORDERS, Orders only by casing" in output
+        assert "Validation failed — 1 problem(s)" in output

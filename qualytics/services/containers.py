@@ -230,3 +230,56 @@ def build_update_container_payload(existing: dict, **changes) -> dict:
             payload[key] = value
 
     return payload
+
+
+def resolve_container_names(
+    listing: list[dict], names: list[str]
+) -> tuple[list[dict], list[str]]:
+    """Match names against a container listing: exact first, then
+    case-insensitive when only one container fits.
+
+    Returns (matched containers in request order, names that matched nothing
+    or more than one container).
+    """
+    by_name = {item["name"]: item for item in listing}
+    by_lower: dict[str, list[dict]] = {}
+    for item in listing:
+        by_lower.setdefault(item["name"].lower(), []).append(item)
+
+    matched: list[dict] = []
+    unresolved: list[str] = []
+    for name in names:
+        item = by_name.get(name)
+        if item is None and len(by_lower.get(name.lower(), [])) == 1:
+            item = by_lower[name.lower()][0]
+        if item is None:
+            unresolved.append(name)
+        elif item not in matched:
+            matched.append(item)
+    return matched, unresolved
+
+
+def container_field_listing(
+    client: QualyticsClient, containers: list[dict]
+) -> list[dict]:
+    """Active field names per container, in source-column order.
+
+    One request per container — the platform has no datastore-wide field
+    listing — so callers should narrow *containers* when they can.
+    """
+    from ..api.fields import list_container_fields
+
+    listing = []
+    for item in sorted(containers, key=lambda c: c["name"].lower()):
+        fields = list_container_fields(
+            client, item["id"], status=["active"], sort_natural_order="asc"
+        )
+        listing.append(
+            {
+                "name": item["name"],
+                "id": item["id"],
+                "container_type": item.get("container_type"),
+                "fields": [f["name"] for f in fields if f.get("name")],
+            }
+        )
+    return listing

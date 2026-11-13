@@ -28,6 +28,7 @@ Design invariants (shared with ``services.dbt``):
 import csv
 import json
 import re
+from collections.abc import Collection
 from typing import Any
 
 from .rules import contract_for, CROSS_REF_RULES, one_sided_between
@@ -1003,8 +1004,34 @@ def repair_container_names(
 # are profiled before any check that targets them is imported.
 
 
+def _source_id(
+    name: str, name_to_id: dict[str, int], sheet_names: Collection[str] = ()
+) -> int | None:
+    """Container ID for a join source: the exact name, else the one container
+    whose name matches case-insensitively.
+
+    Same casing repair check containers get, so a source `migrate validate`
+    accepts (`orders` for `ORDERS`) also resolves at apply time. Names that
+    differ only by case resolve exact-only — counting the containers the
+    sheet has yet to create, so a match can't turn ambiguous mid-apply — and
+    a name the sheet itself creates never binds to a lookalike table while
+    its own row is still pending.
+    """
+    if name in name_to_id:
+        return name_to_id[name]
+    if name in sheet_names:
+        return None
+    lower = name.lower()
+    matches = [cid for actual, cid in name_to_id.items() if actual.lower() == lower]
+    pending = [n for n in sheet_names if n not in name_to_id and n.lower() == lower]
+    return matches[0] if len(matches) == 1 and not pending else None
+
+
 def _container_payload(
-    spec: ContainerSpec, datastore_id: int, name_to_id: dict[str, int]
+    spec: ContainerSpec,
+    datastore_id: int,
+    name_to_id: dict[str, int],
+    sheet_names: Collection[str] = (),
 ) -> tuple[dict | None, str | None]:
     """API payload for one spec, with join sources resolved to container IDs."""
     payload = {key: value for key, value in spec.spec.items() if key != "sources"}
@@ -1012,7 +1039,7 @@ def _container_payload(
     if spec.kind == KIND_COMPUTED_JOIN:
         sources = []
         for source in spec.spec.get("sources") or []:
-            container_id = name_to_id.get(source["container"])
+            container_id = _source_id(source["container"], name_to_id, sheet_names)
             if container_id is None:
                 return None, (
                     f"source container '{source['container']}' not found in "
@@ -1234,7 +1261,11 @@ def ensure_containers(
             continue
         if spec.kind == KIND_COMPUTED_JOIN:
             sources = [s["container"] for s in spec.spec.get("sources") or []]
-            unknown = [s for s in sources if s not in name_to_id and s not in in_file]
+            unknown = [
+                s
+                for s in sources
+                if s not in in_file and _source_id(s, name_to_id, in_file) is None
+            ]
             if unknown:
                 fail(
                     spec,
@@ -1242,10 +1273,11 @@ def ensure_containers(
                     f"{datastore_id}: {', '.join(unknown)}",
                 )
                 continue
-            if any(s not in name_to_id for s in sources):
+            # An exact sheet name wins over a case-insensitive catalogue match.
+            if any(s not in name_to_id and s in in_file for s in sources):
                 todo.append((spec, None, True))  # build + validate just-in-time
                 continue
-        payload, error = _container_payload(spec, datastore_id, name_to_id)
+        payload, error = _container_payload(spec, datastore_id, name_to_id, in_file)
         if error:
             fail(spec, error)
             continue
@@ -1275,7 +1307,7 @@ def ensure_containers(
                     f"{existing_types.get(spec.name)}, not a {spec.kind}",
                 )
                 continue
-            payload, error = _container_payload(spec, datastore_id, name_to_id)
+            payload, error = _container_payload(spec, datastore_id, name_to_id, in_file)
             if error or payload is None:
                 report(f"[dry-run] would update '{spec.name}'")
                 result["updated"] += 1
@@ -1328,7 +1360,7 @@ def ensure_containers(
             continue
 
         # Sources may have been created earlier in this loop; resolve again.
-        payload, error = _container_payload(spec, datastore_id, name_to_id)
+        payload, error = _container_payload(spec, datastore_id, name_to_id, in_file)
         if error:
             fail(spec, error)
             break

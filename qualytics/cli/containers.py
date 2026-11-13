@@ -10,6 +10,7 @@ from ..api.containers import (
     get_container,
     get_field_profiles,
     list_all_containers,
+    list_containers_listing,
     update_container,
     validate_container,
 )
@@ -19,6 +20,8 @@ from ..services.containers import (
     _VALID_JOIN_TYPES,
     build_create_container_payload,
     build_update_container_payload,
+    container_field_listing,
+    resolve_container_names,
 )
 from ..utils import OutputFormat, format_for_display
 
@@ -353,6 +356,65 @@ def containers_list(
 
     err_console.print(f"[green]Found {len(all_containers)} containers.[/green]")
     typer.echo(format_for_display(all_containers, fmt))
+
+
+# ── fields ───────────────────────────────────────────────────────────────
+
+
+@containers_app.command("fields")
+def containers_fields(
+    datastore_id: int = typer.Option(
+        ..., "--datastore-id", help="Datastore ID to list fields from"
+    ),
+    container: str | None = typer.Option(
+        None,
+        "--container",
+        "-c",
+        help="Comma-separated container names (default: every container in "
+        "the datastore)",
+    ),
+    fmt: OutputFormat | None = typer.Option(
+        None,
+        "--format",
+        "-f",
+        help="yaml or json for structured output (default: one line per container)",
+    ),
+):
+    """List field names per container, in catalogue casing.
+
+    Default output is one line per container — NAME [type]: field_1, ... —
+    ready to copy into a migrate check sheet."""
+    client = get_client()
+    listing = list_containers_listing(client, datastore_id)
+
+    targets = listing
+    if container:
+        targets, unresolved = resolve_container_names(
+            listing, _parse_comma_list(container)
+        )
+        if unresolved:
+            err_console.print(
+                f"[red]Container(s) not found (or ambiguous by casing) in "
+                f"datastore {datastore_id}: {', '.join(unresolved)}[/red]"
+            )
+            raise typer.Exit(code=1)
+
+    rows = container_field_listing(client, targets)
+
+    if fmt is not None:
+        # Plain echo: rich would wrap long lines (breaking JSON strings) and
+        # read "[...]" in names as markup.
+        typer.echo(format_for_display(rows, fmt))
+        return
+    if not rows:
+        err_console.print(
+            f"[yellow]No containers in datastore {datastore_id}.[/yellow]"
+        )
+        return
+    for row in rows:
+        # Plain echo: "[table]" would be read as rich markup.
+        fields = ", ".join(row["fields"]) or "(no fields catalogued yet)"
+        typer.echo(f"{row['name']} [{row['container_type']}]: {fields}")
 
 
 # ── delete ───────────────────────────────────────────────────────────────

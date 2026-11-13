@@ -853,6 +853,92 @@ def _unambiguous_lower(names) -> dict:
     return {key: values[0] for key, values in buckets.items() if len(values) == 1}
 
 
+# Roles the platform lets create a global tag (implicitly, on check save).
+# Current platform versions allow Admins only; older ones also let Managers,
+# and the CLI can't tell which version it's talking to.
+_TAG_CREATOR_ROLES = {"Admin", "Internal"}
+_TAG_CREATOR_OLDER_ROLES = {"Manager"}
+
+
+def _tag_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _validate_tags(client, plan: SheetPlan) -> int:
+    """Sheet tags missing on the target; returns the error count.
+
+    Saving a check with an unknown tag creates the global tag, which only
+    Admins may do (Managers too on older platform versions) — anyone else
+    gets a 403 on every such check mid-apply. Names match exactly, so a near
+    miss ("UAT testing" for "UAT-TESTING") is a new tag too.
+    """
+    from ..api.tags import list_all_tags
+    from ..api.users import get_current_user
+
+    used: dict[str, list[str]] = {}
+    for item in plan.checks:
+        for tag in item.check.get("tags") or []:
+            used.setdefault(tag, []).append(str(item.check_id))
+    if not used:
+        return 0
+
+    print("\n[cyan]Checking tags against the target (read-only)...[/cyan]")
+    try:
+        existing = {tag["name"] for tag in list_all_tags(client) if tag.get("name")}
+    except Exception as e:  # noqa: BLE001 - the tag check is advisory
+        print(f"  [yellow]⚠ could not list tags ({e}) — tag check skipped[/yellow]")
+        return 0
+
+    missing = sorted(set(used) - existing)
+    if not missing:
+        print(f"  [green]all {len(used)} tag(s) exist on the target[/green]")
+        return 0
+
+    try:
+        role = get_current_user(client).get("role")
+    except Exception:  # noqa: BLE001 - unknown role degrades to a warning
+        role = None
+
+    by_key: dict[str, list[str]] = {}
+    for name in existing:
+        by_key.setdefault(_tag_key(name), []).append(name)
+
+    errors = 0
+    for tag in missing:
+        near = sorted(by_key.get(_tag_key(tag), []))
+        hint = f" — did you mean {', '.join(repr(n) for n in near)}?" if near else ""
+        ids = used[tag]
+        listed = ", ".join(ids[:5]) + (f" +{len(ids) - 5} more" if len(ids) > 5 else "")
+        label = f"tag '{tag}' (checks {listed})"
+        if role in _TAG_CREATOR_ROLES and not near:
+            print(f"  [dim]{label} does not exist yet — apply creates it[/dim]")
+        elif role in _TAG_CREATOR_ROLES:
+            print(
+                f"  [yellow]⚠ {label} does not exist — apply creates it as a "
+                f"new tag{hint}[/yellow]"
+            )
+        elif role in _TAG_CREATOR_OLDER_ROLES:
+            print(
+                f"  [yellow]⚠ {label} does not exist — apply can create it only "
+                f"on platform versions that let a {role} create global tags "
+                f"(current ones need Admin); safer to use an existing "
+                f"tag{hint}[/yellow]"
+            )
+        elif role is None:
+            print(
+                f"  [yellow]⚠ {label} does not exist and your role could not be "
+                f"read — creating a global tag needs the Admin role{hint}[/yellow]"
+            )
+        else:
+            print(
+                f"  [red]✗ {label} does not exist, and creating a global tag "
+                f"needs the Admin role (you are {role}) — use an existing "
+                f"tag{hint}[/red]"
+            )
+            errors += 1
+    return errors
+
+
 def _validate_online(
     plan: SheetPlan, base_ids: list[int], validate_sql: bool = True
 ) -> int:
@@ -866,7 +952,7 @@ def _validate_online(
     from ..api.fields import container_field_names
     from ..services.containers import get_table_ids
     from ..services.datastores import get_datastore_by_name
-    from ..services.migrate import _container_payload
+    from ..services.migrate import _container_payload, _source_id
     from ..services.rules import resolve_check_fields
     from .import_flow import field_catalogue
 
@@ -880,6 +966,8 @@ def _validate_online(
 
     routed_checks = _route(plan.checks, base_ids, resolved)
     routed_containers = _route(plan.containers, base_ids, resolved)
+
+    errors += _validate_tags(client, plan)
 
     datastore_cache: dict[str, int | None] = {}
 
@@ -909,16 +997,30 @@ def _validate_online(
         in_sheet = {spec.name for spec in routed_containers.get(ds_id, [])}
 
         # Join sources resolve against the catalogue or earlier sheet rows.
+        broken_joins: set[int] = set()
         for spec in routed_containers.get(ds_id, []):
             for source in spec.spec.get("sources") or []:
                 name = source["container"]
-                if name in tables or name.lower() in lower_tables or name in in_sheet:
+                # Same resolution apply uses (exact, else one case-insensitive
+                # match), counting the containers this sheet creates.
+                if name in in_sheet or _source_id(name, tables, in_sheet) is not None:
                     continue
+                variants = sorted(
+                    other
+                    for other in set(tables) | in_sheet
+                    if other.lower() == name.lower()
+                )
+                reason = (
+                    f"matches {', '.join(variants)} only by casing — use the exact name"
+                    if variants
+                    else f"not found in datastore {ds_id}"
+                )
                 print(
                     f"  [red]✗ row {spec.row} ({spec.check_id}): join source "
-                    f"'{name}' not found in datastore {ds_id}[/red]"
+                    f"'{name}' {reason}[/red]"
                 )
                 ds_errors += 1
+                broken_joins.add(spec.row)
 
         # Computed SQL is checked server-side (non-persisting) — the raw
         # query runs on the source database, whose namespace the catalogue
@@ -933,6 +1035,8 @@ def _validate_online(
             from ..api.containers import validate_container
 
             for spec in routed_containers.get(ds_id, []):
+                if spec.row in broken_joins:
+                    continue  # already reported; its payload can't be built
                 sources = [
                     source["container"] for source in spec.spec.get("sources") or []
                 ]
@@ -942,7 +1046,7 @@ def _validate_online(
                         "at apply time (reads a table this sheet creates)[/dim]"
                     )
                     continue
-                payload, error = _container_payload(spec, ds_id, tables)
+                payload, error = _container_payload(spec, ds_id, tables, in_sheet)
                 if error:
                     print(f"  [red]✗ row {spec.row} ({spec.check_id}): {error}[/red]")
                     ds_errors += 1
@@ -967,16 +1071,16 @@ def _validate_online(
                 # The client normalizes SSL/timeout/connection failures
                 # into the builtin ConnectionError.
                 except (AuthenticationError, ServerError, ConnectionError) as e:
-                    # Auth, connectivity and server outages are one shared
-                    # problem, not a per-container SQL finding — report once
-                    # and stop pretending to validate SQL.
+                    # Auth, permission, connectivity and server outages are
+                    # one shared problem, not a per-container SQL finding —
+                    # report once and stop pretending to validate SQL.
                     message = str(e)
                     if len(message) > 300:
                         message = message[:300] + "…"
                     print(
                         f"  [red]✗ SQL validation unavailable ({message}) — an "
-                        "instance/connectivity problem, not a sheet problem; "
-                        "skipping remaining SQL validation[/red]"
+                        "account/instance/connectivity problem, not a sheet "
+                        "problem; skipping remaining SQL validation[/red]"
                     )
                     ds_errors += 1
                     validate_sql = False
@@ -1140,11 +1244,17 @@ def migrate_validate(
         help="Run each computed container's SQL through the platform's "
         "non-persisting validation endpoint (needs --datastore-id)",
     ),
+    tag: list[str] = typer.Option(
+        None,
+        "--tag",
+        help="Tag apply will attach to every check (repeatable) — checked "
+        "against the target's tags with --datastore-id",
+    ),
 ):
     """Fail-early validation: everything `plan` checks, plus resolution and
     non-persisting SQL validation against target datastores when
     --datastore-id is given. Creates nothing; exits non-zero on any problem."""
-    plan = _load_plan(sheet_path, None, None, worksheet)
+    plan = _load_plan(sheet_path, None, tag, worksheet)
     stats = _print_summary(plan, sheet_path)
 
     total_errors = stats["errors"]

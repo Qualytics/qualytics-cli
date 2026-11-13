@@ -1,5 +1,6 @@
 """Centralized API client for the Qualytics controlplane."""
 
+import json
 import os
 
 import requests
@@ -32,6 +33,18 @@ def _resolve_timeout(config: dict | None) -> int:
     return DEFAULT_TIMEOUT
 
 
+def _error_detail(body: str) -> str:
+    """The ``detail`` of a FastAPI error body, else the raw body text."""
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return (body or "").strip()
+    if isinstance(payload, dict) and payload.get("detail"):
+        detail = payload["detail"]
+        return detail if isinstance(detail, str) else json.dumps(detail)
+    return body.strip()
+
+
 class QualyticsAPIError(Exception):
     """Base exception for API errors."""
 
@@ -43,7 +56,18 @@ class QualyticsAPIError(Exception):
 
 
 class AuthenticationError(QualyticsAPIError):
-    """Raised on 401/403 responses."""
+    """Raised on 401 responses (403 raises the PermissionDeniedError subclass)."""
+
+    pass
+
+
+class PermissionDeniedError(AuthenticationError):
+    """Raised on 403: the token was accepted but the account lacks permission.
+
+    Subclasses AuthenticationError so existing 401/403 handlers keep working,
+    but carries the server's reason instead of the re-login hint — logging in
+    again never grants a missing role.
+    """
 
     pass
 
@@ -165,12 +189,24 @@ class QualyticsClient:
 
         url = str(response.url)
 
-        if status in (401, 403):
+        if status == 401:
+            detail = _error_detail(body)
             raise AuthenticationError(
                 status,
-                "Authentication failed. Your token may be expired or invalid. "
+                f"Authentication failed{f' ({detail})' if detail else ''}. "
+                "Your token may be expired or invalid. "
                 "Run: qualytics auth login --url <your-url> "
                 "or: qualytics auth init --url <your-url> --token <your-token>",
+                url,
+            )
+        if status == 403:
+            detail = _error_detail(body)
+            raise PermissionDeniedError(
+                status,
+                f"Permission denied: {detail}"
+                if detail
+                else "Permission denied: your account lacks the role or "
+                "permission for this action.",
                 url,
             )
         if status == 404:
